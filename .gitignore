@@ -1,0 +1,86 @@
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*.swo
+
+# Agent-local instructions and launch config
+AGENTS.md
+CLAUDE.md
+**/AGENTS.md
+agents/claude.md
+.claude/
+
+# Internal project planning/docs
+/docs/
+PLAN.md
+web/README.md
+backend/integration_tests/README.md
+
+# Claude Code — per-user preferences, worktrees, and local permissions
+.claude/*.local.*
+.claude/settings.json
+.claude/scheduled_tasks.lock
+.claude/worktrees/
+
+# Codex CLI — per-user local hooks + feature flags (point at host-only tools)
+.codex/*.local.json
+.codex/config.toml
+
+# Ralph-loop — per-session task specs
+.ralph/
+
+# Codexpotter — per-user knowledge-base notes / session logs
+.codexpotter/
+
+# Entire — runtime data (see .entire/.gitignore for the authoritative list)
+.entire/tmp/
+.entire/logs/
+.entire/metadata/
+.entire/settings.local.json
+
+# TS incremental build cache
+*.tsbuildinfo
+
+# Logs
+*.log
+
+# Playwright MCP runtime artefacts (screenshots, snapshots, console logs)
+.playwright-mcp/
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.venv/
+
+# Cograph runtime + local-dev artefacts
+# local checkouts / runtime state
+.cograph/
+# playwright runner state
+.playwright-cli
+.playwright-cli/
+# local-dev config with secrets — use config.example.yaml as template
+/config.yaml
+backend/config.yaml
+
+# Session debug artefacts
+# root-level screenshots from preview/playwright sessions
+/*.png
+/SMOKE_REPORT*.md
+/CHECKER_NOTES.md
+/FE_TOGGLE_REPORT.md
+/*_BRINGUP_REPORT.md
+.coverage

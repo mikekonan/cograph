@@ -1,0 +1,364 @@
+"""End-to-end tests for `run_wiki_generation` (Stages 1-6 with FakeStructuredProvider)."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.app.llm.embedder import FakeEmbedProvider
+from backend.app.models.document import Document
+from backend.app.models.repository import Repository
+from backend.app.wiki.llm_client import FakeStructuredProvider
+from backend.app.wiki.pipeline import (
+    _CITATION_GATE_MAX_REPAIRS,
+    WikiGenerationConfig,
+    run_wiki_generation,
+)
+from backend.app.wiki.retrieval import WikiRetrievalService
+from backend.app.wiki.schemas import MindMap, PagePlan, RepoOverview
+
+pytestmark = pytest.mark.asyncio
+
+
+class _NoopHybrid:
+    async def retrieve(
+        self,
+        session: AsyncSession,
+        **_kwargs: Any,
+    ) -> list:
+        return []
+
+
+async def _make_repo(session: AsyncSession) -> Repository:
+    repo = Repository(
+        host="example.com",
+        git_url="https://github.com/test/wiki-llm-pipeline-run",
+        name="wiki-llm-pipeline-run",
+        owner="test",
+        branch="main",
+        status="ready",
+        sync_schedule="manual",
+        last_commit="cafef00d",
+    )
+    session.add(repo)
+    await session.flush()
+    return repo
+
+
+def _queue_fake_pipeline(provider: FakeStructuredProvider, *, slugs: list[str]) -> None:
+    provider.queue(
+        RepoOverview(
+            one_line="Pipeline test repo",
+            long_description="An end-to-end fake repo for run_wiki_generation tests.",
+        ).model_dump_json()
+    )
+    # Stage 1.5 — mindmap. An empty one is fine; downstream stages tolerate it.
+    provider.queue(MindMap().model_dump_json())
+    plan = PagePlan.model_validate(
+        {
+            "pages": [
+                {"slug": slug, "title": slug.title(), "purpose": f"about {slug}"}
+                for slug in slugs
+            ]
+        }
+    )
+    provider.queue(plan.model_dump_json())
+    # Stage 4 is the agent loop — one tool turn that calls write_page,
+    # followed by an end_turn turn. The dispatcher consumes the markdown
+    # and the loop exits.
+    for slug in slugs:
+        provider.queue_tool_turn(
+            tool_uses=[
+                (
+                    "write_page",
+                    {"markdown": f"# {slug.title()}\n\nBody for `{slug}`."},
+                )
+            ]
+        )
+        provider.queue_tool_turn(text="")
+
+
+def _retriever() -> WikiRetrievalService:
+    return WikiRetrievalService(
+        hybrid=_NoopHybrid(),  # type: ignore[arg-type]
+        embedder=FakeEmbedProvider(dims=8),
+    )
+
+
+async def test_run_wiki_generation_persists_pages(db_session: AsyncSession) -> None:
+    repo = await _make_repo(db_session)
+    fake = FakeStructuredProvider()
+    _queue_fake_pipeline(fake, slugs=["index", "architecture", "getting-started"])
+
+    result = await run_wiki_generation(
+        session=db_session,
+        repository_id=repo.id,
+        source_commit="cafef00d",
+        sync_run_id=None,
+        llm=fake,
+        retriever=_retriever(),
+        config=WikiGenerationConfig(write_concurrency=2),
+    )
+    assert result.pages_planned == 3
+    assert result.pages_written == 3
+    assert result.pages_persisted == 3
+    assert result.pages_skipped == 0
+    assert result.pages_orphaned_deleted == 0
+    assert result.errors == []
+    # T7: plan-quality report propagates from stages_1_4 to the final result.
+    assert result.plan_quality is not None
+    assert isinstance(result.plan_quality.suspicious_pairs, list)
+
+    rows = (
+        (
+            await db_session.execute(
+                select(Document).where(Document.repository_id == repo.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert {r.slug for r in rows} == {"index", "architecture", "getting-started"}
+    assert all(r.doc_type == "wiki" for r in rows)
+    assert all(r.source_commit == "cafef00d" for r in rows)
+
+
+async def test_run_wiki_generation_skip_persist(db_session: AsyncSession) -> None:
+    repo = await _make_repo(db_session)
+    fake = FakeStructuredProvider()
+    _queue_fake_pipeline(fake, slugs=["index", "architecture", "getting-started"])
+
+    result = await run_wiki_generation(
+        session=db_session,
+        repository_id=repo.id,
+        source_commit="abc",
+        sync_run_id=None,
+        llm=fake,
+        retriever=_retriever(),
+        config=WikiGenerationConfig(persist=False),
+    )
+    assert result.pages_persisted == 0
+    rows = (
+        (
+            await db_session.execute(
+                select(Document).where(Document.repository_id == repo.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert rows == []
+
+
+async def test_run_wiki_generation_deletes_orphans(db_session: AsyncSession) -> None:
+    repo = await _make_repo(db_session)
+
+    # First run plants three slugs.
+    fake = FakeStructuredProvider()
+    _queue_fake_pipeline(fake, slugs=["index", "architecture", "old-page"])
+    await run_wiki_generation(
+        session=db_session,
+        repository_id=repo.id,
+        source_commit="abc",
+        sync_run_id=None,
+        llm=fake,
+        retriever=_retriever(),
+        config=WikiGenerationConfig(),
+    )
+
+    # Second run drops `old-page` from the plan — it should be deleted.
+    fake2 = FakeStructuredProvider()
+    _queue_fake_pipeline(fake2, slugs=["index", "architecture", "getting-started"])
+    result = await run_wiki_generation(
+        session=db_session,
+        repository_id=repo.id,
+        source_commit="abc2",
+        sync_run_id=None,
+        llm=fake2,
+        retriever=_retriever(),
+        config=WikiGenerationConfig(),
+    )
+    assert result.pages_orphaned_deleted == 1
+
+    remaining_slugs = {
+        row.slug
+        for row in (
+            await db_session.execute(
+                select(Document).where(Document.repository_id == repo.id)
+            )
+        )
+        .scalars()
+        .all()
+    }
+    assert remaining_slugs == {"index", "architecture", "getting-started"}
+
+
+async def test_run_wiki_generation_skips_unchanged_content(
+    db_session: AsyncSession,
+) -> None:
+    repo = await _make_repo(db_session)
+    fake1 = FakeStructuredProvider()
+    _queue_fake_pipeline(fake1, slugs=["index", "architecture", "getting-started"])
+    await run_wiki_generation(
+        session=db_session,
+        repository_id=repo.id,
+        source_commit="abc",
+        sync_run_id=None,
+        llm=fake1,
+        retriever=_retriever(),
+        config=WikiGenerationConfig(),
+    )
+
+    # Re-running with identical bodies → all three slugs should be skipped.
+    fake2 = FakeStructuredProvider()
+    _queue_fake_pipeline(fake2, slugs=["index", "architecture", "getting-started"])
+    result = await run_wiki_generation(
+        session=db_session,
+        repository_id=repo.id,
+        source_commit="abc",
+        sync_run_id=None,
+        llm=fake2,
+        retriever=_retriever(),
+        config=WikiGenerationConfig(),
+    )
+    assert result.pages_skipped == 3
+    assert result.pages_persisted == 3
+
+
+async def test_run_wiki_generation_records_page_failures(
+    db_session: AsyncSession,
+) -> None:
+    repo = await _make_repo(db_session)
+
+    class _PartialFailure:
+        model = "fail-v1"
+        _idx = 0
+
+        async def complete_text(self, *, system, blocks, **_kwargs):  # pragma: no cover
+            raise NotImplementedError
+
+        async def complete_json(self, *, system, blocks, schema, **_kwargs):
+            # Stage 2 + Stage 1.5 + Stage 3 — return overview / mindmap / plan in order.
+            if not hasattr(self, "_json_idx"):
+                self._json_idx = 0
+            self._json_idx += 1
+            if self._json_idx == 1:
+                return RepoOverview(one_line="x", long_description="y")
+            if self._json_idx == 2:
+                return MindMap()
+            return PagePlan.model_validate(
+                {
+                    "pages": [
+                        {"slug": "index", "title": "I", "purpose": "1"},
+                        {"slug": "architecture", "title": "A", "purpose": "2"},
+                        {"slug": "getting-started", "title": "G", "purpose": "3"},
+                    ]
+                }
+            )
+
+        async def complete_with_tools(self, **_kwargs):
+            from backend.app.wiki.llm_client import (
+                StructuredCompletionError,
+                ToolUseResult,
+            )
+
+            self._idx += 1
+            # 1st = index body, 2nd = architecture (raise), 3rd = getting-started.
+            if self._idx == 2:
+                raise StructuredCompletionError("forced failure")
+            await _kwargs["tool_dispatch"](
+                "write_page", {"markdown": f"# page-{self._idx}\n\nbody"}
+            )
+            return ToolUseResult(stop_reason="end_turn", turns_used=1)
+
+    result = await run_wiki_generation(
+        session=db_session,
+        repository_id=repo.id,
+        source_commit="abc",
+        sync_run_id=None,
+        llm=_PartialFailure(),  # type: ignore[arg-type]
+        retriever=_retriever(),
+        config=WikiGenerationConfig(write_concurrency=1),
+    )
+    assert result.pages_planned == 3
+    assert result.pages_written == 2
+    assert result.pages_persisted == 2
+    assert any("page_failed:architecture" in err for err in result.errors)
+
+
+async def test_run_wiki_generation_unresolved_only_telemetry(
+    db_session: AsyncSession,
+) -> None:
+    """A persistently-unverified `[[node:…]]` triggers T3's full repair
+    budget; on exhaust, the gate strips the placeholder and ships at
+    quality_status=degraded. The page persists; the run does NOT fail."""
+    repo = await _make_repo(db_session)
+    fake = FakeStructuredProvider()
+    fake.queue(RepoOverview(one_line="x", long_description="y").model_dump_json())
+    fake.queue(MindMap().model_dump_json())
+    fake.queue(
+        PagePlan.model_validate(
+            {
+                "pages": [
+                    {"slug": "index", "title": "I", "purpose": "p1"},
+                    {"slug": "architecture", "title": "A", "purpose": "p2"},
+                    {"slug": "getting-started", "title": "G", "purpose": "p3"},
+                ]
+            }
+        ).model_dump_json()
+    )
+    # Initial loop for index — emits an unverified citation (no
+    # read_node_by_qn was called, so the ledger is empty).
+    fake.queue_tool_turn(
+        tool_uses=[
+            (
+                "write_page",
+                {
+                    "markdown": "# Index\n\nUnknown ref [[node:does.not.exist]] — but body is fine.",
+                },
+            )
+        ]
+    )
+    fake.queue_tool_turn(text="")
+    # Three repair attempts each re-emit the same bad citation so T3
+    # exhausts the retry budget and falls back to stripping.
+    for _ in range(_CITATION_GATE_MAX_REPAIRS):
+        fake.queue_tool_turn(
+            tool_uses=[
+                (
+                    "write_page",
+                    {
+                        "markdown": "# Index\n\nRepair still cites [[node:does.not.exist]].",
+                    },
+                )
+            ]
+        )
+        fake.queue_tool_turn(text="")
+    # Arch + Getting-started loops, no repair needed.
+    fake.queue_tool_turn(
+        tool_uses=[("write_page", {"markdown": "# Arch\n\nFine body."})]
+    )
+    fake.queue_tool_turn(text="")
+    fake.queue_tool_turn(
+        tool_uses=[("write_page", {"markdown": "# Getting started\n\nFine body."})]
+    )
+    fake.queue_tool_turn(text="")
+
+    result = await run_wiki_generation(
+        session=db_session,
+        repository_id=repo.id,
+        source_commit="abc",
+        sync_run_id=None,
+        llm=fake,
+        retriever=_retriever(),
+        # Serial writes so the queue order matches page order — keeps the
+        # repair pass scoped to `index` instead of leaking onto siblings.
+        config=WikiGenerationConfig(write_concurrency=1),
+    )
+    assert result.pages_persisted == 3
+    # The bad placeholder was stripped to inline-code by T3's fallback,
+    # so Stage 5 sees zero unresolved markers.
+    assert result.unresolved_placeholders_total == 0

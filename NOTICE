@@ -1,0 +1,61 @@
+Cograph
+Copyright 2026 Cograph contributors
+
+This product includes software developed by the Cograph contributors.
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+================================================================================
+Third-party fonts bundled in web/dist (web client build artifact)
+================================================================================
+
+The web client bundles two variable font families via the @fontsource-variable
+wrappers. Both families ship under the SIL Open Font License 1.1 (OFL-1.1).
+
+  * Inter Variable
+    Copyright 2016 The Inter Project Authors
+    https://github.com/rsms/inter
+    Licensed under SIL Open Font License 1.1
+    https://scripts.sil.org/cms/scripts/page.php?site_id=nrsi&id=OFL
+
+  * JetBrains Mono Variable
+    Copyright 2020 The JetBrains Mono Project Authors
+    https://github.com/JetBrains/JetBrainsMono
+    Licensed under SIL Open Font License 1.1
+    https://scripts.sil.org/cms/scripts/page.php?site_id=nrsi&id=OFL
+
+The @fontsource-variable npm packages that wrap these font files are
+themselves licensed under the MIT License.
+
+================================================================================
+Third-party language logos bundled in web/public/lang-icons (web client)
+================================================================================
+
+The 17 SVG language logos under web/public/lang-icons/ are sourced from the
+Iconify "logos" icon set and are distributed under the Creative Commons
+Attribution 4.0 International license (CC-BY-4.0).
+
+  * Iconify Logos
+    https://github.com/iconify/icon-sets
+    Licensed under Creative Commons Attribution 4.0 International
+    https://creativecommons.org/licenses/by/4.0/
+
+The icons depict third-party trademarks (Bash, C, C++, C#, CSS, Go, HTML,
+Java, JavaScript, Kotlin, PHP, Python, Ruby, Rust, Scala, Swift, TypeScript).
+Trademarks remain the property of their respective owners; their inclusion
+here is nominative use to identify language ecosystems and does not imply
+endorsement.
+
+================================================================================
+Other third-party dependencies
+================================================================================
+
+For the complete list of runtime and build-time dependencies and their
+respective licenses, see:
+
+  * web/package.json + web/package-lock.json (npm dependencies)
+  * backend/pyproject.toml + backend/uv.lock     (Python dependencies)
+  * helm/cograph/Chart.yaml                      (Helm chart dependencies)
+
+Each transitive dependency retains its own license; this NOTICE file lists
+only third-party material whose license requires explicit attribution in
+distributed binaries (per Apache-2.0 §4(d)).

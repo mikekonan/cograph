@@ -1,0 +1,129 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      COGRAPH_ENVIRONMENT: development
+      COGRAPH_DATABASE__URL: postgresql+asyncpg://postgres:postgres@postgres:5432/cograph
+      COGRAPH_REDIS__URL: redis://redis:6379/0
+      COGRAPH_GIT__CHECKOUTS_ROOT: /var/lib/cograph/checkouts
+      COGRAPH_AUTH__JWT_SECRET: dev-secret-change-me
+      COGRAPH_AUTH__PUBLIC_READ: "false"
+      COGRAPH_AUTH__SECURE_COOKIES: "false"
+      COGRAPH_EMBEDDING__ENABLED: "true"
+      COGRAPH_EMBEDDING__API_URL: ${COGRAPH_EMBEDDING__API_URL:-https://api.openai.com/v1}
+      COGRAPH_EMBEDDING__API_KEY: ${COGRAPH_EMBEDDING__API_KEY:-set-me-before-real-use}
+      COGRAPH_EMBEDDING__MODEL: ${COGRAPH_EMBEDDING__MODEL:-text-embedding-3-small}
+      COGRAPH_EMBEDDING__DIMENSIONS: ${COGRAPH_EMBEDDING__DIMENSIONS:-1536}
+      COGRAPH_EMBEDDING__BATCH_SIZE: ${COGRAPH_EMBEDDING__BATCH_SIZE:-256}
+    command:
+      - /bin/sh
+      - -lc
+      - >
+        alembic -c backend/alembic.ini upgrade head &&
+        gunicorn backend.app.main:app
+        --worker-class uvicorn_worker.UvicornWorker
+        --bind 0.0.0.0:8000
+        --workers 1
+        --access-logfile -
+        --error-logfile -
+    ports:
+      - "8000:8000"
+    volumes:
+      - cograph-checkouts:/var/lib/cograph/checkouts
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import urllib.request
+          urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=2).read()
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      COGRAPH_ENVIRONMENT: development
+      COGRAPH_DATABASE__URL: postgresql+asyncpg://postgres:postgres@postgres:5432/cograph
+      COGRAPH_REDIS__URL: redis://redis:6379/0
+      COGRAPH_GIT__CHECKOUTS_ROOT: /var/lib/cograph/checkouts
+      COGRAPH_AUTH__JWT_SECRET: dev-secret-change-me
+      COGRAPH_AUTH__PUBLIC_READ: "false"
+      COGRAPH_AUTH__SECURE_COOKIES: "false"
+      COGRAPH_EMBEDDING__ENABLED: "true"
+      COGRAPH_EMBEDDING__API_URL: ${COGRAPH_EMBEDDING__API_URL:-https://api.openai.com/v1}
+      COGRAPH_EMBEDDING__API_KEY: ${COGRAPH_EMBEDDING__API_KEY:-set-me-before-real-use}
+      COGRAPH_EMBEDDING__MODEL: ${COGRAPH_EMBEDDING__MODEL:-text-embedding-3-small}
+      COGRAPH_EMBEDDING__DIMENSIONS: ${COGRAPH_EMBEDDING__DIMENSIONS:-1536}
+      COGRAPH_EMBEDDING__BATCH_SIZE: ${COGRAPH_EMBEDDING__BATCH_SIZE:-256}
+    command:
+      - arq
+      - backend.app.pipeline.worker.WorkerSettings
+    volumes:
+      - cograph-checkouts:/var/lib/cograph/checkouts
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      NGINX_BACKEND_UPSTREAM: http://backend:8000
+    ports:
+      - "${COGRAPH_WEB_PORT:-8080}:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: cograph
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "${COGRAPH_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - cograph-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d cograph"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${COGRAPH_REDIS_PORT:-6379}:6379"
+    volumes:
+      - cograph-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  cograph-checkouts:
+  cograph-postgres-data:
+  cograph-redis-data:

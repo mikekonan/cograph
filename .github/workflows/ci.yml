@@ -1,0 +1,297 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ./backend[dev]
+
+      - name: Create alembic smoke database
+        run: |
+          python - <<'PY'
+          import asyncio
+          import asyncpg
+
+          async def main() -> None:
+              conn = await asyncpg.connect("postgresql://postgres:postgres@127.0.0.1:5432/postgres")
+              try:
+                  await conn.execute('DROP DATABASE IF EXISTS "cograph_ci"')
+                  await conn.execute('CREATE DATABASE "cograph_ci"')
+              finally:
+                  await conn.close()
+
+          asyncio.run(main())
+          PY
+
+      - name: Ruff
+        run: ruff check backend/app backend/tests backend/integration_tests
+
+      - name: Pytest
+        run: python -m pytest backend/tests -q
+
+      - name: Alembic upgrade smoke
+        env:
+          COGRAPH_DATABASE__URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/cograph_ci
+        run: alembic -c backend/alembic.ini upgrade head
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+  packaging:
+    name: Packaging
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    needs:
+      - backend
+      - frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate docker-compose config
+        run: docker compose config
+
+      - name: Build container images
+        run: docker compose build backend worker web
+
+      - name: Smoke packaged stack
+        env:
+          COGRAPH_WEB_PORT: "18080"
+        run: |
+          docker compose up -d
+          python - <<'PY'
+          import http.client
+          import time
+          import urllib.error
+          import urllib.request
+
+
+          def fetch(url: str) -> tuple[int, str, str]:
+              try:
+                  with urllib.request.urlopen(url, timeout=5) as response:
+                      return (
+                          response.getcode(),
+                          response.headers.get("Content-Type", ""),
+                          response.read().decode("utf-8", errors="ignore"),
+                      )
+              except urllib.error.HTTPError as exc:
+                  return (
+                      exc.code,
+                      exc.headers.get("Content-Type", ""),
+                      exc.read().decode("utf-8", errors="ignore"),
+                  )
+
+
+          def wait_for_ok(url: str) -> None:
+              deadline = time.time() + 120
+              last_error: Exception | None = None
+              while time.time() < deadline:
+                  try:
+                      status, _, _ = fetch(url)
+                      if status == 200:
+                          return
+                  except Exception as exc:  # pragma: no cover - CI smoke only
+                      last_error = exc
+                  time.sleep(2)
+              raise AssertionError(f"{url} did not become healthy") from last_error
+
+
+          def fetch_raw(host: str, port: int, path: str) -> tuple[int, str, str, str]:
+              connection = http.client.HTTPConnection(host, port, timeout=5)
+              try:
+                  connection.request("GET", path)
+                  response = connection.getresponse()
+                  body = response.read().decode("utf-8", errors="ignore")
+                  return (
+                      response.status,
+                      response.getheader("Content-Type", ""),
+                      response.getheader("Location", ""),
+                      body,
+                  )
+              finally:
+                  connection.close()
+
+
+          wait_for_ok("http://127.0.0.1:18080/health")
+          wait_for_ok("http://127.0.0.1:18080/api/health")
+
+          status, content_type, location, body = fetch_raw("127.0.0.1", 18080, "/mcp")
+          assert status not in {301, 302, 307, 308}, (
+              f"/mcp unexpectedly redirected instead of normalizing internally: {status} -> {location}"
+          )
+          assert status != 404, f"/mcp unexpectedly returned 404: {body[:200]}"
+          assert status != 421, f"/mcp rejected the proxied host header: {body[:200]}"
+          assert status < 500, f"/mcp returned a server error: {status} {body[:200]}"
+          assert "text/html" not in content_type.lower(), (
+              "/mcp returned the SPA instead of the backend streamable HTTP app"
+          )
+          assert "<!doctype html>" not in body.lower(), (
+              "/mcp returned index.html instead of the backend streamable HTTP app"
+          )
+          PY
+          docker compose exec -T backend python - <<'PY'
+          # Phase 30.2 made /mcp PAT-gated, so the smoke test mints a
+          # throwaway user + PAT with `mcp` scope, then drives a real MCP
+          # session through the packaged web tier with that bearer token.
+          import asyncio
+          import hashlib
+          import secrets as stdlib_secrets
+
+          import httpx
+          from mcp import ClientSession
+          from mcp.client.streamable_http import streamable_http_client
+
+          from backend.app.config import get_settings
+          from backend.app.core.deps import PAT_PLAINTEXT_PREFIX, PAT_PREFIX_DISPLAY_CHARS
+          from backend.app.db.session import SessionManager
+          from backend.app.models.enums import UserRole
+          from backend.app.models.personal_access_token import PersonalAccessToken
+          from backend.app.models.user import User
+
+
+          async def _mint_pat(sm: SessionManager) -> str:
+              secret = stdlib_secrets.token_urlsafe(36)
+              plaintext = f"{PAT_PLAINTEXT_PREFIX}{secret}"
+              token_hash = hashlib.sha256(plaintext.encode("utf-8")).digest()
+              prefix = plaintext[:PAT_PREFIX_DISPLAY_CHARS]
+              async with sm.session() as session:
+                  user = User(
+                      email=f"smoke-{stdlib_secrets.token_hex(4)}@example.com",
+                      password_hash=None,
+                      name="ci-smoke",
+                      role=UserRole.OWNER,
+                      auth_source="password",
+                  )
+                  session.add(user)
+                  await session.flush()
+                  pat = PersonalAccessToken(
+                      user_id=user.id,
+                      name="ci-smoke",
+                      token_hash=token_hash,
+                      token_prefix=prefix,
+                      scopes=["mcp"],
+                  )
+                  session.add(pat)
+                  await session.commit()
+              return plaintext
+
+
+          async def main() -> None:
+              settings = get_settings()
+              sm = SessionManager(settings)
+              try:
+                  pat = await _mint_pat(sm)
+              finally:
+                  await sm.dispose()
+
+              headers = {"Authorization": f"Bearer {pat}"}
+              async with httpx.AsyncClient(
+                  timeout=30, follow_redirects=True, headers=headers
+              ) as http_client:
+                  async with streamable_http_client(
+                      "http://web/mcp", http_client=http_client
+                  ) as (
+                      read_stream,
+                      write_stream,
+                      _,
+                  ):
+                      async with ClientSession(read_stream, write_stream) as session:
+                          await session.initialize()
+                          tools = await session.list_tools()
+
+              tool_names = {tool.name for tool in tools.tools}
+              expected = {
+                  "cograph.retrieve",
+                  "cograph.node",
+                  "cograph.search",
+                  "cograph.search_code",
+                  "cograph.related",
+              }
+              assert tool_names == expected, f"unexpected MCP tools via packaged web tier: {tool_names}"
+
+
+          asyncio.run(main())
+          PY
+
+      - name: Dump compose logs on smoke failure
+        if: failure()
+        run: docker compose logs --tail=200 backend worker web
+
+      - name: Tear down packaged stack
+        if: always()
+        run: docker compose down -v
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+
+      - name: Helm lint
+        run: helm lint helm/cograph
+
+      - name: Helm template
+        run: helm template cograph helm/cograph > /tmp/cograph-helm.yaml

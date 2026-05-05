@@ -1,0 +1,17 @@
+apiVersion: v2
+name: cograph
+description: Helm chart for the Cograph web, backend, and worker services.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/mikekonan/cograph
+sources:
+  - https://github.com/mikekonan/cograph
+keywords:
+  - cograph
+  - rag
+  - code-graph
+  - knowledge-base
+  - mcp
+  - documentation
+

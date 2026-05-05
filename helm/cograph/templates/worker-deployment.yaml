@@ -1,0 +1,48 @@
+{{- if not .Values.worker.runAsSidecar }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ printf "%s-worker" (include "cograph.fullname" .) }}
+  labels:
+    {{- include "cograph.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "cograph.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        {{- include "cograph.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: worker
+          image: {{ include "cograph.backendImage" . }}
+          imagePullPolicy: {{ .Values.images.backend.pullPolicy }}
+          command:
+            - arq
+            - backend.app.pipeline.worker.WorkerSettings
+          env:
+            {{- include "cograph.commonEnv" . | nindent 12 }}
+          envFrom:
+            - secretRef:
+                name: {{ include "cograph.secretName" . }}
+          volumeMounts:
+            - name: checkouts
+              mountPath: {{ .Values.app.gitCheckoutsRoot }}
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+      volumes:
+        - name: checkouts
+          persistentVolumeClaim:
+            claimName: {{ include "cograph.checkoutsClaimName" . }}
+{{- end }}

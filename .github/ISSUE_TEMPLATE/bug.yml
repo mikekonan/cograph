@@ -1,0 +1,72 @@
+name: Bug report
+description: Something is broken or doesn't behave as documented.
+title: "bug: <short summary>"
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report.
+
+        Before submitting, please **search existing issues** to avoid
+        duplicates. Security vulnerabilities should NOT go here — follow
+        [`.github/SECURITY.md`](../SECURITY.md) instead.
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      description: Describe the behavior you expected.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What actually happened?
+      description: Describe the behavior you observed. Paste error messages, stack traces, or screenshots if relevant.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: |
+        Exact, ordered steps. Include the repo URL you indexed, the page
+        you opened, the command you ran, etc. Minimal reproductions help
+        a lot.
+      placeholder: |
+        1. `docker compose up`
+        2. Index `https://github.com/...`
+        3. Open `/repos/.../wiki`
+        4. ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: Cograph commit SHA, tag, or `main` checkout date. Run `git rev-parse HEAD` if unsure.
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: |
+        OS, container runtime, Postgres version, browser (for FE bugs),
+        whether you're running docker compose / Helm / dev mode.
+      placeholder: |
+        - OS: macOS 15.1 / Ubuntu 24.04 / ...
+        - Runtime: docker compose / Helm 3.x / dev mode
+        - Browser: Chrome 130 (FE bugs only)
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant logs or backend errors. Wrap in code fences.
+      render: shell
