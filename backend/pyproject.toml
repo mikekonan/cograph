@@ -1,0 +1,96 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cograph-backend"
+version = "0.1.0"
+description = "Backend services for Cograph — a self-hosted tool that turns git repositories into browsable knowledge bases (auto-generated docs, RAG chat, code-graph explorer) over Web UI / REST API / MCP."
+license = { text = "Apache-2.0" }
+requires-python = ">=3.12"
+keywords = [
+  "cograph",
+  "rag",
+  "code-graph",
+  "knowledge-base",
+  "mcp",
+  "documentation",
+  "ast",
+  "llm",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Documentation",
+  "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+  "fastapi>=0.115",
+  "sqlalchemy[asyncio]>=2.0",
+  "asyncpg>=0.30",
+  "aiosqlite>=0.20",
+  "alembic>=1.14",
+  "gunicorn>=23.0",
+  "pydantic[email]>=2.10",
+  "pydantic-settings>=2.0",
+  "python-jose>=3.3",
+  "bcrypt>=5.0",
+  "arq>=0.26",
+  "gitpython>=3.1",
+  "tree-sitter>=0.24",
+  # 1.6.3 changed the Python wheel layout and dropped the
+  # `tree_sitter_language_pack` module our parser imports.
+  "tree-sitter-language-pack==1.6.2",
+  "PyYAML>=6.0",
+  "uvicorn[standard]>=0.30",
+  "uvicorn-worker>=0.3",
+  "mcp[cli]>=1.13.1",
+  "openai>=1.50",
+  "pgvector>=0.3",
+  "python-multipart>=0.0.12",
+  "tenacity>=9.1.4",
+  "cryptography>=46.0.7",
+  # Cluster-based wiki page planning: sklearn.cluster.HDBSCAN over
+  # code_embeddings.embedding to group related symbols before planning.
+  "scikit-learn>=1.3",
+  # Zip-archive ingest: parse .gitignore files inside uploaded archives so
+  # we skip what git would skip (node_modules, dist, .venv, target, etc.)
+  # before they hit the per-file / decompressed caps.
+  "pathspec>=0.12",
+]
+
+[project.urls]
+Homepage = "https://github.com/mikekonan/cograph"
+Repository = "https://github.com/mikekonan/cograph"
+Issues = "https://github.com/mikekonan/cograph/issues"
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.28",
+  "pytest>=8.3",
+  "pytest-asyncio>=0.24",
+  "ruff>=0.11",
+]
+# Phase 7d: local cross-encoder reranker. Pulls torch + sentence-transformers
+# (~500 MB CPU-only). Skip this extra to deploy with rerank disabled or with
+# a remote provider (cohere / voyage).
+reranker-local = [
+  "sentence-transformers>=3.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+exclude = ["tests*", "integration_tests*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = [".."]
+markers = [
+  "integration: tests that require live infrastructure such as PostgreSQL",
+]

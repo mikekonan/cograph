@@ -1,0 +1,18 @@
+{{- if not .Values.checkouts.existingClaim }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "cograph.checkoutsClaimName" . }}
+  labels:
+    {{- include "cograph.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.checkouts.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.checkouts.size }}
+  {{- with .Values.checkouts.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+{{- end }}
+

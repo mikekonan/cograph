@@ -1,0 +1,106 @@
+nameOverride: ""
+fullnameOverride: ""
+
+imagePullSecrets: []
+
+images:
+  backend:
+    repository: ghcr.io/mikekonan/cograph-backend
+    tag: latest
+    pullPolicy: IfNotPresent
+  web:
+    repository: ghcr.io/mikekonan/cograph-web
+    tag: latest
+    pullPolicy: IfNotPresent
+
+app:
+  environment: production
+  gitCheckoutsRoot: /var/lib/cograph/checkouts
+  auth:
+    secureCookies: true
+  embedding:
+    enabled: true
+    apiUrl: https://api.openai.com/v1
+    model: text-embedding-3-small
+    dimensions: 1536
+    batchSize: 256
+  completion:
+    enabled: false
+    apiUrl: https://api.openai.com/v1
+    model: gpt-5.4-mini
+
+backend:
+  replicaCount: 1
+  service:
+    port: 8000
+  gunicorn:
+    workers: 2
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+worker:
+  # Single-pod deploy mode: render the arq worker as a container in the
+  # backend pod instead of as a standalone Deployment. Use this when you
+  # want one PVC for the git checkouts (no shared-volume requirement) or
+  # for simpler single-replica installs. When true, `worker.replicaCount`
+  # is ignored and `backend.replicaCount` should be 1.
+  runAsSidecar: false
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+web:
+  replicaCount: 1
+  service:
+    port: 80
+  backendUpstream: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: cograph.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+checkouts:
+  existingClaim: ""
+  storageClassName: ""
+  accessModes:
+    - ReadWriteMany
+  size: 20Gi
+
+secrets:
+  # Reference an externally-managed Secret (e.g. one created by
+  # external-secrets-operator from Vault) instead of letting the chart
+  # render its own. The Secret must expose the same env-var keys the
+  # chart writes when this is empty: COGRAPH_DATABASE__URL,
+  # COGRAPH_REDIS__URL, COGRAPH_AUTH__JWT_SECRET,
+  # COGRAPH_EMBEDDING__API_KEY, COGRAPH_COMPLETION__API_KEY.
+  # When set, the fields below are ignored.
+  existingSecret: ""
+  databaseUrl: postgresql+asyncpg://postgres:postgres@postgres:5432/cograph
+  redisUrl: redis://redis:6379/0
+  authJwtSecret: change-me
+  embeddingApiKey: set-me
+  completionApiKey: ""

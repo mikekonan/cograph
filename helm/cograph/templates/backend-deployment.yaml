@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cograph.backendServiceName" . }}
+  labels:
+    {{- include "cograph.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  replicas: {{ .Values.backend.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "cograph.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: backend
+  template:
+    metadata:
+      labels:
+        {{- include "cograph.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: backend
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: backend
+          image: {{ include "cograph.backendImage" . }}
+          imagePullPolicy: {{ .Values.images.backend.pullPolicy }}
+          command:
+            - gunicorn
+            - backend.app.main:app
+            - --worker-class
+            - uvicorn_worker.UvicornWorker
+            - --bind
+            - 0.0.0.0:{{ .Values.backend.service.port }}
+            - --workers
+            - {{ .Values.backend.gunicorn.workers | quote }}
+            - --access-logfile
+            - "-"
+            - --error-logfile
+            - "-"
+          ports:
+            - name: http
+              containerPort: {{ .Values.backend.service.port }}
+          env:
+            {{- include "cograph.commonEnv" . | nindent 12 }}
+          envFrom:
+            - secretRef:
+                name: {{ include "cograph.secretName" . }}
+          volumeMounts:
+            - name: checkouts
+              mountPath: {{ .Values.app.gitCheckoutsRoot }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+        {{- if .Values.worker.runAsSidecar }}
+        - name: worker
+          image: {{ include "cograph.backendImage" . }}
+          imagePullPolicy: {{ .Values.images.backend.pullPolicy }}
+          command:
+            - arq
+            - backend.app.pipeline.worker.WorkerSettings
+          env:
+            {{- include "cograph.commonEnv" . | nindent 12 }}
+          envFrom:
+            - secretRef:
+                name: {{ include "cograph.secretName" . }}
+          volumeMounts:
+            - name: checkouts
+              mountPath: {{ .Values.app.gitCheckoutsRoot }}
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+        {{- end }}
+      volumes:
+        - name: checkouts
+          persistentVolumeClaim:
+            claimName: {{ include "cograph.checkoutsClaimName" . }}
