@@ -38,11 +38,8 @@ backend/integration_tests/README.md
 # Codexpotter — per-user knowledge-base notes / session logs
 .codexpotter/
 
-# Entire — runtime data (see .entire/.gitignore for the authoritative list)
-.entire/tmp/
-.entire/logs/
-.entire/metadata/
-.entire/settings.local.json
+# Entire — per-user session tracker, never checked in
+.entire/
 
 # TS incremental build cache
 *.tsbuildinfo

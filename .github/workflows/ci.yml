@@ -299,3 +299,35 @@ jobs:
 
       - name: Helm template
         run: helm template cograph helm/cograph > /tmp/cograph-helm.yaml
+
+  tag:
+    name: Auto tag
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs:
+      - backend
+      - frontend
+      - packaging
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create and push tag
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          short_sha=$(git rev-parse --short=7 HEAD)
+          tag="v$(date -u +%Y.%m.%d)-${short_sha}"
+          if git ls-remote --tags origin "refs/tags/${tag}" | grep -q "refs/tags/${tag}$"; then
+            echo "Tag ${tag} already exists on origin — skipping"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${tag}" -m "auto: main @ $(git rev-parse HEAD)"
+          git push origin "${tag}"
+          echo "Pushed tag ${tag}"
