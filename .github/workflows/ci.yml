@@ -235,7 +235,7 @@ jobs:
                       name="ci-smoke",
                       token_hash=token_hash,
                       token_prefix=prefix,
-                      scopes=["mcp"],
+                      scopes=["mcp", "api:read"],
                   )
                   session.add(pat)
                   await session.commit()
