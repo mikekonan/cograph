@@ -15,6 +15,7 @@ from backend.app.wiki.llm_client import FakeStructuredProvider
 from backend.app.wiki.pipeline import (
     _CITATION_GATE_MAX_REPAIRS,
     WikiGenerationConfig,
+    WikiQualityError,
     run_wiki_generation,
 )
 from backend.app.wiki.retrieval import WikiRetrievalService
@@ -362,3 +363,53 @@ async def test_run_wiki_generation_unresolved_only_telemetry(
     # The bad placeholder was stripped to inline-code by T3's fallback,
     # so Stage 5 sees zero unresolved markers.
     assert result.unresolved_placeholders_total == 0
+
+
+async def test_strict_quality_rejects_degraded_pages_before_persist(
+    db_session: AsyncSession,
+) -> None:
+    repo = await _make_repo(db_session)
+    fake = FakeStructuredProvider()
+    fake.queue(RepoOverview(one_line="x", long_description="y").model_dump_json())
+    fake.queue(MindMap().model_dump_json())
+    fake.queue(
+        PagePlan.model_validate(
+            {"pages": [{"slug": "index", "title": "I", "purpose": "p"}]}
+        ).model_dump_json()
+    )
+    fake.queue_tool_turn(
+        tool_uses=[("write_page", {"markdown": "# Index\n\n[[node:missing.Symbol]]"})]
+    )
+    fake.queue_tool_turn(text="")
+    for _ in range(_CITATION_GATE_MAX_REPAIRS):
+        fake.queue_tool_turn(
+            tool_uses=[
+                ("write_page", {"markdown": "# Index\n\n[[node:missing.Symbol]]"})
+            ]
+        )
+        fake.queue_tool_turn(text="")
+
+    with pytest.raises(WikiQualityError, match="page_quality:index:degraded"):
+        await run_wiki_generation(
+            session=db_session,
+            repository_id=repo.id,
+            source_commit="abc",
+            sync_run_id=None,
+            llm=fake,
+            retriever=_retriever(),
+            config=WikiGenerationConfig(
+                page_count_min=1,
+                write_concurrency=1,
+                strict_quality=True,
+            ),
+        )
+
+    persisted = (
+        await db_session.execute(
+            select(Document).where(
+                Document.repository_id == repo.id,
+                Document.doc_type == "wiki",
+            )
+        )
+    ).scalars().all()
+    assert persisted == []

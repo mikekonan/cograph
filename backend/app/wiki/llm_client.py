@@ -32,6 +32,8 @@ from pydantic import BaseModel, ValidationError
 
 T = TypeVar("T", bound=BaseModel)
 
+_TOOL_RESULT_COMPACT_CHAR_CAP = 4_000
+
 
 class StructuredCompletionError(RuntimeError):
     """Raised when the LLM call fails after retries or returns unparseable JSON."""
@@ -134,7 +136,7 @@ class StructuredCompletionProvider(Protocol):
         soft_turn_budget: int = 12,
         max_tokens_per_turn: int = 4096,
         temperature: float = 0.0,
-        max_input_chars: int | None = 700_000,
+        max_input_chars: int | None = 450_000,
     ) -> ToolUseResult: ...
 
 
@@ -236,7 +238,7 @@ class FakeStructuredProvider:
         soft_turn_budget: int = 12,
         max_tokens_per_turn: int = 4096,
         temperature: float = 0.0,
-        max_input_chars: int | None = 700_000,
+        max_input_chars: int | None = 450_000,
     ) -> ToolUseResult:
         """Replay the queued `FakeAssistantTurn`s against the dispatcher.
 
@@ -421,6 +423,12 @@ class OpenAICompatibleStructuredProvider:
             raise StructuredCompletionError(
                 f"OpenAICompatibleStructuredProvider exhausted {self._max_attempts} attempts"
             ) from exc
+        except Exception as exc:
+            if _is_context_length_exceeded(exc):
+                raise StructuredCompletionError(
+                    "LLM input exceeded the model context window"
+                ) from exc
+            raise
 
         if resp is None:
             raise StructuredCompletionError(
@@ -480,7 +488,7 @@ class OpenAICompatibleStructuredProvider:
         soft_turn_budget: int = 12,
         max_tokens_per_turn: int = 4096,
         temperature: float = 0.0,
-        max_input_chars: int | None = 700_000,
+        max_input_chars: int | None = 450_000,
     ) -> ToolUseResult:
         """OpenAI Chat Completions function-calling loop.
 
@@ -563,19 +571,24 @@ class OpenAICompatibleStructuredProvider:
                 and max_input_chars is not None
                 and _measure_messages_chars(messages) > max_input_chars
             ):
-                budget_exceeded = True
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            "Context budget reached — DO NOT call any more "
-                            "tools. Produce the final markdown body now using "
-                            "the evidence you already have. Cite only the "
-                            "qualified names and file paths you have already "
-                            "verified via prior tool calls."
-                        ),
-                    }
+                _compact_tool_messages(
+                    messages,
+                    cap=_TOOL_RESULT_COMPACT_CHAR_CAP,
                 )
+                if _measure_messages_chars(messages) > max_input_chars:
+                    budget_exceeded = True
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "Context budget reached — DO NOT call any more "
+                                "tools. Produce the final markdown body now using "
+                                "the evidence you already have. Cite only the "
+                                "qualified names and file paths you have already "
+                                "verified via prior tool calls."
+                            ),
+                        }
+                    )
 
             request_kwargs: dict[str, Any] = {
                 "model": self._model,
@@ -619,13 +632,16 @@ class OpenAICompatibleStructuredProvider:
                 # the caller decides whether the partial output is
                 # usable. Other 400s (schema validation, malformed tool
                 # args) keep raising so they get surfaced.
-                err_code = ""
-                err_payload = getattr(exc, "body", None)
-                if isinstance(err_payload, dict):
-                    err = err_payload.get("error")
-                    if isinstance(err, dict):
-                        err_code = str(err.get("code") or "")
-                if err_code == "context_length_exceeded":
+                if _is_context_length_exceeded(exc):
+                    stop_reason = "budget_exhausted"
+                    break
+                raise
+            except Exception as exc:
+                # Some openai/tenacity combinations surface non-retryable
+                # 400s from AsyncRetrying.__anext__ instead of the inner
+                # create() await. Keep context-window overflow recoverable
+                # regardless of that call-stack shape.
+                if _is_context_length_exceeded(exc):
                     stop_reason = "budget_exhausted"
                     break
                 raise
@@ -739,10 +755,10 @@ def _measure_messages_chars(messages: list[dict[str, Any]]) -> int:
 
     We sum the `content` length of every message plus a small per-tool-call
     overhead so the estimate captures function-call argument blobs too. The
-    OpenAI tokenizer averages ~3.5 chars/token for English+code, so a
-    700_000-char budget translates to ~200_000 tokens — comfortably under
-    the 272k context window of GPT-5.4-mini once we add system prompt,
-    tool definitions, and reasoning headroom.
+    OpenAI tokenization is denser on code-shaped identifiers than prose, so
+    the default 450_000-char budget leaves room under the 272k-token context
+    window of GPT-5.4-mini once system prompts, tool definitions, and
+    reasoning headroom are included.
     """
     total = 0
     for msg in messages:
@@ -763,6 +779,38 @@ def _measure_messages_chars(messages: list[dict[str, Any]]) -> int:
     return total
 
 
+def _compact_tool_messages(messages: list[dict[str, Any]], *, cap: int) -> None:
+    """Shrink already-returned tool payloads before giving up on tools.
+
+    The writer can re-read a file or run a narrower search if it needs
+    omitted detail. Keeping tool availability for one more turn usually
+    preserves page quality better than forcing an immediate final answer.
+    """
+    for msg in messages:
+        if msg.get("role") != "tool":
+            continue
+        content = msg.get("content")
+        if isinstance(content, str) and len(content) > cap:
+            msg["content"] = _compact_tool_result_content(content, cap=cap)
+
+
+def _compact_tool_result_content(content: str, *, cap: int) -> str:
+    if len(content) <= cap:
+        return content
+    return json.dumps(
+        {
+            "truncated": True,
+            "original_chars": len(content),
+            "prefix": content[:cap],
+            "message": (
+                "Tool output was compacted to keep the LLM context within "
+                "budget. Re-run the same tool with narrower arguments or "
+                "line offsets if omitted detail is needed."
+            ),
+        }
+    )
+
+
 def _normalise_finish_reason(reason: str) -> str:
     """Map OpenAI `finish_reason` to the `ToolUseResult.stop_reason` vocabulary.
 
@@ -780,3 +828,18 @@ def _normalise_finish_reason(reason: str) -> str:
     if reason == "tool_calls":
         return "tool_use"
     return reason
+
+
+def _is_context_length_exceeded(exc: BaseException) -> bool:
+    """Detect OpenAI-compatible context-window errors across SDK variants."""
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        err = body.get("error")
+        if isinstance(err, dict):
+            if str(err.get("code") or "") == "context_length_exceeded":
+                return True
+            message = str(err.get("message") or "")
+            if "Input tokens exceed" in message or "context length" in message:
+                return True
+    text = str(exc)
+    return "context_length_exceeded" in text or "Input tokens exceed" in text

@@ -775,6 +775,70 @@ async def test_input_budget_guard_drops_tools_and_forces_final_write() -> None:
 
 
 @pytest.mark.asyncio
+async def test_large_tool_result_is_compacted_without_dropping_tools() -> None:
+    """Oversized tool replies are compacted before the loop gives up tools.
+
+    This protects writer quality: after reading a large file/search result,
+    the agent still gets another normal tool-capable turn instead of being
+    forced to write immediately.
+    """
+    big_payload = "x" * 50_000
+    responses = [
+        _response(
+            choices=[
+                _choice(
+                    _message(
+                        tool_calls=[
+                            _tool_call(
+                                id="call_1",
+                                name="read_file",
+                                arguments=json.dumps({"path": "large.py"}),
+                            )
+                        ]
+                    ),
+                    finish_reason="tool_calls",
+                )
+            ],
+            usage=_usage(prompt_tokens=10),
+        ),
+        _response(
+            choices=[
+                _choice(
+                    _message(content="final markdown body"),
+                    finish_reason="stop",
+                )
+            ],
+            usage=_usage(prompt_tokens=20, completion_tokens=5),
+        ),
+    ]
+    provider, capture = _build_provider(responses)
+
+    async def _dispatch(_name: str, _payload: dict[str, Any]) -> dict[str, Any]:
+        return {"body": big_payload}
+
+    result = await provider.complete_with_tools(
+        system="sys",
+        blocks=[CacheBlock(text="ctx")],
+        tools=[
+            ToolDefinition(
+                name="read_file", description="d", input_schema={"type": "object"}
+            )
+        ],
+        tool_dispatch=_dispatch,
+        max_turns=10,
+        soft_turn_budget=99,
+        max_input_chars=20_000,
+    )
+
+    assert result.final_text == "final markdown body"
+    second = capture[1]
+    assert "tools" in second
+    tool_message = [m for m in second["messages"] if m["role"] == "tool"][0]
+    assert '"truncated": true' in tool_message["content"]
+    assert len(tool_message["content"]) < 5_000
+
+
+@pytest.mark.asyncio
 async def test_context_length_exceeded_breaks_loop_with_partial_output() -> None:
     """A 400 with `code: context_length_exceeded` from the API exits the
     loop with `budget_exhausted` instead of bubbling up — preserving any
@@ -857,6 +921,95 @@ async def test_context_length_exceeded_breaks_loop_with_partial_output() -> None
 
     assert result.stop_reason == "budget_exhausted"
     assert result.final_text == "partial text emitted before tool call"
+
+
+@pytest.mark.asyncio
+async def test_context_length_exceeded_from_tenacity_iterator_is_recoverable() -> None:
+    """Provider adapters can surface context-window 400s from the retry
+    iterator rather than the inner OpenAI await. The loop must still rescue
+    the page instead of crashing the whole repo sync."""
+
+    class _ContextLengthError(Exception):
+        body = {
+            "error": {
+                "message": "Input tokens exceed the configured limit",
+                "type": "invalid_request_error",
+                "code": "context_length_exceeded",
+            }
+        }
+
+    class _BoomClient:
+        def __init__(self) -> None:
+            self.chat = SimpleNamespace(
+                completions=SimpleNamespace(create=self._create)
+            )
+
+        async def _create(self, **_kwargs: Any) -> SimpleNamespace:
+            raise _ContextLengthError()
+
+    provider = OpenAICompatibleStructuredProvider(
+        api_url="https://example.invalid/v1",
+        api_key="test-key",
+        model="gpt-5.4-mini",
+        max_attempts=1,
+    )
+    provider._client = _BoomClient()  # type: ignore[attr-defined]
+
+    async def _dispatch(_n: str, _p: dict[str, Any]) -> dict[str, Any]:
+        return {}
+
+    result = await provider.complete_with_tools(
+        system="sys",
+        blocks=[CacheBlock(text="ctx")],
+        tools=[
+            ToolDefinition(
+                name="grep", description="d", input_schema={"type": "object"}
+            )
+        ],
+        tool_dispatch=_dispatch,
+        max_turns=2,
+        max_input_chars=None,
+    )
+
+    assert result.stop_reason == "budget_exhausted"
+
+
+@pytest.mark.asyncio
+async def test_context_length_exceeded_in_text_call_maps_to_structured_error() -> None:
+    """Non-tool structured calls cannot ship partial output, but they should
+    raise the pipeline's error type instead of leaking SDK-specific 400s."""
+
+    class _ContextLengthError(Exception):
+        body = {
+            "error": {
+                "message": "Input tokens exceed the configured limit",
+                "type": "invalid_request_error",
+                "code": "context_length_exceeded",
+            }
+        }
+
+    class _BoomClient:
+        def __init__(self) -> None:
+            self.chat = SimpleNamespace(
+                completions=SimpleNamespace(create=self._create)
+            )
+
+        async def _create(self, **_kwargs: Any) -> SimpleNamespace:
+            raise _ContextLengthError()
+
+    provider = OpenAICompatibleStructuredProvider(
+        api_url="https://example.invalid/v1",
+        api_key="test-key",
+        model="gpt-5.4-mini",
+        max_attempts=1,
+    )
+    provider._client = _BoomClient()  # type: ignore[attr-defined]
+
+    with pytest.raises(StructuredCompletionError, match="context window"):
+        await provider.complete_text(
+            system="sys",
+            blocks=[CacheBlock(text="ctx")],
+        )
 
 
 @pytest.mark.asyncio

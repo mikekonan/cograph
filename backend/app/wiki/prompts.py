@@ -1398,11 +1398,12 @@ def _format_mindmap(mindmap: MindMap) -> str:
     return "\n".join(parts)
 
 
-# Hard cap on the cached repo-context block. Sized so that even a
-# bloated block fits into the 272k-token context window of GPT-5.4-mini
-# alongside the system prompt, schema hint, user block, and reasoning
-# headroom. ~3.5 chars/token → 600_000 chars ≈ 170k tokens.
-_REPO_CONTEXT_BLOCK_CHAR_CAP = 600_000
+# Hard cap on the cached repo-context block. Sized conservatively for
+# GPT-5.4-mini's 272k-token context window. Code-shaped manifests tokenize
+# much more densely than prose, so a 350k-char cap leaves room for the
+# system prompt, schema/tool definitions, fresh page blocks, tool replies,
+# and reasoning headroom.
+_REPO_CONTEXT_BLOCK_CHAR_CAP = 350_000
 
 
 def build_repo_context_block(context: RepoContext) -> str:

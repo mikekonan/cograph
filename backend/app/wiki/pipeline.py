@@ -48,6 +48,7 @@ from backend.app.wiki.citation_gate import (
 )
 from backend.app.wiki.coverage_gate import (
     coverage_outcome,
+    ensure_inferred_answer_markers,
     strip_forbidden_sections,
     strip_unanswered_markers,
     validate_coverage,
@@ -121,6 +122,10 @@ _AUTO_LINK_MAX_PER_PAGE = 30
 # nudge, after which the next end-turn ships whatever the agent has.
 _AGENT_MAX_TURNS = 20
 _AGENT_SOFT_TURN_BUDGET = 12
+# Keep first-pass writer sessions below the model's real context ceiling even
+# after several file/tool replies have accumulated.
+_AGENT_MAX_INPUT_CHARS = 450_000
+_WRITER_EMPTY_BODY_MAX_RETRIES = 1
 
 # T3 citation-gate retry budget. After this many gate failures we strip
 # invalid placeholders and ship at `quality_status=degraded`. Picking 3:
@@ -137,6 +142,11 @@ _COVERAGE_GATE_MAX_REPAIRS = 1
 # main soft budget.
 _REPAIR_SOFT_TURN_BUDGET = 6
 _REPAIR_MAX_TURNS = 10
+# Repair prompts include the previous page body plus the verified-evidence
+# ledger, so they start larger than first-pass writer prompts. Keep their
+# input budget tighter: if the agent asks for too much more evidence, force
+# final output and let the deterministic fallback strip unresolved gaps.
+_REPAIR_MAX_INPUT_CHARS = 400_000
 
 # T5 two-pass writer trigger. Pages whose `PageKind` is in this set
 # benefit most from outline-then-prose: their structure is heavy
@@ -165,12 +175,20 @@ class WikiPlanError(RuntimeError):
     """
 
 
+class WikiQualityError(RuntimeError):
+    """Raised when strict reindexing would publish partial/degraded wiki pages."""
+
+
 @dataclass(slots=True, frozen=True)
 class WikiGenerationConfig:
     write_concurrency: int = 4
     persist: bool = True
     enable_diagrams: bool = True
     enable_cross_linker: bool = False
+    # When enabled, partial/degraded generated pages fail the sync before
+    # persistence. The worker uses this so reindex never silently lowers
+    # published wiki quality.
+    strict_quality: bool = False
     # T5: two-pass writing for high-importance pages. When False, every
     # page goes through the single-pass agent loop. When True, pages
     # whose `PageKind` is in `_TWO_PASS_PAGE_KINDS` route through
@@ -724,26 +742,58 @@ async def write_pages(
 
             if body is None:
                 # Single-pass path (default, plus fallback after two-pass failure).
-                try:
-                    result = await llm.complete_with_tools(
-                        system=PAGE_WRITER_SYSTEM,
-                        blocks=blocks,
-                        tools=tool_definitions,
-                        tool_dispatch=dispatcher.dispatch,
-                        max_turns=_AGENT_MAX_TURNS,
-                        soft_turn_budget=_AGENT_SOFT_TURN_BUDGET,
-                        max_tokens_per_turn=config.page_writer_max_tokens,
-                        temperature=0.0,
-                    )
-                except StructuredCompletionError as exc:
-                    logger.warning(
-                        "write_pages: agent loop failed for slug=%s (%s)",
-                        spec.slug,
-                        exc,
-                    )
-                    return None
-
-                body = (dispatcher.captured_markdown or result.final_text).strip()
+                write_aggregate = ToolUseAggregate()
+                body = ""
+                for write_attempt in range(1, _WRITER_EMPTY_BODY_MAX_RETRIES + 2):
+                    attempt_blocks = blocks
+                    if write_attempt > 1:
+                        retry_user_block = (
+                            f"{user_block}\n\n"
+                            "<retry_instruction>\n"
+                            "The previous writer attempt ended without emitting "
+                            "markdown. Restart the writer loop for this page: "
+                            "use tools as needed, then call `write_page` exactly "
+                            "once with the complete markdown body.\n"
+                            "</retry_instruction>"
+                        )
+                        attempt_blocks = [
+                            CacheBlock(text=cached_repo_block, cacheable=True),
+                            CacheBlock(text=retry_user_block, cacheable=False),
+                        ]
+                    try:
+                        result = await llm.complete_with_tools(
+                            system=PAGE_WRITER_SYSTEM,
+                            blocks=attempt_blocks,
+                            tools=tool_definitions,
+                            tool_dispatch=dispatcher.dispatch,
+                            max_turns=_AGENT_MAX_TURNS,
+                            soft_turn_budget=_AGENT_SOFT_TURN_BUDGET,
+                            max_tokens_per_turn=config.page_writer_max_tokens,
+                            temperature=0.0,
+                            max_input_chars=_AGENT_MAX_INPUT_CHARS,
+                        )
+                    except StructuredCompletionError as exc:
+                        logger.warning(
+                            "write_pages: agent loop failed for slug=%s (%s)",
+                            spec.slug,
+                            exc,
+                        )
+                        return None
+                    write_aggregate.add(result, dispatcher.files_read)
+                    body = (
+                        dispatcher.captured_markdown or result.final_text
+                    ).strip()
+                    if body:
+                        break
+                    if write_attempt <= _WRITER_EMPTY_BODY_MAX_RETRIES:
+                        logger.warning(
+                            "write_pages: empty body for slug=%s on attempt %d/%d "
+                            "(stop=%s); retrying",
+                            spec.slug,
+                            write_attempt,
+                            _WRITER_EMPTY_BODY_MAX_RETRIES + 1,
+                            result.stop_reason,
+                        )
                 if not body:
                     logger.warning("write_pages: empty body for slug=%s", spec.slug)
                     return None
@@ -752,30 +802,30 @@ async def write_pages(
                     "wiki stage 4: agent loop done for slug=%s (turns=%d, tools=%s, "
                     "tokens_in=%d, tokens_out=%d, stop=%s)",
                     spec.slug,
-                    result.turns_used,
-                    dict(result.tools_called),
-                    result.tokens_in,
-                    result.tokens_out,
-                    result.stop_reason,
+                    write_aggregate.turns_used,
+                    dict(write_aggregate.tools_called),
+                    write_aggregate.tokens_in,
+                    write_aggregate.tokens_out,
+                    write_aggregate.stop_reason,
                 )
 
                 # When falling back from two-pass we keep the outline-pass
                 # tool counters and merge the single-pass numbers in on top.
                 fallback_telemetry = AgentTelemetry(
-                    turns_used=telemetry.turns_used + result.turns_used,
+                    turns_used=telemetry.turns_used + write_aggregate.turns_used,
                     tools_called=_merge_counters(
-                        telemetry.tools_called, dict(result.tools_called)
+                        telemetry.tools_called, dict(write_aggregate.tools_called)
                     ),
                     files_read=sorted(
-                        set(telemetry.files_read) | dispatcher.files_read
+                        set(telemetry.files_read) | write_aggregate.files_read
                     ),
-                    tokens_in=telemetry.tokens_in + result.tokens_in,
-                    tokens_out=telemetry.tokens_out + result.tokens_out,
+                    tokens_in=telemetry.tokens_in + write_aggregate.tokens_in,
+                    tokens_out=telemetry.tokens_out + write_aggregate.tokens_out,
                     cache_read_tokens=telemetry.cache_read_tokens
-                    + result.cache_read_tokens,
+                    + write_aggregate.cache_read_tokens,
                     cache_creation_tokens=telemetry.cache_creation_tokens
-                    + result.cache_creation_tokens,
-                    stop_reason=result.stop_reason,
+                    + write_aggregate.cache_creation_tokens,
+                    stop_reason=write_aggregate.stop_reason,
                     outline_status=outline_status,
                 )
                 telemetry = fallback_telemetry
@@ -1005,6 +1055,7 @@ async def _run_outline_pass(
                 soft_turn_budget=_AGENT_SOFT_TURN_BUDGET,
                 max_tokens_per_turn=config.page_writer_max_tokens,
                 temperature=0.0,
+                max_input_chars=_AGENT_MAX_INPUT_CHARS,
             )
         except _SCE as exc:
             last_err = exc
@@ -1237,6 +1288,7 @@ async def _run_citation_gate_loop(
                 soft_turn_budget=_REPAIR_SOFT_TURN_BUDGET,
                 max_tokens_per_turn=config.page_writer_max_tokens,
                 temperature=0.0,
+                max_input_chars=_REPAIR_MAX_INPUT_CHARS,
             )
         except StructuredCompletionError as exc:
             logger.warning(
@@ -1273,9 +1325,10 @@ async def _run_citation_gate_loop(
         invalid = validate_citations(body, dispatcher.ledger)
 
     if not invalid:
-        # Repair succeeded within budget — partial means "we had to
-        # repair, but the page is now clean". Citation gate passed.
-        status = QualityStatus.OK if repair_attempts == 0 else QualityStatus.PARTIAL
+        # Repair succeeded within budget. The persisted page is clean, so
+        # keep the quality status OK; `repair_attempts` still records that
+        # the writer needed correction.
+        status = QualityStatus.OK
         telemetry = telemetry.model_copy(
             update={
                 "citation_count": _count_citations(body),
@@ -1384,6 +1437,11 @@ async def _run_coverage_gate_loop(
         # No coverage contract on this page — skip the gate entirely.
         return body, telemetry
 
+    body = ensure_inferred_answer_markers(
+        markdown=body,
+        covers_questions=spec.covers_questions,
+        ledger=dispatcher.ledger,
+    )
     result = validate_coverage(
         markdown=body,
         covers_questions=spec.covers_questions,
@@ -1440,6 +1498,7 @@ async def _run_coverage_gate_loop(
                 soft_turn_budget=_REPAIR_SOFT_TURN_BUDGET,
                 max_tokens_per_turn=config.page_writer_max_tokens,
                 temperature=0.0,
+                max_input_chars=_REPAIR_MAX_INPUT_CHARS,
             )
         except StructuredCompletionError as exc:
             logger.warning(
@@ -1473,7 +1532,11 @@ async def _run_coverage_gate_loop(
             }
         )
         if repaired:
-            body = repaired
+            body = ensure_inferred_answer_markers(
+                markdown=repaired,
+                covers_questions=spec.covers_questions,
+                ledger=dispatcher.ledger,
+            )
         result = validate_coverage(
             markdown=body,
             covers_questions=spec.covers_questions,
@@ -1481,9 +1544,10 @@ async def _run_coverage_gate_loop(
         )
 
     if result.is_clean:
-        # Repair succeeded within budget — at least PARTIAL because we
-        # had to repair. If T3 already set DEGRADED, keep it.
-        new_status = _downgrade_status(telemetry.quality_status, QualityStatus.PARTIAL)
+        # Repair succeeded within budget. Do not downgrade a clean final
+        # page just because an internal repair pass was needed; keep any
+        # worse T3 status if it already exists.
+        new_status = telemetry.quality_status or QualityStatus.OK
         telemetry = telemetry.model_copy(
             update={
                 "answered_questions": list(result.answered_questions),
@@ -2878,6 +2942,13 @@ async def run_wiki_generation(
         bundles_by_slug=stages_1_4.bundles_by_slug,
         manifests=stages_1_4.context.manifests,
     )
+    quality_errors = _quality_gate_errors(resolved)
+    errors.extend(quality_errors)
+    if cfg.strict_quality and quality_errors:
+        preview = "; ".join(quality_errors[:8])
+        if len(quality_errors) > 8:
+            preview += f"; +{len(quality_errors) - 8} more"
+        raise WikiQualityError(f"Wiki quality gates failed: {preview}")
 
     persisted_ids: list[UUID] = []
     skipped_slugs: list[str] = []
@@ -2946,3 +3017,19 @@ def _plan_hash(plan: PagePlan) -> str:
         f"{p.slug}:{p.title}:{p.parent_slug or ''}" for p in plan.pages
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+def _quality_gate_errors(pages: list[ResolvedPage]) -> list[str]:
+    errors: list[str] = []
+    for page in pages:
+        status = page.quality.quality_status
+        if status != QualityStatus.OK:
+            detail = f"page_quality:{page.slug}:{status.value}"
+            if page.quality.missing_questions:
+                detail += f":missing={','.join(page.quality.missing_questions)}"
+            if page.quality.invalid_citations_stripped:
+                detail += (
+                    f":stripped={page.quality.invalid_citations_stripped}"
+                )
+            errors.append(detail)
+    return errors

@@ -198,6 +198,31 @@ async def test_write_pages_treats_empty_capture_as_failure() -> None:
     assert failures == ["index"]
 
 
+async def test_write_pages_retries_empty_writer_attempt_with_tools() -> None:
+    """An empty first model turn should not drop the page if a retry succeeds."""
+    plan = _plan("index")
+    fake = FakeStructuredProvider()
+    fake.queue_tool_turn(text="   ")  # first attempt ends with no markdown
+    fake.queue_tool_turn(tool_uses=[("write_page", {"markdown": "# Index\n\nbody"})])
+    fake.queue_tool_turn(text="")
+
+    drafts, failures = await write_pages(
+        llm=fake,
+        retriever=_stub_retriever(),
+        session=None,  # type: ignore[arg-type]
+        repository_id=UUID("00000000-0000-0000-0000-000000000abc"),
+        context=_ctx(),
+        overview=RepoOverview(one_line="Demo", long_description="..."),
+        plan=plan,
+        config=WikiGenerationConfig(),
+    )
+
+    assert failures == []
+    assert drafts[0].body_md == "# Index\n\nbody"
+    assert drafts[0].agent.turns_used == 3
+    assert drafts[0].agent.tools_called["write_page"] == 1
+
+
 async def test_write_pages_continues_when_retrieval_raises() -> None:
     """Retrieval failure must not abort the page — agent runs with empty bundle."""
     plan = _plan("index")
@@ -294,7 +319,7 @@ async def test_write_pages_fires_single_repair_on_unknown_identifiers() -> None:
     assert agent is not None
     from backend.app.wiki.schemas import QualityStatus
 
-    assert agent.quality_status == QualityStatus.PARTIAL
+    assert agent.quality_status == QualityStatus.OK
     assert agent.repair_attempts == 1
     assert agent.invalid_citations_stripped == 0
     # Repaired body shipped, not the original.

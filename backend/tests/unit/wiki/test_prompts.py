@@ -17,6 +17,7 @@ from backend.app.wiki.prompts import (
     PAGE_PROSE_SYSTEM,
     PAGE_WRITER_SYSTEM,
     REPO_ANALYZER_SYSTEM,
+    _REPO_CONTEXT_BLOCK_CHAR_CAP,
     build_diagram_synthesizer_user,
     build_page_outline_user,
     build_page_planner_user,
@@ -793,9 +794,9 @@ def test_repo_context_block_truncates_oversize_manifests() -> None:
 
     block = build_repo_context_block(bloated)
 
-    # The cap is 600_000 chars — generous for a real repo but firm
-    # enough that the next request fits inside a 272k-token window.
-    assert len(block) <= 600_000 + 1024  # small footer slack
+    # The cap is generous for a real repo but firm enough that the next
+    # request fits inside a 272k-token window.
+    assert len(block) <= _REPO_CONTEXT_BLOCK_CHAR_CAP + 1024  # footer slack
     assert "manifests truncated to fit context budget" in block
     # The non-truncated sections (file_tree, top_summaries) must still
     # be intact — the truncator only hits the manifests block.

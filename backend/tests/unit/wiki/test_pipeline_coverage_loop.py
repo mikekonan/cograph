@@ -50,6 +50,17 @@ def _node_record(qn: str) -> EvidenceRecord:
     )
 
 
+def _file_record(path: str) -> EvidenceRecord:
+    return EvidenceRecord(
+        record_id=f"file:{path}:1-2",
+        source="file",
+        file_path=path,
+        start_line=1,
+        end_line=2,
+        snippet="...",
+    )
+
+
 def _dispatcher(*records: EvidenceRecord) -> AgentDispatcher:
     """Make a dispatcher with a pre-seeded ledger and a tool_context that
     is never actually invoked (the loop only reads `dispatcher.ledger`
@@ -125,6 +136,49 @@ async def test_clean_first_draft_keeps_status_and_records_answered() -> None:
     assert telemetry.quality_status is None
 
 
+async def test_missing_marker_is_inferred_for_grounded_h2_source_section() -> None:
+    body = "## Configuration\nSource: config/app.go:L1-L2\nKnobs.\n"
+    disp = _dispatcher(_file_record("config/app.go"))
+    out_body, telemetry = await _run_coverage_gate_loop(
+        slug="configuration",
+        spec=_spec(ReaderQuestion.CONFIGURATION),
+        body=body,
+        telemetry=AgentTelemetry(),
+        dispatcher=disp,
+        tool_definitions=[],
+        cached_repo_block="",
+        llm=_ScriptedLLM([]),  # never invoked
+        config=WikiGenerationConfig(),
+    )
+
+    assert "<!-- answers: configuration -->" in out_body
+    assert telemetry.answered_questions == ["configuration"]
+    assert telemetry.missing_questions == []
+
+
+async def test_backticked_source_line_counts_as_verified_evidence() -> None:
+    body = (
+        "## Entrypoints\n"
+        "<!-- answers: public-api -->\n"
+        "Source: `entrypoints/router.go:L10-L20`\n"
+    )
+    disp = _dispatcher(_file_record("entrypoints/router.go"))
+    _out_body, telemetry = await _run_coverage_gate_loop(
+        slug="entrypoints",
+        spec=_spec(ReaderQuestion.PUBLIC_API),
+        body=body,
+        telemetry=AgentTelemetry(),
+        dispatcher=disp,
+        tool_definitions=[],
+        cached_repo_block="",
+        llm=_ScriptedLLM([]),  # never invoked
+        config=WikiGenerationConfig(),
+    )
+
+    assert telemetry.answered_questions == ["public-api"]
+    assert telemetry.missing_questions == []
+
+
 async def test_no_covers_questions_short_circuits() -> None:
     """Index page with empty covers_questions skips the gate entirely."""
     disp = _dispatcher()
@@ -152,11 +206,11 @@ async def test_no_covers_questions_short_circuits() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_repair_success_promotes_to_partial() -> None:
+async def test_repair_success_keeps_clean_page_ok() -> None:
     """First draft missing the marker; one repair attempt adds it →
-    page ships at PARTIAL (clean shape, but had to repair)."""
-    initial_body = "## How to run\nRun [[node:cmd.Run]].\n"
-    repaired = "## How to run\n<!-- answers: how-to-run -->\nRun [[node:cmd.Run]].\n"
+    page ships as OK because the final body satisfies the contract."""
+    initial_body = "## Details\nRun [[node:cmd.Run]].\n"
+    repaired = "## Details\n<!-- answers: how-to-run -->\nRun [[node:cmd.Run]].\n"
     disp = _dispatcher(_node_record("cmd.Run"))
     llm = _ScriptedLLM([repaired])
     out_body, telemetry = await _run_coverage_gate_loop(
@@ -171,11 +225,11 @@ async def test_repair_success_promotes_to_partial() -> None:
         config=WikiGenerationConfig(),
     )
     # Loop strips the trailing newline before returning.
-    assert out_body == repaired.rstrip()
+    assert out_body.strip() == repaired.strip()
     assert telemetry.answered_questions == ["how-to-run"]
     assert telemetry.missing_questions == []
     assert telemetry.coverage_repair_attempts == 1
-    assert telemetry.quality_status == QualityStatus.PARTIAL
+    assert telemetry.quality_status == QualityStatus.OK
 
 
 async def test_repair_failure_strips_open_questions_and_marks_degraded() -> None:
@@ -267,7 +321,7 @@ async def test_repair_llm_error_falls_back_to_strip() -> None:
 
 async def test_status_does_not_upgrade_existing_degraded() -> None:
     """If T3 already set DEGRADED (citations stripped), a clean-after-
-    repair coverage outcome must NOT promote the page back to PARTIAL."""
+    repair coverage outcome must NOT promote the page back to OK."""
     initial_body = "## How to run\nRun [[node:cmd.Run]].\n"
     repaired = "## How to run\n<!-- answers: how-to-run -->\nRun [[node:cmd.Run]].\n"
     disp = _dispatcher(_node_record("cmd.Run"))
@@ -283,7 +337,7 @@ async def test_status_does_not_upgrade_existing_degraded() -> None:
         llm=llm,
         config=WikiGenerationConfig(),
     )
-    assert out_body == repaired.rstrip()
+    assert out_body.strip() == repaired.strip()
     # Even though coverage is now clean, T3's DEGRADED stays.
     assert telemetry.quality_status == QualityStatus.DEGRADED
 

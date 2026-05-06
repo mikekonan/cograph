@@ -48,7 +48,7 @@ _ANSWER_MARKER_RE = re.compile(
 )
 _H2_RE = re.compile(r"^##\s+", re.MULTILINE)
 _SOURCE_LINE_RE = re.compile(
-    r"Source\s*:\s*([^\s]+?)(?::L\d+(?:-L?\d+)?)?\s*$",
+    r"^\s*Source\s*:\s*`?([^\s`:]+(?:/[^\s`:]+)*)(?::L\d+(?:-L?\d+)?)?`?",
     re.MULTILINE,
 )
 _OPEN_QUESTIONS_HEADING_RE = re.compile(
@@ -185,6 +185,56 @@ def validate_coverage(
         has_test_strategy_section=has_test_strategy,
         has_comparison_section=has_comparison,
     )
+
+
+def ensure_inferred_answer_markers(
+    *,
+    markdown: str,
+    covers_questions: Iterable[ReaderQuestion | str],
+    ledger: VerifiedEvidenceLedger,
+) -> str:
+    """Insert missing answer markers for already-grounded H2 sections.
+
+    The marker is an internal contract comment, not reader-facing prose. If
+    the writer clearly produced an evidenced `## Configuration` / `## Usage`
+    / `## API` section but forgot the comment, adding it preserves quality
+    and prevents a false `partial` status.
+    """
+    body = markdown or ""
+    required = _normalize_question_set(covers_questions)
+    if not body or not required:
+        return body
+
+    existing = {slug for _pos, slug in _find_markers(body)}
+    missing = required - existing
+    if not missing:
+        return body
+
+    insertions: list[tuple[int, str]] = []
+    for heading in _H2_RE.finditer(body):
+        heading_line_end = body.find("\n", heading.end())
+        if heading_line_end == -1:
+            heading_line_end = len(body)
+        section_end = _section_end_for(heading.start(), _section_bounds(body), len(body))
+        section_text = body[heading.start():section_end]
+        if not _section_has_verified_evidence(section_text, ledger):
+            continue
+        title = body[heading.end():heading_line_end].strip().lower()
+        matched = [slug for slug in sorted(missing) if _heading_answers(title, slug)]
+        if not matched:
+            continue
+        marker_text = "".join(f"<!-- answers: {slug} -->\n" for slug in matched)
+        insertions.append((heading_line_end + 1, marker_text))
+        missing -= set(matched)
+        if not missing:
+            break
+
+    if not insertions:
+        return body
+    out = body
+    for pos, text in sorted(insertions, reverse=True):
+        out = out[:pos] + text + out[pos:]
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -331,6 +381,52 @@ def _section_has_verified_evidence(
     return False
 
 
+def _heading_answers(title: str, slug: str) -> bool:
+    keywords = {
+        "configuration": (
+            "configuration",
+            "config",
+            "settings",
+            "environment",
+            "runtime configuration",
+        ),
+        "how-to-run": (
+            "getting started",
+            "quick start",
+            "usage",
+            "run",
+            "local development",
+            "build",
+        ),
+        "dependencies": (
+            "dependencies",
+            "dependency",
+            "runtime",
+            "infrastructure",
+            "integration",
+            "wiring",
+        ),
+        "public-api": (
+            "api",
+            "entrypoint",
+            "entrypoints",
+            "route",
+            "routes",
+            "public surface",
+        ),
+        "use-cases": (
+            "overview",
+            "use case",
+            "use cases",
+            "usage",
+            "domain",
+            "business",
+            "problem",
+        ),
+    }
+    return any(keyword in title for keyword in keywords.get(slug, ()))
+
+
 CoverageOutcome = Literal[
     "ok",
     "partial",
@@ -363,6 +459,7 @@ __all__ = (
     "CoverageOutcome",
     "CoverageResult",
     "coverage_outcome",
+    "ensure_inferred_answer_markers",
     "strip_comparison_section",
     "strip_forbidden_sections",
     "strip_open_questions_section",
