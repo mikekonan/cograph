@@ -663,7 +663,6 @@ def _sync_error_code(exc: Exception) -> SyncErrorCode:
     from backend.app.llm.completion import CompletionProviderError
     from backend.app.llm.embedder import EmbeddingProviderError
     from backend.app.wiki.llm_client import StructuredCompletionError
-    from backend.app.wiki.pipeline import WikiQualityError
 
     if isinstance(exc, FileNotFoundError):
         return SyncErrorCode.CHECKOUT_NOT_FOUND
@@ -671,7 +670,7 @@ def _sync_error_code(exc: Exception) -> SyncErrorCode:
         return SyncErrorCode.CHECKOUT_INVALID
     if isinstance(exc, EmbeddingProviderError):
         return SyncErrorCode.EMBEDDING_PROVIDER_FAILED
-    if isinstance(exc, (StructuredCompletionError, WikiQualityError)):
+    if isinstance(exc, StructuredCompletionError):
         return SyncErrorCode.WIKI_PROVIDER_FAILED
     if isinstance(exc, CompletionProviderError):
         return SyncErrorCode.SUMMARY_PROVIDER_FAILED

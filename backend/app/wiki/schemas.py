@@ -764,4 +764,5 @@ class WikiGenerationResult(BaseModel):
     unresolved_placeholders_total: int
     wall_clock_ms: int
     errors: list[str] = Field(default_factory=list)
+    kept_for_quality_slugs: list[str] = Field(default_factory=list)
     plan_quality: WikiPlanQualityReport = Field(default_factory=WikiPlanQualityReport)

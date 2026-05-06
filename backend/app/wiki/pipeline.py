@@ -175,20 +175,12 @@ class WikiPlanError(RuntimeError):
     """
 
 
-class WikiQualityError(RuntimeError):
-    """Raised when strict reindexing would publish partial/degraded wiki pages."""
-
-
 @dataclass(slots=True, frozen=True)
 class WikiGenerationConfig:
     write_concurrency: int = 4
     persist: bool = True
     enable_diagrams: bool = True
     enable_cross_linker: bool = False
-    # When enabled, partial/degraded generated pages fail the sync before
-    # persistence. The worker uses this so reindex never silently lowers
-    # published wiki quality.
-    strict_quality: bool = False
     # T5: two-pass writing for high-importance pages. When False, every
     # page goes through the single-pass agent loop. When True, pages
     # whose `PageKind` is in `_TWO_PASS_PAGE_KINDS` route through
@@ -2894,9 +2886,14 @@ async def run_wiki_generation(
         - Stage 2: 1 retry on JSON parse failure; second failure aborts the run.
         - Stage 3: raises `WikiPlanError` if the planner can't deliver
                    `config.page_count_min` pages after two attempts.
-        - Stage 4: per-page failure marks the slug as failed and continues with the rest.
-        - Stage 5: unresolved placeholders are stripped to bare labels and counted
-                   in telemetry — never gates publish.
+        - Stage 4: per-page failure marks the slug as failed and continues
+                   with the rest. Failed slugs are kept out of the orphan
+                   delete set so a transient agent error doesn't drop a
+                   previously good row.
+        - Stage 5: per-page quality gates record `partial`/`degraded`
+                   states in `errors` for telemetry but never abort the run.
+                   The persist layer uses those states to refuse a
+                   per-page downgrade.
         - Stage 6: optional (`config.persist=False` skips DB writes for tests).
     """
     cfg = config or WikiGenerationConfig()
@@ -2944,14 +2941,19 @@ async def run_wiki_generation(
     )
     quality_errors = _quality_gate_errors(resolved)
     errors.extend(quality_errors)
-    if cfg.strict_quality and quality_errors:
+    if quality_errors:
         preview = "; ".join(quality_errors[:8])
         if len(quality_errors) > 8:
             preview += f"; +{len(quality_errors) - 8} more"
-        raise WikiQualityError(f"Wiki quality gates failed: {preview}")
+        logger.warning(
+            "wiki quality warnings: count=%d preview=%s",
+            len(quality_errors),
+            preview,
+        )
 
     persisted_ids: list[UUID] = []
     skipped_slugs: list[str] = []
+    kept_for_quality_slugs: list[str] = []
     orphaned_deleted = 0
     if cfg.persist and resolved:
         logger.info(
@@ -2959,7 +2961,11 @@ async def run_wiki_generation(
             len(resolved),
         )
         plan_hash = _plan_hash(stages_1_4.plan)
-        persisted_ids, skipped_slugs = await document_store.upsert_pages(
+        (
+            persisted_ids,
+            skipped_slugs,
+            kept_for_quality_slugs,
+        ) = await document_store.upsert_pages(
             session=session,
             repository_id=repository_id,
             sync_run_id=sync_run_id,
@@ -2968,29 +2974,38 @@ async def run_wiki_generation(
             model=llm.model,
             pages=resolved,
         )
+        # Stage-4 failures must not orphan-delete the previously good row;
+        # include them in `keep_slugs` alongside the resolved set.
+        keep_slugs = sorted(
+            {page.slug for page in resolved} | set(stages_1_4.page_failures)
+        )
         orphaned_deleted = await document_store.delete_orphan_pages(
             session=session,
             repository_id=repository_id,
-            keep_slugs=[page.slug for page in resolved],
+            keep_slugs=keep_slugs,
         )
         await session.commit()
         logger.info(
-            "wiki stage 6: persist done (persisted=%d, skipped=%d, orphaned_deleted=%d)",
+            "wiki stage 6: persist done (persisted=%d, skipped=%d, "
+            "kept_for_quality=%d, orphaned_deleted=%d)",
             len(persisted_ids),
             len(skipped_slugs),
+            len(kept_for_quality_slugs),
             orphaned_deleted,
         )
 
     wall_clock_ms = int((time.monotonic() - started) * 1000)
     logger.info(
         "wiki regen complete: repository_id=%s run_id=%s planned=%d written=%d "
-        "persisted=%d skipped=%d unresolved=%d wall_clock_ms=%d errors=%d",
+        "persisted=%d skipped=%d kept_for_quality=%d unresolved=%d "
+        "wall_clock_ms=%d errors=%d",
         repository_id,
         run_id,
         len(stages_1_4.plan.pages),
         len(stages_1_4.drafts),
         len(persisted_ids),
         len(skipped_slugs),
+        len(kept_for_quality_slugs),
         len(unresolved_all),
         wall_clock_ms,
         len(errors),
@@ -3008,6 +3023,7 @@ async def run_wiki_generation(
         unresolved_placeholders_total=len(unresolved_all),
         wall_clock_ms=wall_clock_ms,
         errors=errors,
+        kept_for_quality_slugs=kept_for_quality_slugs,
         plan_quality=stages_1_4.plan_quality,
     )
 

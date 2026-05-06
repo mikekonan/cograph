@@ -36,6 +36,10 @@ class LLMWikiResult:
     skipped_documents: int
     pruned_documents: int
     model: str
+    # Pages whose new-run quality would have regressed the persisted
+    # quality status; the persist layer kept the existing row's content
+    # and `quality` JSON as-is. Surfaced for telemetry only.
+    kept_for_quality_documents: int = 0
     # Kept for compatibility with tests that destructure the legacy shape;
     # always 0 in the new pipeline (no preview variant).
     preview_generated_documents: int = 0
@@ -104,5 +108,6 @@ class LLMWikiGenerator:
             generated_documents=result.pages_persisted,
             skipped_documents=result.pages_skipped,
             pruned_documents=result.pages_orphaned_deleted,
+            kept_for_quality_documents=len(result.kept_for_quality_slugs),
             model=result.model,
         )

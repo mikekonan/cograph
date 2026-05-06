@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.models.document import Document
 from backend.app.models.repository import Repository
 from backend.app.wiki.schemas import (
+    QualityStatus,
     ReaderQuestion,
     ResolvedCitation,
     ResolvedPage,
@@ -72,7 +73,7 @@ async def test_upsert_inserts_new_pages(db_session: AsyncSession) -> None:
             sort_order=1,
         ),
     ]
-    persisted, skipped = await store.upsert_pages(
+    persisted, skipped, kept_for_quality = await store.upsert_pages(
         session=db_session,
         repository_id=repo.id,
         sync_run_id=None,
@@ -83,6 +84,7 @@ async def test_upsert_inserts_new_pages(db_session: AsyncSession) -> None:
     )
     assert len(persisted) == 2
     assert skipped == []
+    assert kept_for_quality == []
 
     rows = (
         (
@@ -112,7 +114,7 @@ async def test_upsert_skips_unchanged_content(db_session: AsyncSession) -> None:
         pages=[page],
     )
 
-    persisted, skipped = await store.upsert_pages(
+    persisted, skipped, kept_for_quality = await store.upsert_pages(
         session=db_session,
         repository_id=repo.id,
         sync_run_id=None,
@@ -122,6 +124,7 @@ async def test_upsert_skips_unchanged_content(db_session: AsyncSession) -> None:
         pages=[page],
     )
     assert skipped == ["index"]
+    assert kept_for_quality == []
     assert len(persisted) == 1
     # source_commit pointer was bumped despite the skip.
     row = (
@@ -145,7 +148,7 @@ async def test_upsert_updates_changed_content(db_session: AsyncSession) -> None:
         model="fake-v1",
         pages=[_page(slug="index", title="Overview", content="# Original")],
     )
-    persisted, skipped = await store.upsert_pages(
+    persisted, skipped, kept_for_quality = await store.upsert_pages(
         session=db_session,
         repository_id=repo.id,
         sync_run_id=None,
@@ -169,6 +172,7 @@ async def test_upsert_updates_changed_content(db_session: AsyncSession) -> None:
         ],
     )
     assert skipped == []
+    assert kept_for_quality == []
     assert len(persisted) == 1
 
     row = (
@@ -387,7 +391,7 @@ async def test_upsert_persists_quality_payload(db_session: AsyncSession) -> None
 async def test_upsert_handles_empty_input(db_session: AsyncSession) -> None:
     repo = await _make_repo(db_session)
     store = WikiDocumentStore()
-    persisted, skipped = await store.upsert_pages(
+    persisted, skipped, kept_for_quality = await store.upsert_pages(
         session=db_session,
         repository_id=repo.id,
         sync_run_id=None,
@@ -398,3 +402,360 @@ async def test_upsert_handles_empty_input(db_session: AsyncSession) -> None:
     )
     assert persisted == []
     assert skipped == []
+    assert kept_for_quality == []
+
+
+async def _seed_existing(
+    *,
+    session: AsyncSession,
+    repo: Repository,
+    slug: str,
+    content: str,
+    quality: object,
+) -> Document:
+    import hashlib
+
+    row = Document(
+        repository_id=repo.id,
+        sync_run_id=None,
+        slug=slug,
+        title="Seed",
+        doc_type="wiki",
+        sort_order=0,
+        parent_slug=None,
+        source_commit="seed-commit",
+        content=content,
+        content_hash=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        source_hash="seed-source-hash",
+        model="seed-v1",
+        source_node_ids=[],
+        source_repo_doc_chunk_ids=[],
+        citations=[],
+        quality=quality,
+    )
+    session.add(row)
+    await session.flush()
+    return row
+
+
+def _quality_page(
+    *,
+    slug: str,
+    content: str,
+    quality_status: QualityStatus,
+    title: str = "Page",
+) -> ResolvedPage:
+    return ResolvedPage(
+        slug=slug,
+        title=title,
+        parent_slug=None,
+        sort_order=0,
+        content=content,
+        model="run-v2",
+        citations=[],
+        source_node_ids=[],
+        source_repo_doc_chunk_ids=[],
+        unresolved_placeholders=[],
+        quality=WikiPageQuality(quality_status=quality_status),
+    )
+
+
+async def test_reindex_keeps_existing_when_quality_regresses(
+    db_session: AsyncSession,
+) -> None:
+    """Existing OK page + new PARTIAL page → keep existing content + quality;
+    bump only sync_run_id and source_commit."""
+    repo = await _make_repo(db_session)
+    seeded = await _seed_existing(
+        session=db_session,
+        repo=repo,
+        slug="index",
+        content="# Existing good body",
+        quality={"quality_status": "ok", "code_node_citation_count": 5},
+    )
+    seeded_hash = seeded.content_hash
+    seeded_source_hash = seeded.source_hash
+    store = WikiDocumentStore()
+
+    persisted, skipped, kept_for_quality = await store.upsert_pages(
+        session=db_session,
+        repository_id=repo.id,
+        sync_run_id=None,
+        source_commit="new-commit",
+        plan_hash="new-hash",
+        model="run-v2",
+        pages=[
+            _quality_page(
+                slug="index",
+                content="# New worse body",
+                quality_status=QualityStatus.PARTIAL,
+            )
+        ],
+    )
+
+    assert kept_for_quality == ["index"]
+    assert skipped == []
+    assert persisted == [seeded.id]
+
+    refreshed = (
+        await db_session.execute(
+            select(Document).where(Document.repository_id == repo.id)
+        )
+    ).scalar_one()
+    assert refreshed.content == "# Existing good body"
+    assert refreshed.content_hash == seeded_hash
+    assert refreshed.source_hash == seeded_source_hash
+    assert refreshed.quality is not None
+    assert refreshed.quality["quality_status"] == "ok"
+    assert refreshed.quality["code_node_citation_count"] == 5
+    # source_commit is bumped on the kept row so the audit trail records
+    # that the latest run did touch it (decision: keep).
+    assert refreshed.source_commit == "new-commit"
+
+
+async def test_reindex_persists_when_quality_improves(
+    db_session: AsyncSession,
+) -> None:
+    repo = await _make_repo(db_session)
+    seeded = await _seed_existing(
+        session=db_session,
+        repo=repo,
+        slug="index",
+        content="# Old partial body",
+        quality={"quality_status": "partial"},
+    )
+    store = WikiDocumentStore()
+
+    persisted, skipped, kept_for_quality = await store.upsert_pages(
+        session=db_session,
+        repository_id=repo.id,
+        sync_run_id=None,
+        source_commit="new-commit",
+        plan_hash="new-hash",
+        model="run-v2",
+        pages=[
+            _quality_page(
+                slug="index",
+                content="# New OK body",
+                quality_status=QualityStatus.OK,
+            )
+        ],
+    )
+
+    assert persisted == [seeded.id]
+    assert skipped == []
+    assert kept_for_quality == []
+
+    refreshed = (
+        await db_session.execute(
+            select(Document).where(Document.repository_id == repo.id)
+        )
+    ).scalar_one()
+    assert refreshed.content == "# New OK body"
+    assert refreshed.quality is not None
+    assert refreshed.quality["quality_status"] == "ok"
+
+
+async def test_reindex_persists_first_time_regardless_of_quality(
+    db_session: AsyncSession,
+) -> None:
+    repo = await _make_repo(db_session)
+    store = WikiDocumentStore()
+
+    persisted, skipped, kept_for_quality = await store.upsert_pages(
+        session=db_session,
+        repository_id=repo.id,
+        sync_run_id=None,
+        source_commit="abc",
+        plan_hash="h",
+        model="run-v1",
+        pages=[
+            _quality_page(
+                slug="index",
+                content="# Degraded first run",
+                quality_status=QualityStatus.DEGRADED,
+            )
+        ],
+    )
+
+    assert len(persisted) == 1
+    assert skipped == []
+    assert kept_for_quality == []
+    row = (
+        await db_session.execute(
+            select(Document).where(Document.repository_id == repo.id)
+        )
+    ).scalar_one()
+    assert row.content == "# Degraded first run"
+    assert row.quality["quality_status"] == "degraded"
+
+
+async def test_reindex_persists_when_quality_unchanged(
+    db_session: AsyncSession,
+) -> None:
+    """Same status with different content → take the new content."""
+    repo = await _make_repo(db_session)
+    seeded = await _seed_existing(
+        session=db_session,
+        repo=repo,
+        slug="index",
+        content="# Old partial body",
+        quality={"quality_status": "partial"},
+    )
+    store = WikiDocumentStore()
+
+    persisted, skipped, kept_for_quality = await store.upsert_pages(
+        session=db_session,
+        repository_id=repo.id,
+        sync_run_id=None,
+        source_commit="new-commit",
+        plan_hash="new-hash",
+        model="run-v2",
+        pages=[
+            _quality_page(
+                slug="index",
+                content="# New partial body",
+                quality_status=QualityStatus.PARTIAL,
+            )
+        ],
+    )
+
+    assert persisted == [seeded.id]
+    assert skipped == []
+    assert kept_for_quality == []
+    refreshed = (
+        await db_session.execute(
+            select(Document).where(Document.repository_id == repo.id)
+        )
+    ).scalar_one()
+    assert refreshed.content == "# New partial body"
+    assert refreshed.quality["quality_status"] == "partial"
+
+
+async def test_reindex_persists_when_existing_quality_is_null(
+    db_session: AsyncSession,
+) -> None:
+    """NULL existing quality is treated as unknown — write the new row."""
+    repo = await _make_repo(db_session)
+    seeded = await _seed_existing(
+        session=db_session,
+        repo=repo,
+        slug="index",
+        content="# Pre-T1 body",
+        quality=None,
+    )
+    store = WikiDocumentStore()
+
+    persisted, skipped, kept_for_quality = await store.upsert_pages(
+        session=db_session,
+        repository_id=repo.id,
+        sync_run_id=None,
+        source_commit="new-commit",
+        plan_hash="new-hash",
+        model="run-v2",
+        pages=[
+            _quality_page(
+                slug="index",
+                content="# Degraded run",
+                quality_status=QualityStatus.DEGRADED,
+            )
+        ],
+    )
+
+    assert persisted == [seeded.id]
+    assert kept_for_quality == []
+    refreshed = (
+        await db_session.execute(
+            select(Document).where(Document.repository_id == repo.id)
+        )
+    ).scalar_one()
+    assert refreshed.content == "# Degraded run"
+    assert refreshed.quality["quality_status"] == "degraded"
+
+
+async def test_reindex_persists_when_existing_quality_is_malformed(
+    db_session: AsyncSession,
+) -> None:
+    """A `quality` payload missing `quality_status` is treated as unknown."""
+    repo = await _make_repo(db_session)
+    seeded = await _seed_existing(
+        session=db_session,
+        repo=repo,
+        slug="index",
+        content="# Body with weird quality",
+        quality={"unexpected": "shape"},
+    )
+    store = WikiDocumentStore()
+
+    persisted, skipped, kept_for_quality = await store.upsert_pages(
+        session=db_session,
+        repository_id=repo.id,
+        sync_run_id=None,
+        source_commit="new-commit",
+        plan_hash="new-hash",
+        model="run-v2",
+        pages=[
+            _quality_page(
+                slug="index",
+                content="# Degraded run",
+                quality_status=QualityStatus.DEGRADED,
+            )
+        ],
+    )
+
+    assert persisted == [seeded.id]
+    assert kept_for_quality == []
+    refreshed = (
+        await db_session.execute(
+            select(Document).where(Document.repository_id == repo.id)
+        )
+    ).scalar_one()
+    assert refreshed.content == "# Degraded run"
+    assert refreshed.quality["quality_status"] == "degraded"
+
+
+async def test_content_hash_short_circuit_preserves_quality(
+    db_session: AsyncSession,
+) -> None:
+    """Same-content rerun must NOT overwrite recorded quality with a worse
+    new payload — the kept body keeps its original recorded quality."""
+    repo = await _make_repo(db_session)
+    same_content = "# Stable body"
+    seeded = await _seed_existing(
+        session=db_session,
+        repo=repo,
+        slug="index",
+        content=same_content,
+        quality={"quality_status": "ok", "code_node_citation_count": 7},
+    )
+    store = WikiDocumentStore()
+
+    persisted, skipped, kept_for_quality = await store.upsert_pages(
+        session=db_session,
+        repository_id=repo.id,
+        sync_run_id=None,
+        source_commit="rerun-commit",
+        plan_hash="rerun-hash",
+        model="run-v2",
+        pages=[
+            _quality_page(
+                slug="index",
+                content=same_content,
+                quality_status=QualityStatus.PARTIAL,
+            )
+        ],
+    )
+
+    # Same content → reported as kept-for-quality (worse new telemetry),
+    # not as a content-hash skip. Either way, the recorded `quality` JSON
+    # must remain `ok`.
+    assert persisted == [seeded.id]
+    refreshed = (
+        await db_session.execute(
+            select(Document).where(Document.repository_id == repo.id)
+        )
+    ).scalar_one()
+    assert refreshed.quality["quality_status"] == "ok"
+    assert refreshed.quality["code_node_citation_count"] == 7
+    # Prove the slug landed in one of the two non-write categories.
+    assert "index" in (kept_for_quality + skipped)

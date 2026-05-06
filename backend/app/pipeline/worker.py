@@ -90,7 +90,7 @@ async def _build_processor(
             wiki_generator = LLMWikiGenerator(
                 llm=structured_llm,
                 retriever=wiki_retriever,
-                config=WikiGenerationConfig(strict_quality=True),
+                config=WikiGenerationConfig(),
                 # Stage 4 agent tools open a fresh AsyncSession per tool
                 # call. With write_concurrency=4 the bound session would
                 # be shared across pages and SQLAlchemy raises on

@@ -15,7 +15,6 @@ from backend.app.wiki.llm_client import FakeStructuredProvider
 from backend.app.wiki.pipeline import (
     _CITATION_GATE_MAX_REPAIRS,
     WikiGenerationConfig,
-    WikiQualityError,
     run_wiki_generation,
 )
 from backend.app.wiki.retrieval import WikiRetrievalService
@@ -365,9 +364,12 @@ async def test_run_wiki_generation_unresolved_only_telemetry(
     assert result.unresolved_placeholders_total == 0
 
 
-async def test_strict_quality_rejects_degraded_pages_before_persist(
+async def test_pipeline_does_not_raise_on_degraded_pages(
     db_session: AsyncSession,
 ) -> None:
+    """A page that exhausts the citation-gate repair budget ships as
+    `degraded` and is persisted. The run must not raise — quality issues
+    are surfaced as warnings via `result.errors`, not aborts."""
     repo = await _make_repo(db_session)
     fake = FakeStructuredProvider()
     fake.queue(RepoOverview(one_line="x", long_description="y").model_dump_json())
@@ -389,21 +391,21 @@ async def test_strict_quality_rejects_degraded_pages_before_persist(
         )
         fake.queue_tool_turn(text="")
 
-    with pytest.raises(WikiQualityError, match="page_quality:index:degraded"):
-        await run_wiki_generation(
-            session=db_session,
-            repository_id=repo.id,
-            source_commit="abc",
-            sync_run_id=None,
-            llm=fake,
-            retriever=_retriever(),
-            config=WikiGenerationConfig(
-                page_count_min=1,
-                write_concurrency=1,
-                strict_quality=True,
-            ),
-        )
+    result = await run_wiki_generation(
+        session=db_session,
+        repository_id=repo.id,
+        source_commit="abc",
+        sync_run_id=None,
+        llm=fake,
+        retriever=_retriever(),
+        config=WikiGenerationConfig(
+            page_count_min=1,
+            write_concurrency=1,
+        ),
+    )
 
+    assert result.pages_persisted == 1
+    assert any("page_quality:index:degraded" in err for err in result.errors)
     persisted = (
         await db_session.execute(
             select(Document).where(
@@ -412,4 +414,99 @@ async def test_strict_quality_rejects_degraded_pages_before_persist(
             )
         )
     ).scalars().all()
-    assert persisted == []
+    assert [row.slug for row in persisted] == ["index"]
+
+
+async def test_reindex_keeps_orphan_for_failed_pages(
+    db_session: AsyncSession,
+) -> None:
+    """A slug whose Stage-4 page-write fails transiently must NOT have
+    its previously persisted row orphan-deleted. The orchestrator passes
+    `stages_1_4.page_failures` into `keep_slugs` for exactly this case."""
+    repo = await _make_repo(db_session)
+    # Pre-existing wiki row for the slug that will fail Stage 4 on this run.
+    prior = Document(
+        repository_id=repo.id,
+        sync_run_id=None,
+        slug="architecture",
+        title="Architecture",
+        doc_type="wiki",
+        sort_order=1,
+        parent_slug=None,
+        source_commit="prev-commit",
+        content="# Architecture\n\nprior body",
+        content_hash="deadbeef",
+        source_hash="deadbeef",
+        model="prior-v1",
+        source_node_ids=[],
+        source_repo_doc_chunk_ids=[],
+        citations=[],
+        quality={"quality_status": "ok"},
+    )
+    db_session.add(prior)
+    await db_session.flush()
+
+    class _IndexOkArchitectureFails:
+        model = "mixed-v1"
+        _idx = 0
+
+        async def complete_text(self, *, system, blocks, **_kwargs):  # pragma: no cover
+            raise NotImplementedError
+
+        async def complete_json(self, *, system, blocks, schema, **_kwargs):
+            if not hasattr(self, "_json_idx"):
+                self._json_idx = 0
+            self._json_idx += 1
+            if self._json_idx == 1:
+                return RepoOverview(one_line="x", long_description="y")
+            if self._json_idx == 2:
+                return MindMap()
+            return PagePlan.model_validate(
+                {
+                    "pages": [
+                        {"slug": "index", "title": "I", "purpose": "i"},
+                        {"slug": "architecture", "title": "A", "purpose": "a"},
+                    ]
+                }
+            )
+
+        async def complete_with_tools(self, **_kwargs):
+            from backend.app.wiki.llm_client import (
+                StructuredCompletionError,
+                ToolUseResult,
+            )
+
+            self._idx += 1
+            # 1st call = index (ok), 2nd call = architecture (fail).
+            if self._idx == 2:
+                raise StructuredCompletionError("forced architecture failure")
+            await _kwargs["tool_dispatch"](
+                "write_page", {"markdown": f"# page-{self._idx}\n\nbody"}
+            )
+            return ToolUseResult(stop_reason="end_turn", turns_used=1)
+
+    result = await run_wiki_generation(
+        session=db_session,
+        repository_id=repo.id,
+        source_commit="new-commit",
+        sync_run_id=None,
+        llm=_IndexOkArchitectureFails(),  # type: ignore[arg-type]
+        retriever=_retriever(),
+        config=WikiGenerationConfig(write_concurrency=1, page_count_min=2),
+    )
+
+    assert any("page_failed:architecture" in err for err in result.errors)
+    assert result.pages_persisted == 1
+    rows = (
+        await db_session.execute(
+            select(Document).where(
+                Document.repository_id == repo.id,
+                Document.doc_type == "wiki",
+            )
+        )
+    ).scalars().all()
+    by_slug = {row.slug: row for row in rows}
+    # The transiently-failed page's prior row survives — not orphan-deleted.
+    assert "architecture" in by_slug
+    assert by_slug["architecture"].content == "# Architecture\n\nprior body"
+    assert "index" in by_slug
