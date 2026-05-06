@@ -45,7 +45,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ./backend[dev]
 
-      - name: Create alembic smoke database
+      - name: Create CI databases
         run: |
           python - <<'PY'
           import asyncio
@@ -54,8 +54,9 @@ jobs:
           async def main() -> None:
               conn = await asyncpg.connect("postgresql://postgres:postgres@127.0.0.1:5432/postgres")
               try:
-                  await conn.execute('DROP DATABASE IF EXISTS "cograph_ci"')
-                  await conn.execute('CREATE DATABASE "cograph_ci"')
+                  for db in ("cograph_ci", "cograph_test"):
+                      await conn.execute(f'DROP DATABASE IF EXISTS "{db}"')
+                      await conn.execute(f'CREATE DATABASE "{db}"')
               finally:
                   await conn.close()
 
@@ -66,6 +67,8 @@ jobs:
         run: ruff check backend/app backend/tests backend/integration_tests
 
       - name: Pytest
+        env:
+          TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/cograph_test
         run: python -m pytest backend/tests -q
 
       - name: Alembic upgrade smoke
