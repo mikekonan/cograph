@@ -5,7 +5,11 @@ from uuid import uuid4
 
 import pytest
 
-from backend.app.api.retrieval import get_hybrid_retriever, get_query_embed_provider
+from backend.app.api.retrieval import (
+    get_current_user_optional,
+    get_hybrid_retriever,
+    get_query_embed_provider,
+)
 from backend.app.models.bank import Bank, BankDocument, BankDocumentChunk, BankFact
 from backend.app.models.code_node import CodeNode
 from backend.app.models.code_node_summary import CodeNodeSummary
@@ -86,6 +90,43 @@ async def test_retrieve_hides_admin_only_repo_from_anonymous(client, db_session)
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_retrieve_requires_authentication_for_bank_ids(client, db_session):
+    owner = User(email="owner@example.com", password_hash="hashed", role=UserRole.USER)
+    bank = Bank(name="Runbooks", description="Ops", owner=owner)
+    db_session.add_all([owner, bank])
+    await db_session.commit()
+
+    response = await client.post(
+        "/api/retrieve",
+        json={"query": "runbook", "bank_ids": [str(bank.id)]},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "UNAUTHENTICATED"
+
+
+@pytest.mark.asyncio
+async def test_retrieve_rejects_bank_ids_for_non_owner(app, client, db_session):
+    owner = User(email="owner@example.com", password_hash="hashed", role=UserRole.USER)
+    other = User(email="other@example.com", password_hash="hashed", role=UserRole.USER)
+    bank = Bank(name="Runbooks", description="Ops", owner=owner)
+    db_session.add_all([owner, other, bank])
+    await db_session.commit()
+
+    app.dependency_overrides[get_current_user_optional] = lambda: other
+    try:
+        response = await client.post(
+            "/api/retrieve",
+            json={"query": "runbook", "bank_ids": [str(bank.id)]},
+        )
+    finally:
+        app.dependency_overrides.pop(get_current_user_optional, None)
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "FORBIDDEN"
 
 
 @pytest.mark.asyncio
@@ -277,6 +318,7 @@ async def test_retrieve_returns_composite_results_and_graph_context(app, client,
     )
     app.dependency_overrides[get_query_embed_provider] = lambda: _StubEmbedProvider()
     app.dependency_overrides[get_hybrid_retriever] = lambda: retriever
+    app.dependency_overrides[get_current_user_optional] = lambda: owner
 
     try:
         response = await client.post(
@@ -295,6 +337,7 @@ async def test_retrieve_returns_composite_results_and_graph_context(app, client,
     finally:
         app.dependency_overrides.pop(get_query_embed_provider, None)
         app.dependency_overrides.pop(get_hybrid_retriever, None)
+        app.dependency_overrides.pop(get_current_user_optional, None)
 
     assert response.status_code == 200
     payload = response.json()

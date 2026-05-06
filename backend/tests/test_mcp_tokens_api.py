@@ -3,13 +3,21 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
 from backend.app.core.auth import TokenType, create_token, hash_password
-from backend.app.models.enums import UserRole
+from backend.app.models.enums import (
+    RepositoryStatus,
+    RepositoryVisibility,
+    SyncSchedule,
+    UserRole,
+)
+from backend.app.models.md_collection import MdCollection, MdDocument
 from backend.app.models.personal_access_token import PersonalAccessToken
+from backend.app.models.repository import Repository
 from backend.app.models.user import User
 
 
@@ -296,6 +304,76 @@ async def test_pat_used_against_rest_api(client, db_session, settings):
     assert len(listed.json()["tokens"]) == 1
 
 
+async def test_mcp_only_pat_cannot_read_rest_token_list(client, db_session, settings):
+    member = await _make_user(db_session)
+    plaintext = "cgr_pat_" + "m" * 48
+    db_session.add(
+        PersonalAccessToken(
+            user_id=member.id,
+            name="mcp-only",
+            token_hash=_hash(plaintext),
+            token_prefix=plaintext[:16],
+            scopes=["mcp"],
+        )
+    )
+    await db_session.commit()
+
+    response = await client.get(
+        "/api/me/tokens",
+        headers={"Authorization": f"Bearer {plaintext}"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "INSUFFICIENT_SCOPE"
+
+
+async def test_mcp_only_pat_cannot_read_identity_list(client, db_session, settings):
+    member = await _make_user(db_session)
+    plaintext = "cgr_pat_" + "n" * 48
+    db_session.add(
+        PersonalAccessToken(
+            user_id=member.id,
+            name="mcp-only",
+            token_hash=_hash(plaintext),
+            token_prefix=plaintext[:16],
+            scopes=["mcp"],
+        )
+    )
+    await db_session.commit()
+
+    response = await client.get(
+        "/api/me/identities",
+        headers={"Authorization": f"Bearer {plaintext}"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "INSUFFICIENT_SCOPE"
+
+
+async def test_mcp_only_pat_cannot_mutate_actor_endpoints(
+    client, db_session, settings
+):
+    member = await _make_user(db_session)
+    plaintext = "cgr_pat_" + "o" * 48
+    token = PersonalAccessToken(
+        user_id=member.id,
+        name="mcp-only",
+        token_hash=_hash(plaintext),
+        token_prefix=plaintext[:16],
+        scopes=["mcp"],
+    )
+    db_session.add(token)
+    await db_session.commit()
+
+    response = await client.delete(
+        f"/api/me/tokens/{token.id}",
+        headers={"Authorization": f"Bearer {plaintext}"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "INSUFFICIENT_SCOPE"
+
+
 async def test_pat_blocked_when_user_disabled(client, db_session, settings):
     member = await _make_user(db_session)
     plaintext = "cgr_pat_" + "c" * 48
@@ -443,6 +521,33 @@ async def test_mcp_endpoint_rejects_token_without_mcp_scope(
     assert body["error"]["code"] == "INSUFFICIENT_SCOPE"
 
 
+async def test_mcp_endpoint_rejects_token_without_api_read_scope(
+    client, db_session, settings
+):
+    member = await _make_user(db_session)
+    plaintext = "cgr_pat_" + "f" * 48
+    db_session.add(
+        PersonalAccessToken(
+            user_id=member.id,
+            name="mcp-only",
+            token_hash=_hash(plaintext),
+            token_prefix=plaintext[:16],
+            scopes=["mcp"],
+        )
+    )
+    await db_session.commit()
+
+    response = await client.post(
+        "/mcp/",
+        headers={"Authorization": f"Bearer {plaintext}"},
+        json={},
+    )
+
+    assert response.status_code == 403
+    body = response.json()
+    assert body["error"]["code"] == "INSUFFICIENT_SCOPE"
+
+
 async def test_mcp_endpoint_passes_through_with_valid_token(
     client, db_session, settings
 ):
@@ -469,3 +574,121 @@ async def test_mcp_endpoint_passes_through_with_valid_token(
     # JSON-RPC), it's NOT our 401 — that's all this test cares about.
     assert response.status_code != 401
     assert response.status_code != 403
+
+
+async def test_mcp_repositories_lists_private_repo_for_pat_user(
+    client, db_session, settings
+):
+    member = await _make_user(db_session)
+    plaintext = "cgr_pat_" + "g" * 48
+    db_session.add_all(
+        [
+            PersonalAccessToken(
+                user_id=member.id,
+                name="mcp-read",
+                token_hash=_hash(plaintext),
+                token_prefix=plaintext[:16],
+                scopes=["api:read", "mcp"],
+            ),
+            Repository(
+                host="example.com",
+                git_url="https://example.com/acme/private.git",
+                name="private",
+                owner="acme",
+                branch="main",
+                status=RepositoryStatus.READY,
+                visibility=RepositoryVisibility.ADMIN_ONLY,
+                sync_schedule=SyncSchedule.MANUAL,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    response = await client.post(
+        "/mcp/",
+        headers={
+            "Authorization": f"Bearer {plaintext}",
+            "Accept": "application/json",
+        },
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "cograph.repositories",
+                "arguments": {},
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    result = json.loads(payload["result"]["content"][0]["text"])
+    assert result["total"] == 1
+    assert result["items"][0]["slug"] == "example.com/acme/private"
+
+
+async def test_mcp_collection_document_reads_private_collection_for_pat_user(
+    client, db_session, settings
+):
+    member = await _make_user(db_session)
+    plaintext = "cgr_pat_" + "h" * 48
+    token = PersonalAccessToken(
+        user_id=member.id,
+        name="mcp-read",
+        token_hash=_hash(plaintext),
+        token_prefix=plaintext[:16],
+        scopes=["api:read", "mcp"],
+    )
+    collection = MdCollection(
+        name="mcp-private-collection",
+        description="Private collection",
+        owner_id=member.id,
+        visibility="private",
+    )
+    db_session.add_all([token, collection])
+    await db_session.flush()
+    document = MdDocument(
+        collection_id=collection.id,
+        source_key="guide.md",
+        title="Guide",
+        content="# Guide\n\nPrivate collection content.",
+        content_hash="hash",
+        bytes=36,
+        word_count=4,
+        line_count=3,
+        frontmatter={},
+        heading_tree=[],
+        code_blocks=[],
+        tables=[],
+        links=[],
+    )
+    db_session.add(document)
+    await db_session.commit()
+
+    response = await client.post(
+        "/mcp/",
+        headers={
+            "Authorization": f"Bearer {plaintext}",
+            "Accept": "application/json",
+        },
+        json={
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "cograph.collection_document",
+                "arguments": {
+                    "collection_id": str(collection.id),
+                    "document_id": str(document.id),
+                },
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    result = json.loads(payload["result"]["content"][0]["text"])
+    assert result["collection_id"] == str(collection.id)
+    assert result["source_key"] == "guide.md"
+    assert result["content"].startswith("# Guide")

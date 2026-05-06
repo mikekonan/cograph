@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
 from backend.app.core.auth import TokenType, create_token
 from backend.app.models.enums import MdJobKind, MdJobStatus, UserRole
 from backend.app.models.md_collection import MdCollection, MdJob
+from backend.app.models.personal_access_token import PersonalAccessToken
 from backend.app.models.user import User
 
 _TEST_CSRF = "csrf-token"
@@ -22,6 +25,30 @@ async def _auth_user(client, settings, user: User) -> None:
     )
     client.cookies.set(settings.auth.access_cookie_name, token)
     client.cookies.set(settings.auth.csrf_cookie_name, _TEST_CSRF)
+
+
+def _hash_pat(plaintext: str) -> bytes:
+    return hashlib.sha256(plaintext.encode("utf-8")).digest()
+
+
+async def _mint_pat(
+    db_session,
+    user: User,
+    plaintext: str,
+    *,
+    scopes: list[str] | None = None,
+) -> dict[str, str]:
+    db_session.add(
+        PersonalAccessToken(
+            user_id=user.id,
+            name="test-token",
+            token_hash=_hash_pat(plaintext),
+            token_prefix=plaintext[:16],
+            scopes=scopes or ["api:read"],
+        )
+    )
+    await db_session.commit()
+    return {"Authorization": f"Bearer {plaintext}"}
 
 
 @pytest.fixture
@@ -74,7 +101,7 @@ async def test_list_jobs_returns_items(client, settings, user, collection, db_se
     assert payload["items"][0]["result_summary"]["embedded_nodes"] == 5
 
 
-async def test_list_jobs_access_denied_for_other_user(
+async def test_list_jobs_visible_to_authenticated_user(
     client, settings, collection, db_session
 ):
     other = User(
@@ -85,7 +112,7 @@ async def test_list_jobs_access_denied_for_other_user(
     await _auth_user(client, settings, other)
 
     response = await client.get(f"/api/md-collections/{collection.id}/jobs")
-    assert response.status_code == 403
+    assert response.status_code == 200
 
 
 async def test_global_owner_can_read_private_collection(
@@ -480,7 +507,9 @@ async def test_embed_status_with_chunks(client, settings, user, collection, db_s
 
 
 @pytest.mark.asyncio
-async def test_embed_status_access_denied(client, settings, collection, db_session):
+async def test_embed_status_visible_to_authenticated_user(
+    client, settings, collection, db_session
+):
     other = User(
         email="other@test.com", password_hash="secret", name="Other", role=UserRole.USER
     )
@@ -489,7 +518,7 @@ async def test_embed_status_access_denied(client, settings, collection, db_sessi
     await _auth_user(client, settings, other)
 
     response = await client.get(f"/api/md-collections/{collection.id}/embed-status")
-    assert response.status_code == 403
+    assert response.status_code == 200
 
 
 async def test_reembed_collection_success(client, settings, user, collection):
@@ -609,7 +638,7 @@ async def test_search_md_collection_returns_results(
 
 
 @pytest.mark.asyncio
-async def test_search_md_collection_access_denied(
+async def test_search_md_collection_visible_to_authenticated_user(
     client, settings, collection, db_session, app
 ):
     other = User(
@@ -638,7 +667,7 @@ async def test_search_md_collection_access_denied(
         app.dependency_overrides.pop(get_md_search_embed_provider, None)
         app.dependency_overrides.pop(get_md_hybrid_retriever, None)
 
-    assert response.status_code == 403
+    assert response.status_code == 200
 
 
 @pytest.mark.asyncio
@@ -757,3 +786,81 @@ async def test_anonymous_cannot_read_private_collection(
     # No auth cookies
     response = await client.get(f"/api/md-collections/{col.id}")
     assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_pat_user_can_read_private_collection(
+    client, settings, db_session, app
+):
+    owner = User(
+        email="owner5@test.com",
+        password_hash="secret",
+        name="Owner5",
+        role=UserRole.USER,
+    )
+    reader = User(
+        email="reader@test.com",
+        password_hash="secret",
+        name="Reader",
+        role=UserRole.USER,
+    )
+    db_session.add_all([owner, reader])
+    await db_session.commit()
+    await db_session.refresh(owner)
+    await db_session.refresh(reader)
+
+    col = MdCollection(
+        name="private-pat-col",
+        description="",
+        visibility="private",
+        owner_id=owner.id,
+    )
+    db_session.add(col)
+    await db_session.commit()
+    await db_session.refresh(col)
+    headers = await _mint_pat(
+        db_session,
+        reader,
+        "cgr_pat_md_read_member_token_00000000000000000000000000",
+    )
+
+    response = await client.get(f"/api/md-collections/{col.id}", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["id"] == str(col.id)
+
+
+@pytest.mark.asyncio
+async def test_pat_without_api_read_cannot_read_collection(
+    client, settings, db_session, app
+):
+    owner = User(
+        email="owner6@test.com",
+        password_hash="secret",
+        name="Owner6",
+        role=UserRole.USER,
+    )
+    db_session.add(owner)
+    await db_session.commit()
+    await db_session.refresh(owner)
+
+    col = MdCollection(
+        name="private-pat-scope-col",
+        description="",
+        visibility="private",
+        owner_id=owner.id,
+    )
+    db_session.add(col)
+    await db_session.commit()
+    await db_session.refresh(col)
+    headers = await _mint_pat(
+        db_session,
+        owner,
+        "cgr_pat_md_mcp_only_token_000000000000000000000000000",
+        scopes=["mcp"],
+    )
+
+    response = await client.get(f"/api/md-collections/{col.id}", headers=headers)
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "INSUFFICIENT_SCOPE"

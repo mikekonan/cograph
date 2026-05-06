@@ -10,9 +10,9 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.core.md_collection_access import apply_md_collection_read_scope
 from backend.app.models.md_collection import MdCollection, MdDocument, MdChunk
 from backend.app.models.user import User
-from backend.app.models.enums import UserRole
 
 
 @dataclass(slots=True, kw_only=True)
@@ -99,12 +99,10 @@ class MdQueryService:
         per_page: int,
         search: str | None = None,
     ) -> MdCollectionListResult:
-        query = select(MdCollection)
-        if current_user is None or current_user.role is not UserRole.ADMIN:
-            visibility_filter = MdCollection.visibility == "public"
-            if current_user is not None:
-                visibility_filter = visibility_filter | (MdCollection.owner_id == current_user.id)
-            query = query.where(visibility_filter)
+        query = apply_md_collection_read_scope(
+            select(MdCollection),
+            current_user=current_user,
+        )
         if search:
             query = query.where(
                 (MdCollection.name.ilike(f"%{search}%"))

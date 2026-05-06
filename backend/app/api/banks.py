@@ -11,13 +11,13 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from backend.app.banks.indexer import BankDocumentUpsertInput, BankIndexer
 from backend.app.banks.queries import BankQueryService
+from backend.app.core.bank_access import get_readable_bank
 from backend.app.core.deps import get_db_session, require_csrf, require_current_user
 from backend.app.core.errors import ApiError, FieldError
 from backend.app.llm.bank_fact_extractor import BankFactExtractorService
 from backend.app.llm.bank_document_embedder import BankDocumentEmbedderService
 from backend.app.llm.runtime_providers import build_runtime_providers
 from backend.app.models.bank import Bank, BankDocument
-from backend.app.models.enums import UserRole
 from backend.app.models.user import User
 
 router = APIRouter(prefix="/banks", tags=["banks"])
@@ -696,14 +696,11 @@ async def _require_bank_access(
     bank_id: UUID,
     current_user: User,
 ) -> Bank:
-    bank = await session.get(Bank, bank_id)
-    if bank is None:
-        raise ApiError(404, "NOT_FOUND", "Bank not found")
-    if current_user.role in (UserRole.OWNER, UserRole.ADMIN):
-        return bank
-    if bank.owner_id == current_user.id:
-        return bank
-    raise ApiError(403, "FORBIDDEN", "Bank access denied")
+    return await get_readable_bank(
+        session=session,
+        bank_id=bank_id,
+        current_user=current_user,
+    )
 
 
 async def _require_bank_owner_or_admin(

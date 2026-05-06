@@ -52,6 +52,16 @@ async def require_current_user(
     session: AsyncSession = Depends(get_db_session),
     settings: Settings = Depends(get_settings_dep),
 ) -> User:
+    bearer = _extract_bearer(request)
+    if bearer is not None and bearer.startswith(PAT_PLAINTEXT_PREFIX):
+        actor = await _resolve_pat_or_raise(
+            bearer,
+            session,
+            client_ip=_request_client_ip(request),
+            required_scope=_required_pat_scope_for_method(request.method),
+        )
+        return actor.user
+
     token = extract_access_token(request, settings)
     if token is None:
         raise ApiError(401, "UNAUTHENTICATED", "Authentication required")
@@ -75,6 +85,16 @@ async def get_current_user_optional(
     session: AsyncSession = Depends(get_db_session),
     settings: Settings = Depends(get_settings_dep),
 ) -> User | None:
+    bearer = _extract_bearer(request)
+    if bearer is not None and bearer.startswith(PAT_PLAINTEXT_PREFIX):
+        actor = await _resolve_pat_or_raise(
+            bearer,
+            session,
+            client_ip=_request_client_ip(request),
+            required_scope="api:read",
+        )
+        return actor.user
+
     token = extract_access_token(request, settings)
     if token is None:
         return None
@@ -137,6 +157,35 @@ def _extract_bearer(request: Request) -> str | None:
     if not value.lower().startswith("bearer "):
         return None
     return value[7:].strip() or None
+
+
+def _request_client_ip(request: Request) -> str | None:
+    return (request.client.host if request.client else None) or None
+
+
+def _required_pat_scope_for_method(method: str) -> str:
+    if method.upper() in {"GET", "HEAD", "OPTIONS"}:
+        return "api:read"
+    return "api:write"
+
+
+async def _resolve_pat_or_raise(
+    bearer: str,
+    session: AsyncSession,
+    *,
+    client_ip: str | None,
+    required_scope: str,
+) -> AuthenticatedActor:
+    actor = await _resolve_pat(bearer, session, client_ip=client_ip)
+    if actor is None:
+        raise ApiError(401, "UNAUTHENTICATED", "Authentication required")
+    if required_scope not in actor.scopes:
+        raise ApiError(
+            403,
+            "INSUFFICIENT_SCOPE",
+            f"Token is missing required scope: {required_scope}",
+        )
+    return actor
 
 
 async def _resolve_pat(
@@ -203,7 +252,7 @@ async def require_authenticated(
     REST surface still relies on the cookie session for browser flows;
     this entry point consolidates PAT and cookie auth.
     """
-    client_ip = (request.client.host if request.client else None) or None
+    client_ip = _request_client_ip(request)
 
     bearer = _extract_bearer(request)
     if bearer is not None and bearer.startswith(PAT_PLAINTEXT_PREFIX):
@@ -256,6 +305,12 @@ async def require_actor_csrf(
     if request.method.upper() not in {"POST", "PUT", "PATCH", "DELETE"}:
         return actor
     if actor.method == "pat":
+        if "api:write" not in actor.scopes:
+            raise ApiError(
+                403,
+                "INSUFFICIENT_SCOPE",
+                "Token is missing required scope: api:write",
+            )
         return actor
 
     if not x_csrf_token:
@@ -274,6 +329,7 @@ async def require_actor_csrf(
 
 async def require_csrf(
     request: Request,
+    session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_current_user),
     settings: Settings = Depends(get_settings_dep),
     x_csrf_token: str | None = Header(default=None, alias="X-CSRF-Token"),
@@ -295,6 +351,16 @@ async def require_csrf(
     """
     if request.method.upper() not in {"POST", "PUT", "PATCH", "DELETE"}:
         return current_user
+
+    bearer = _extract_bearer(request)
+    if bearer is not None and bearer.startswith(PAT_PLAINTEXT_PREFIX):
+        actor = await _resolve_pat_or_raise(
+            bearer,
+            session,
+            client_ip=_request_client_ip(request),
+            required_scope="api:write",
+        )
+        return actor.user
 
     if not x_csrf_token:
         raise ApiError(403, "CSRF_INVALID", "X-CSRF-Token header is required")

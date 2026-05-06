@@ -4,9 +4,10 @@ from mcp.server.fastmcp import FastMCP
 
 from backend.app.mcp.services import (
     MCPServices,
+    current_user_from_context,
     graph_node_resource_payload,
     graph_resource_payload,
-    resolve_repository_by_slug,
+    resolve_readable_repository_by_slug,
     wiki_page_resource_payload,
     wiki_tree_resource_payload,
 )
@@ -20,10 +21,18 @@ def register_resources(server: FastMCP, services: MCPServices) -> None:
         description="Read-only symbol graph snapshot for a ready repository.",
         mime_type="application/json",
     )
-    async def repository_graph(host: str, owner: str, name: str) -> object:
+    async def repository_graph(
+        host: str,
+        owner: str,
+        name: str,
+    ) -> object:
+        current_user = current_user_from_context(None)
         async with services.session_manager.session() as session:
-            repository = await resolve_repository_by_slug(
-                session=session, slug=f"{host}/{owner}/{name}"
+            repository = await resolve_readable_repository_by_slug(
+                session=session,
+                slug=f"{host}/{owner}/{name}",
+                services=services,
+                current_user=current_user,
             )
         return await graph_resource_payload(
             services=services,
@@ -37,10 +46,18 @@ def register_resources(server: FastMCP, services: MCPServices) -> None:
         description="Generated wiki tree for a ready repository.",
         mime_type="application/json",
     )
-    async def repository_wiki_tree(host: str, owner: str, name: str) -> object:
+    async def repository_wiki_tree(
+        host: str,
+        owner: str,
+        name: str,
+    ) -> object:
+        current_user = current_user_from_context(None)
         async with services.session_manager.session() as session:
-            repository = await resolve_repository_by_slug(
-                session=session, slug=f"{host}/{owner}/{name}"
+            repository = await resolve_readable_repository_by_slug(
+                session=session,
+                slug=f"{host}/{owner}/{name}",
+                services=services,
+                current_user=current_user,
             )
         return await wiki_tree_resource_payload(
             services=services,
@@ -55,11 +72,18 @@ def register_resources(server: FastMCP, services: MCPServices) -> None:
         mime_type="application/json",
     )
     async def repository_wiki_page(
-        host: str, owner: str, name: str, slug: str
+        host: str,
+        owner: str,
+        name: str,
+        slug: str,
     ) -> object:
+        current_user = current_user_from_context(None)
         async with services.session_manager.session() as session:
-            repository = await resolve_repository_by_slug(
-                session=session, slug=f"{host}/{owner}/{name}"
+            repository = await resolve_readable_repository_by_slug(
+                session=session,
+                slug=f"{host}/{owner}/{name}",
+                services=services,
+                current_user=current_user,
             )
         return await wiki_page_resource_payload(
             services=services,
@@ -75,11 +99,18 @@ def register_resources(server: FastMCP, services: MCPServices) -> None:
         mime_type="application/json",
     )
     async def repository_graph_node(
-        host: str, owner: str, name: str, node_id: str
+        host: str,
+        owner: str,
+        name: str,
+        node_id: str,
     ) -> object:
+        current_user = current_user_from_context(None)
         async with services.session_manager.session() as session:
-            repository = await resolve_repository_by_slug(
-                session=session, slug=f"{host}/{owner}/{name}"
+            repository = await resolve_readable_repository_by_slug(
+                session=session,
+                slug=f"{host}/{owner}/{name}",
+                services=services,
+                current_user=current_user,
             )
         return await graph_node_resource_payload(
             services=services,

@@ -33,7 +33,13 @@ from backend.app.db.base import Base
 from backend.app.db.session import SessionManager
 from backend.app.models.code_node import CodeNode
 from backend.app.models.code_node_summary import CodeNodeSummary
-from backend.app.models.enums import CodeNodeType, RepositoryStatus, SyncSchedule, UserRole
+from backend.app.models.enums import (
+    CodeNodeType,
+    RepositoryStatus,
+    RepositoryVisibility,
+    SyncSchedule,
+    UserRole,
+)
 from backend.app.models.llm_model_assignment import LLMModelAssignment
 from backend.app.models.llm_secret import LLMSecret
 from backend.app.models.personal_access_token import PersonalAccessToken
@@ -143,6 +149,7 @@ async def _seed_transport_fixture(
             owner="mikekonan",
             branch="main",
             status=RepositoryStatus.READY,
+            visibility=RepositoryVisibility.PUBLIC,
             sync_schedule=SyncSchedule.MANUAL,
         )
         session.add(repository)
@@ -201,6 +208,7 @@ def _build_process_env(repo_root: Path, settings: Settings) -> dict[str, str]:
         # can decrypt LLMSecret rows we seeded — SecretCipher derives its
         # Fernet key from auth.jwt_secret.
         "COGRAPH_AUTH__JWT_SECRET": settings.auth.jwt_secret.get_secret_value(),
+        "COGRAPH_AUTH__PUBLIC_READ": str(settings.auth.public_read).lower(),
         "COGRAPH_EMBEDDING__ENABLED": "true",
         "COGRAPH_EMBEDDING__API_URL": settings.embedding.api_url,
         "COGRAPH_EMBEDDING__API_KEY": settings.embedding.api_key.get_secret_value(),

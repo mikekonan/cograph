@@ -24,7 +24,7 @@ from backend.app.auth.actor import AuthenticatedActor
 from backend.app.core.deps import (
     get_db_session,
     require_actor_csrf,
-    require_authenticated,
+    require_scope,
 )
 from backend.app.core.errors import ApiError
 from backend.app.models.identity_provider import IdentityProvider
@@ -64,7 +64,7 @@ def _to_view(identity: UserIdentity, provider: IdentityProvider) -> IdentityView
 @router.get("", response_model=IdentityListResponse)
 async def list_my_identities(
     session: AsyncSession = Depends(get_db_session),
-    actor: AuthenticatedActor = Depends(require_authenticated),
+    actor: AuthenticatedActor = Depends(require_scope("api:read")),
 ) -> IdentityListResponse:
     rows = (
         await session.execute(

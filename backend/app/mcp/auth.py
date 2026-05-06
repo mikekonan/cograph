@@ -153,6 +153,14 @@ def wrap_with_mcp_auth(inner_app: ASGIApp, session_manager: SessionManager) -> A
             )
             return
 
+        if "api:read" not in actor.scopes:
+            await _send_forbidden(
+                send,
+                "INSUFFICIENT_SCOPE",
+                "Token is missing required scope: api:read",
+            )
+            return
+
         # Stash the actor for MCP tool handlers; the Starlette state dict
         # may not exist on raw scopes, so populate carefully.
         state = scope.setdefault("state", {})

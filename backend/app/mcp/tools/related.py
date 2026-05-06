@@ -1,14 +1,15 @@
 from uuid import UUID
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 from pydantic import BaseModel, Field
 
 from backend.app.graph.traversal import TraversalDirection
 from backend.app.mcp.services import (
     MCPServices,
+    current_user_from_context,
     encode_payload,
     related_payload,
-    resolve_repository_by_slug,
+    resolve_readable_repository_by_slug,
 )
 
 
@@ -33,6 +34,7 @@ def register(server: FastMCP, services: MCPServices) -> None:
         node_id: UUID,
         depth: int = 1,
         direction: TraversalDirection = TraversalDirection.BOTH,
+        ctx: Context | None = None,
     ) -> object:
         args = RelatedToolArgs(
             repository=repository,
@@ -40,9 +42,13 @@ def register(server: FastMCP, services: MCPServices) -> None:
             depth=depth,
             direction=direction,
         )
+        current_user = current_user_from_context(ctx)
         async with services.session_manager.session() as session:
-            repo = await resolve_repository_by_slug(
-                session=session, slug=args.repository
+            repo = await resolve_readable_repository_by_slug(
+                session=session,
+                slug=args.repository,
+                services=services,
+                current_user=current_user,
             )
         response = await related_payload(
             services=services,

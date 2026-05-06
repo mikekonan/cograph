@@ -38,8 +38,8 @@ from backend.app.core.deps import (
     get_db_session,
     require_actor_csrf,
     require_admin_or_owner,
-    require_authenticated,
     require_csrf,
+    require_scope,
 )
 from backend.app.core.errors import ApiError
 from backend.app.models.personal_access_token import PersonalAccessToken
@@ -178,7 +178,7 @@ def _reject_pat_self_mint(actor: AuthenticatedActor) -> None:
 @router.get("/me/tokens", response_model=TokenListResponse)
 async def list_my_tokens(
     session: AsyncSession = Depends(get_db_session),
-    actor: AuthenticatedActor = Depends(require_authenticated),
+    actor: AuthenticatedActor = Depends(require_scope("api:read")),
 ) -> TokenListResponse:
     rows = (
         await session.scalars(

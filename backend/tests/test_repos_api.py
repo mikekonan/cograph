@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -17,6 +18,7 @@ from backend.app.models.enums import (
     SyncSchedule,
     UserRole,
 )
+from backend.app.models.personal_access_token import PersonalAccessToken
 from backend.app.models.repo_document import RepoDocument
 from backend.app.models.repo_sync_run import RepoSyncRun
 from backend.app.models.repository import Repository
@@ -59,6 +61,10 @@ class _FastReadyOrchestrator(_FakeOrchestrator):
 _TEST_CSRF = "csrf-token"
 
 
+def _hash_pat(plaintext: str) -> bytes:
+    return hashlib.sha256(plaintext.encode("utf-8")).digest()
+
+
 async def _authenticate_admin(client, settings, admin: User) -> None:
     token = create_token(
         user_id=admin.id,
@@ -70,6 +76,26 @@ async def _authenticate_admin(client, settings, admin: User) -> None:
     client.cookies.set(settings.auth.access_cookie_name, token)
     # Also set the csrf cookie so the double-submit validation passes.
     client.cookies.set(settings.auth.csrf_cookie_name, _TEST_CSRF)
+
+
+async def _mint_pat(
+    db_session,
+    user: User,
+    plaintext: str,
+    *,
+    scopes: list[str] | None = None,
+) -> dict[str, str]:
+    db_session.add(
+        PersonalAccessToken(
+            user_id=user.id,
+            name="test-token",
+            token_hash=_hash_pat(plaintext),
+            token_prefix=plaintext[:16],
+            scopes=scopes or ["api:read"],
+        )
+    )
+    await db_session.commit()
+    return {"Authorization": f"Bearer {plaintext}"}
 
 
 async def test_reindex_repository_requires_admin(client):
@@ -605,6 +631,42 @@ async def test_list_repositories_owner_sees_admin_only(client, db_session, setti
     assert response.json()["total"] == 2
 
 
+async def test_list_repositories_pat_user_sees_admin_only(client, db_session):
+    member = User(email="member@example.com", password_hash="hashed", role=UserRole.USER)
+    db_session.add_all(
+        [
+            member,
+            Repository(
+                host="example.com",
+                git_url="https://github.com/acme/public.git",
+                name="public",
+                owner="acme",
+                branch="main",
+                visibility=RepositoryVisibility.PUBLIC,
+            ),
+            Repository(
+                host="example.com",
+                git_url="https://github.com/acme/secret.git",
+                name="secret",
+                owner="acme",
+                branch="main",
+                visibility=RepositoryVisibility.ADMIN_ONLY,
+            ),
+        ]
+    )
+    await db_session.commit()
+    headers = await _mint_pat(
+        db_session,
+        member,
+        "cgr_pat_repo_read_member_token_000000000000000000000000",
+    )
+
+    response = await client.get("/api/repos", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 2
+
+
 async def test_list_repositories_pagination(client, db_session):
     repos = [
         Repository(
@@ -727,6 +789,33 @@ async def test_get_repository_owner_can_read_admin_only_repo(
 
     response = await client.get(
         f"/api/repos/{repository.host}/{repository.owner}/{repository.name}"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["visibility"] == "admin_only"
+
+
+async def test_get_repository_pat_user_can_read_admin_only_repo(client, db_session):
+    member = User(email="member-read@example.com", password_hash="hashed", role=UserRole.USER)
+    repository = Repository(
+        host="example.com",
+        git_url="https://github.com/acme/secret.git",
+        name="secret",
+        owner="acme",
+        branch="main",
+        visibility=RepositoryVisibility.ADMIN_ONLY,
+    )
+    db_session.add_all([member, repository])
+    await db_session.commit()
+    headers = await _mint_pat(
+        db_session,
+        member,
+        "cgr_pat_repo_detail_member_token_0000000000000000000000",
+    )
+
+    response = await client.get(
+        f"/api/repos/{repository.host}/{repository.owner}/{repository.name}",
+        headers=headers,
     )
 
     assert response.status_code == 200

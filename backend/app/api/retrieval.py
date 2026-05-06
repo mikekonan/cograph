@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.config import Settings
+from backend.app.core.bank_access import ensure_readable_banks
 from backend.app.core.deps import (
     get_current_user_optional,
     get_db_session,
@@ -147,6 +148,11 @@ async def retrieve(
             settings=settings,
             current_user=current_user,
         )
+    await ensure_readable_banks(
+        session=session,
+        bank_ids=payload.bank_ids,
+        current_user=current_user,
+    )
     return await retrieve_composite(
         session,
         query=payload.query,

@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
+from backend.app.core.md_collection_access import get_readable_md_collection
 from backend.app.core.deps import (
     get_current_user_optional,
     get_db_session,
@@ -1183,18 +1184,11 @@ async def _require_collection_access(
     collection_id: UUID,
     current_user: User | None,
 ) -> MdCollection:
-    collection = await session.get(MdCollection, collection_id)
-    if collection is None:
-        raise ApiError(404, "NOT_FOUND", "Collection not found")
-    if collection.visibility.value == "public":
-        return collection
-    if current_user is None:
-        raise ApiError(403, "FORBIDDEN", "Collection access denied")
-    if current_user.role in (UserRole.OWNER, UserRole.ADMIN):
-        return collection
-    if collection.owner_id == current_user.id:
-        return collection
-    raise ApiError(403, "FORBIDDEN", "Collection access denied")
+    return await get_readable_md_collection(
+        session=session,
+        collection_id=collection_id,
+        current_user=current_user,
+    )
 
 
 async def _require_collection_owner_or_admin(

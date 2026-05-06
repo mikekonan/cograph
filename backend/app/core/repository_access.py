@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.config import Settings
 from backend.app.core.errors import ApiError
-from backend.app.models.enums import RepositoryVisibility, UserRole
+from backend.app.models.enums import RepositoryVisibility
 from backend.app.models.repository import Repository
 from backend.app.models.user import User
 
@@ -17,10 +17,7 @@ def apply_repository_read_scope(
     settings: Settings,
     current_user: User | None,
 ) -> Select:
-    if current_user is not None and current_user.role in (
-        UserRole.OWNER,
-        UserRole.ADMIN,
-    ):
+    if current_user is not None:
         return statement
     if not settings.auth.public_read:
         return statement.where(false())
@@ -33,10 +30,7 @@ def can_read_repository(
     settings: Settings,
     current_user: User | None,
 ) -> bool:
-    if current_user is not None and current_user.role in (
-        UserRole.OWNER,
-        UserRole.ADMIN,
-    ):
+    if current_user is not None:
         return True
     return (
         settings.auth.public_read

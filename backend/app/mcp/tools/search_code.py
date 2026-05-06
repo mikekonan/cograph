@@ -1,10 +1,11 @@
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 from pydantic import BaseModel, Field, field_validator
 
 from backend.app.mcp.services import (
     MCPServices,
+    current_user_from_context,
     encode_payload,
-    resolve_repository_by_slug,
+    resolve_readable_repository_by_slug,
     search_code_payload,
 )
 
@@ -32,15 +33,24 @@ def register(server: FastMCP, services: MCPServices) -> None:
             "e.g. 'github.com/mikekonan/cograph'."
         ),
     )
-    async def search_code(repository: str, query: str, top_k: int = 10) -> object:
+    async def search_code(
+        repository: str,
+        query: str,
+        top_k: int = 10,
+        ctx: Context | None = None,
+    ) -> object:
         args = SearchCodeToolArgs(
             repository=repository,
             query=query,
             top_k=top_k,
         )
+        current_user = current_user_from_context(ctx)
         async with services.session_manager.session() as session:
-            repo = await resolve_repository_by_slug(
-                session=session, slug=args.repository
+            repo = await resolve_readable_repository_by_slug(
+                session=session,
+                slug=args.repository,
+                services=services,
+                current_user=current_user,
             )
         response = await search_code_payload(
             services=services,

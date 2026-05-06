@@ -1,13 +1,14 @@
 from datetime import datetime
 from uuid import UUID
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from backend.app.mcp.services import (
     MCPServices,
+    current_user_from_context,
     encode_payload,
-    resolve_repository_by_slug,
+    resolve_readable_repository_by_slug,
     retrieve_payload,
 )
 from backend.app.rag.context_builder import RetrievalLayer
@@ -65,6 +66,7 @@ def register(server: FastMCP, services: MCPServices) -> None:
         include_chunks: bool = True,
         include_graph: bool = False,
         include_scores: bool = False,
+        ctx: Context | None = None,
     ) -> object:
         args = RetrieveToolArgs(
             query=query,
@@ -80,10 +82,14 @@ def register(server: FastMCP, services: MCPServices) -> None:
             include_scores=include_scores,
         )
         repository_id: UUID | None = None
+        current_user = current_user_from_context(ctx)
         if args.repository is not None:
             async with services.session_manager.session() as session:
-                repo = await resolve_repository_by_slug(
-                    session=session, slug=args.repository
+                repo = await resolve_readable_repository_by_slug(
+                    session=session,
+                    slug=args.repository,
+                    services=services,
+                    current_user=current_user,
                 )
             repository_id = repo.id
         response = await retrieve_payload(
@@ -99,5 +105,6 @@ def register(server: FastMCP, services: MCPServices) -> None:
             include_chunks=args.include_chunks,
             include_graph=args.include_graph,
             include_scores=args.include_scores,
+            current_user=current_user,
         )
         return encode_payload(response)
