@@ -267,6 +267,10 @@ jobs:
 
               tool_names = {tool.name for tool in tools.tools}
               expected = {
+                  "cograph.repositories",
+                  "cograph.collections",
+                  "cograph.collection_document",
+                  "cograph.collection_search",
                   "cograph.retrieve",
                   "cograph.node",
                   "cograph.search",
