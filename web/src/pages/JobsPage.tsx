@@ -30,7 +30,6 @@ import {
   ChevronDown,
   ChevronRight,
   Clock,
-  Download,
   FileCode2,
   FileText,
   GitBranch,
@@ -246,7 +245,7 @@ type RepoGroup = {
 function groupBatchesBySubject(batches: SyncBatchSummary[]): RepoGroup[] {
   const map = new Map<string, RepoGroup>();
   for (const batch of batches) {
-    const key = batch.repository_id ?? batch.bank_id ?? `label:${batch.label}`;
+    const key = batch.repository_id ?? `label:${batch.label}`;
     const existing = map.get(key);
     if (existing) {
       existing.batches.push(batch);
@@ -622,8 +621,6 @@ function stepLabel(step: SyncStep): string {
       return "wiki";
     case "export_confluence":
       return "export";
-    case "import_bank":
-      return "import";
   }
 }
 
@@ -689,8 +686,6 @@ function kindIcon(kind: SyncBatchKind): IconComponent {
       return RefreshCw;
     case "confluence_export":
       return Upload;
-    case "bank_import":
-      return Download;
   }
 }
 
@@ -700,8 +695,6 @@ function kindTint(kind: SyncBatchKind): string {
       return "bg-[color:var(--color-accent)]/15 text-[color:var(--color-accent)]";
     case "confluence_export":
       return "bg-[color:var(--color-warning)]/15 text-[color:var(--color-warning)]";
-    case "bank_import":
-      return "bg-[color:var(--color-info)]/15 text-[color:var(--color-info)]";
   }
 }
 
@@ -711,8 +704,6 @@ function kindCopy(kind: SyncBatchKind): string {
       return "Repo indexing pipeline";
     case "confluence_export":
       return "Push docs to Confluence";
-    case "bank_import":
-      return "Import Confluence pages";
   }
 }
 
@@ -754,8 +745,6 @@ export function iconForStep(step: SyncStep): IconComponent {
       return FileText;
     case "export_confluence":
       return Upload;
-    case "import_bank":
-      return Download;
   }
 }
 

@@ -178,7 +178,100 @@ async def worker_startup(ctx: dict) -> None:
                 exc,
             )
 
+    # max_tries=1 means a worker that crashed mid-job leaves md_jobs.status
+    # = 'running' forever with no auto-retry. Sweep stale rows whose
+    # started_at is older than 4h: re-enqueue idempotent embed /
+    # resolve_links work; mark abandoned upload-tracker rows as error.
+    try:
+        await _sweep_stale_md_jobs(session_manager, settings)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Failed to sweep stale md_jobs at worker startup; "
+            "stuck rows will need manual recovery. cause=%s",
+            exc,
+        )
+
     ctx["repo_sync_processor"] = None
+
+
+async def _sweep_stale_md_jobs(
+    session_manager: SessionManager,
+    settings: Settings,
+) -> None:
+    """Recover md_jobs rows stuck in ``running`` past the 4h cutoff."""
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import select
+
+    from backend.app.models.enums import MdJobKind, MdJobStatus
+    from backend.app.models.md_collection import MdJob
+
+    cutoff = datetime.now(UTC) - timedelta(hours=4)
+    sweep_cap = 100
+
+    async with session_manager.session() as session:
+        stale = list(
+            (
+                await session.execute(
+                    select(MdJob)
+                    .where(MdJob.status == MdJobStatus.RUNNING)
+                    .where(MdJob.started_at.is_not(None))
+                    .where(MdJob.started_at < cutoff)
+                    .order_by(MdJob.started_at.asc())
+                    .limit(sweep_cap)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        if not stale:
+            return
+
+        pool = await create_pool(
+            build_redis_settings(settings.redis.url),
+            default_queue_name=REPO_SYNC_QUEUE_NAME,
+        )
+        try:
+            requeued = 0
+            errored = 0
+            now = datetime.now(UTC)
+            for job in stale:
+                if job.kind is MdJobKind.UPLOAD:
+                    job.status = MdJobStatus.ERROR
+                    job.error_message = (
+                        "Upload abandoned: no progress for 4+ hours."
+                    )
+                    job.finished_at = now
+                    errored += 1
+                    continue
+
+                job.status = MdJobStatus.QUEUED
+                job.started_at = None
+                if job.kind is MdJobKind.EMBED:
+                    await pool.enqueue_job(
+                        "embed_md_collection",
+                        str(job.collection_id),
+                        str(job.id),
+                    )
+                    requeued += 1
+                elif job.kind is MdJobKind.RESOLVE_LINKS:
+                    await pool.enqueue_job(
+                        "resolve_md_links",
+                        str(job.collection_id),
+                        str(job.id),
+                    )
+                    requeued += 1
+            await session.commit()
+        finally:
+            await pool.aclose()
+
+    logger.info(
+        "Stale md_jobs sweep: requeued=%d errored=%d cutoff=%s",
+        requeued,
+        errored,
+        cutoff.isoformat(),
+    )
 
 
 def _configure_backend_logging() -> None:

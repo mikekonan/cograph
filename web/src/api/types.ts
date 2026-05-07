@@ -203,7 +203,7 @@ export type RepoSlug = {
 
 // --- retrieval -------------------------------------------------------------
 
-export type RetrievalLayer = "ast" | "code" | "ast_summary" | "repo_doc" | "bank" | "bank_fact";
+export type RetrievalLayer = "ast" | "code" | "ast_summary" | "repo_doc";
 
 export type RetrievalCandidateFrom = "vector" | "lexical" | "symbol" | "graph";
 
@@ -216,7 +216,6 @@ export type RetrievalInclude = {
 export type RetrieveRequest = {
   query: string;
   repository_id?: UUID;
-  bank_ids?: UUID[];
   stores?: RetrievalLayer[];
   top_k?: number;
   as_of?: ISODateTime;
@@ -233,8 +232,6 @@ export type RetrievalProvenance = {
   end_line?: number | null;
   document_id?: UUID | null;
   heading_path?: string[] | null;
-  bank_id?: UUID | null;
-  bank_name?: string | null;
   first_seen_commit?: string | null;
   last_changed_commit?: string | null;
   last_changed_at?: ISODateTime | null;
@@ -295,7 +292,7 @@ export type RetrieveResponse = {
   nodes: Record<string, RetrievalGraphNode>;
 };
 
-// --- sync jobs (repository pipeline + optional Confluence / bank flows) ----
+// --- sync jobs (repository pipeline + optional Confluence flow) ------------
 //
 // A sync "batch" is one end-to-end run — almost always a repo re-index. It
 // holds a sequence of `SyncJob` rows, one per pipeline step. The UI groups
@@ -303,9 +300,8 @@ export type RetrieveResponse = {
 // rather than listing thousands of file-level rows, because the things users
 // wait on are the phases, not the files inside them.
 //
-// Confluence exports and knowledge-bank imports reuse the same batch
-// container via `kind` and add their own step (`export_confluence` /
-// `import_bank`) without needing a separate table.
+// Confluence exports reuse the same batch container via `kind` and add their
+// own tail step (`export_confluence`) without needing a separate table.
 
 export type SyncJobStatus =
   | "queued"
@@ -318,7 +314,7 @@ export type SyncJobStatus =
 
 /**
  * Ordered pipeline phases. A repo re-index batch walks the core graph→RAG→wiki path;
- * Confluence and bank flows run a single optional tail step after `ready`.
+ * Confluence export runs a single optional tail step after `ready`.
  */
 export type SyncStep =
   | "clone" // git clone / fetch
@@ -329,8 +325,7 @@ export type SyncStep =
   | "embed_repo_docs" // LLM-embed repo_document_chunks into pgvector
   | "generate_summaries" // LLM summaries for important nodes/subgraphs
   | "generate_wiki" // generate durable wiki markdown into documents
-  | "export_confluence" // push generated docs to a Confluence destination
-  | "import_bank"; // ingest Confluence pages into a knowledge bank
+  | "export_confluence"; // push generated docs to a Confluence destination
 
 /**
  * What triggered a batch. Shown on the batch card so operators can tell
@@ -338,15 +333,13 @@ export type SyncStep =
  */
 export type SyncBatchTrigger = "initial" | "manual" | "schedule" | "webhook";
 
-export type SyncBatchKind = "repo_sync" | "confluence_export" | "bank_import";
+export type SyncBatchKind = "repo_sync" | "confluence_export";
 
 export type SyncJob = {
   id: UUID;
   batch_id: UUID;
   /** Present for repo_sync + confluence_export batches. */
   repository_id: UUID | null;
-  /** Present for bank_import batches. */
-  bank_id: UUID | null;
   step: SyncStep;
   /** Short human label: "Parse source", "Embed 1,247 nodes". */
   title: string;
@@ -405,10 +398,9 @@ export type SyncBatchSummary = {
   batch_id: UUID;
   kind: SyncBatchKind;
   trigger: SyncBatchTrigger;
-  /** Human-readable subject — repo full name for repo_sync / export, bank name for import. */
+  /** Human-readable subject — repo full name. */
   label: string;
   repository_id: UUID | null;
-  bank_id: UUID | null;
   counts: Record<SyncJobStatus, number>;
   /** ISO timestamp; oldest `created_at` across the batch's jobs. */
   started_at: ISODateTime;
@@ -673,7 +665,7 @@ export type MdDocument = {
   updated_at: string;
 };
 
-export type MdJobKind = "embed" | "resolve_links";
+export type MdJobKind = "embed" | "resolve_links" | "upload";
 export type MdJobStatus = "queued" | "running" | "success" | "error";
 
 export type MdJob = {

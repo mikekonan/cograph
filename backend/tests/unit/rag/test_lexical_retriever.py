@@ -108,36 +108,20 @@ async def test_code_store_uses_simple_tsvector_config():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("store", ["repo_docs", "banks", "bank_facts"])
-async def test_doc_stores_use_english_tsvector_config(store: str):
-    """Repo-docs and bank chunks remain on the english config (prose, not code)."""
+async def test_repo_docs_store_uses_english_tsvector_config():
+    """Repo-docs chunks remain on the english config (prose, not code)."""
     retriever = LexicalRetriever()
     session, captured = _session_capturing_sql()
-    kwargs: dict = {"top_k": 10, "query_text": "how are retries handled"}
-    if store in {"banks", "bank_facts"}:
-        kwargs["bank_ids"] = [uuid.uuid4()]
-    else:
-        kwargs["repository_id"] = uuid.uuid4()
-    await retriever.search(session, store=store, **kwargs)
+    await retriever.search(
+        session,
+        store="repo_docs",
+        query_text="how are retries handled",
+        repository_id=uuid.uuid4(),
+        top_k=10,
+    )
     [(sql, _params)] = captured
     assert "content_tsv" in sql and "content_tsv_simple" not in sql
     assert "'english'" in sql
-
-
-@pytest.mark.asyncio
-async def test_banks_store_requires_bank_ids():
-    """Without bank_ids the bank store should short-circuit, not query all banks."""
-    retriever = LexicalRetriever()
-    session, captured = _session_capturing_sql()
-    result = await retriever.search(
-        session,
-        store="banks",
-        query_text="anything",
-        bank_ids=[],
-        top_k=10,
-    )
-    assert result == []
-    assert captured == []
 
 
 @pytest.mark.asyncio

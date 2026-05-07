@@ -34,7 +34,6 @@ class _StubGraphPivot:
 async def test_build_expands_code_hit_into_composite_layers_and_graph():
     node_id = uuid4()
     repo_chunk_id = uuid4()
-    bank_chunk_id = uuid4()
     related_chunk = LinkedRepoDocumentChunk(
         chunk_id=uuid4(),
         document_id=uuid4(),
@@ -102,19 +101,6 @@ async def test_build_expands_code_hit_into_composite_layers_and_graph():
             )
         }
     )
-    builder._load_bank_chunks = AsyncMock(  # type: ignore[method-assign]
-        return_value={
-            bank_chunk_id: SimpleNamespace(
-                chunk_id=bank_chunk_id,
-                document_id=uuid4(),
-                bank_id=uuid4(),
-                bank_name="Runbooks",
-                title="Ops guide",
-                heading_path=["Incidents"],
-                content="Use the runbook when the repo is not ready.",
-            )
-        }
-    )
 
     response = await builder.build(
         AsyncMock(),
@@ -138,13 +124,6 @@ async def test_build_expands_code_hit_into_composite_layers_and_graph():
                 score=0.44,
                 metadata={"lexical_rank": 1},
             ),
-            RetrievedChunk(
-                store="banks",
-                chunk_id=bank_chunk_id,
-                content="ignored",
-                score=0.22,
-                metadata={"vector_rank": 1},
-            ),
         ],
         requested_layers=set(RetrievalLayer),
         repository_id=uuid4(),
@@ -158,7 +137,6 @@ async def test_build_expands_code_hit_into_composite_layers_and_graph():
         RetrievalLayer.AST,
         RetrievalLayer.AST_SUMMARY,
         RetrievalLayer.REPO_DOC,
-        RetrievalLayer.BANK,
     ]
     assert response.results[0].related_repo_doc_chunks == [related_chunk]
     assert set(response.results[0].metadata.candidate_from) == {
@@ -196,7 +174,6 @@ async def test_build_respects_include_flags_and_skips_missing_summary():
     builder._load_node_summaries = AsyncMock(return_value={})  # type: ignore[method-assign]
     builder._load_linked_repo_doc_chunks = AsyncMock(return_value={})  # type: ignore[method-assign]
     builder._load_repo_doc_chunks = AsyncMock(return_value={})  # type: ignore[method-assign]
-    builder._load_bank_chunks = AsyncMock(return_value={})  # type: ignore[method-assign]
 
     response = await builder.build(
         AsyncMock(),

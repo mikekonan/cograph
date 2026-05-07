@@ -175,6 +175,9 @@ export const mdCollectionsHandlers = [
 
     const body = (await request.json()) as {
       documents: Array<{ source_key: string; title?: string; content: string }>;
+      upload_job_id?: string | null;
+      upload_total?: number;
+      upload_final?: boolean;
     };
     const collection = collections.find((c) => c.id === params.id);
     if (!collection) {
@@ -182,8 +185,9 @@ export const mdCollectionsHandlers = [
     }
 
     const docs = documentsByCollection.get(String(params.id)) ?? [];
+    const items: Array<Record<string, unknown>> = [];
     for (const doc of body.documents) {
-      docs.push({
+      const created = {
         id: crypto.randomUUID(),
         collection_id: String(params.id),
         source_key: doc.source_key,
@@ -191,12 +195,22 @@ export const mdCollectionsHandlers = [
         content: doc.content,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
+      };
+      docs.push(created);
+      items.push({
+        id: created.id,
+        collection_id: created.collection_id,
+        source_key: created.source_key,
+        title: created.title,
+        bytes: created.content.length,
+        chunk_count: 0,
+        created_at: created.created_at,
+        updated_at: created.updated_at,
       });
     }
     collection.document_count = docs.length;
     documentsByCollection.set(String(params.id), docs);
 
-    // Create mock jobs
     const jobs = jobsByCollection.get(String(params.id)) ?? [];
     jobs.unshift({
       id: crypto.randomUUID(),
@@ -211,9 +225,42 @@ export const mdCollectionsHandlers = [
       started_at: new Date().toISOString(),
       finished_at: new Date().toISOString(),
     });
+
+    let uploadJobId = body.upload_job_id ?? null;
+    if (uploadJobId === null && body.upload_total !== undefined) {
+      uploadJobId = crypto.randomUUID();
+      jobs.unshift({
+        id: uploadJobId,
+        collection_id: String(params.id),
+        kind: "upload",
+        status: body.upload_final ? "success" : "running",
+        result_summary: {
+          total: body.upload_total,
+          processed: body.documents.length,
+          failed: 0,
+          current_item: null,
+        },
+        error_message: null,
+        current_item: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        started_at: new Date().toISOString(),
+        finished_at: body.upload_final ? new Date().toISOString() : null,
+      });
+    }
+
     jobsByCollection.set(String(params.id), jobs);
 
-    return HttpResponse.json({ inserted: body.documents.length, skipped: 0 }, { status: 201 });
+    return HttpResponse.json(
+      {
+        items,
+        indexed_documents: body.documents.length,
+        indexed_chunks: 0,
+        unchanged_documents: 0,
+        upload_job_id: uploadJobId,
+      },
+      { status: 201 },
+    );
   }),
 
   http.get("/api/md-collections/-/jobs", async ({ request }) => {

@@ -75,11 +75,6 @@ class SyncSchedule(StrEnum):
     WEBHOOK = "webhook"
 
 
-class BankDocumentSourceKind(StrEnum):
-    UPLOAD = "upload"
-    CONFLUENCE = "confluence"
-
-
 class MdCollectionVisibility(StrEnum):
     PRIVATE = "private"
     PUBLIC = "public"
@@ -95,6 +90,7 @@ class MdLinkType(StrEnum):
 class MdJobKind(StrEnum):
     EMBED = "embed"
     RESOLVE_LINKS = "resolve_links"
+    UPLOAD = "upload"
 
 
 class MdJobStatus(StrEnum):
@@ -123,7 +119,6 @@ class RepoSyncTriggerKind(StrEnum):
 class SyncBatchKind(StrEnum):
     REPO_SYNC = "repo_sync"
     CONFLUENCE_EXPORT = "confluence_export"
-    BANK_IMPORT = "bank_import"
 
 
 class SyncBatchTrigger(StrEnum):
@@ -153,7 +148,6 @@ class SyncStep(StrEnum):
     GENERATE_SUMMARIES = "generate_summaries"
     GENERATE_WIKI = "generate_wiki"
     EXPORT_CONFLUENCE = "export_confluence"
-    IMPORT_BANK = "import_bank"
 
 
 class SyncErrorCode(StrEnum):

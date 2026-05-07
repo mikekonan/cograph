@@ -12,8 +12,8 @@ Formula:
     gamma = 0.03 if business_context.confidence == low
 
 `score_norm` is the per-batch max-normalized retrieval score; this keeps
-the boost on a comparable scale across hybrid stores (code vs docs vs
-banks) where absolute RRF scores differ.
+the boost on a comparable scale across hybrid stores (code vs docs)
+where absolute RRF scores differ.
 
 Match scope: `concept.name` plus simple aliases — original lowered, snake
 case, kebab case. A concept is matched when any of its aliases appears as

@@ -24,7 +24,7 @@ export type Job = {
   id: string;
   /** Source file being exported (e.g. doc slug, file path, page title). */
   source: string;
-  /** Optional target description (e.g. Confluence page URL, bank name). */
+  /** Optional target description (e.g. Confluence page URL). */
   target?: string;
   status: JobStatus;
   /** 0-100 when known; omit for queued/indeterminate. */

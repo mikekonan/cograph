@@ -8,7 +8,6 @@ from uuid import UUID
 import pytest
 
 from backend.app.admin.secret_service import SecretCipher
-from backend.app.api.banks import get_bank_document_embedder, get_bank_fact_extractor
 from backend.app.api.retrieval import get_query_embed_provider
 from backend.app.core.errors import ApiError
 from backend.app.llm.runtime_providers import build_runtime_providers
@@ -89,17 +88,9 @@ async def test_request_scoped_runtime_dependencies_use_role_assignments(
     request = _request_with_settings(settings)
 
     embed_provider = await get_query_embed_provider(request, db_session)
-    bank_embedder = await get_bank_document_embedder(request, db_session)
-    fact_extractor = await get_bank_fact_extractor(request, db_session)
 
     assert embed_provider is not None
     assert embed_provider.model == "text-embedding-3-small"
-    assert bank_embedder is not None
-    assert bank_embedder._provider.model == "text-embedding-3-small"
-    assert fact_extractor is not None
-    assert fact_extractor._llm.model == "gpt-4.1-mini"
-    assert fact_extractor._embed_provider is not None
-    assert fact_extractor._embed_provider.model == "text-embedding-3-small"
 
 
 async def test_repo_sync_worker_builds_processor_from_role_assignments(

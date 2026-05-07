@@ -1,4 +1,4 @@
-"""RAG retriever — hybrid kNN + BM25 via Reciprocal Rank Fusion across code / repo_docs / banks."""
+"""RAG retriever — hybrid kNN + BM25 via Reciprocal Rank Fusion across code / repo_docs."""
 from __future__ import annotations
 
 import asyncio
@@ -11,9 +11,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
-Store = Literal["code", "repo_docs", "banks"]
+Store = Literal["code", "repo_docs", "md_collections"]
 
-_ALL_STORES: frozenset[Store] = frozenset({"code", "repo_docs", "banks"})
+_ALL_STORES: frozenset[Store] = frozenset({"code", "repo_docs"})
 EMBEDDING_DIM = 1536
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,7 @@ def _rrf_merge(
 
 
 class RagRetriever:
-    """Hybrid kNN + BM25 retriever via RRF across code_embeddings, repo_document_chunks, and bank_document_chunks."""
+    """Hybrid kNN + BM25 retriever via RRF across code_embeddings and repo_document_chunks."""
 
     async def retrieve(
         self,
@@ -73,7 +73,6 @@ class RagRetriever:
         query_embedding: list[float],
         *,
         repository_id: UUID | None = None,
-        bank_ids: list[UUID] | None = None,
         top_k: int = 10,
         stores: set[Store] | None = None,
         rrf_k: int = 60,
@@ -86,29 +85,25 @@ class RagRetriever:
         qvec = _format_vector_literal(query_embedding)
         use_bm25 = bool(query_text and query_text.strip())
 
-        store_tasks: list[tuple[Store, UUID | None, list[UUID] | None]] = []
+        store_tasks: list[tuple[Store, UUID]] = []
         if "code" in active and repository_id is not None:
-            store_tasks.append(("code", repository_id, None))
+            store_tasks.append(("code", repository_id))
         if "repo_docs" in active and repository_id is not None:
-            store_tasks.append(("repo_docs", repository_id, None))
-        if "banks" in active and bank_ids:
-            store_tasks.append(("banks", None, list(bank_ids)))
+            store_tasks.append(("repo_docs", repository_id))
 
         if not store_tasks:
             return []
 
         all_merged: list[RetrievedChunk] = []
-        for store_name, repo_id_arg, bank_ids_arg in store_tasks:
+        for store_name, repo_id_arg in store_tasks:
             vector_hits: list[RetrievedChunk] = []
             bm25_hits: list[RetrievedChunk] = []
 
             try:
                 if store_name == "code":
                     vector_hits = await self._vector_code(session, qvec, repo_id_arg, top_k)
-                elif store_name == "repo_docs":
-                    vector_hits = await self._vector_repo_docs(session, qvec, repo_id_arg, top_k)
                 else:
-                    vector_hits = await self._vector_banks(session, qvec, bank_ids_arg, top_k)
+                    vector_hits = await self._vector_repo_docs(session, qvec, repo_id_arg, top_k)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -118,10 +113,8 @@ class RagRetriever:
                 try:
                     if store_name == "code":
                         bm25_hits = await self._bm25_code(session, query_text, repo_id_arg, top_k)
-                    elif store_name == "repo_docs":
-                        bm25_hits = await self._bm25_repo_docs(session, query_text, repo_id_arg, top_k)
                     else:
-                        bm25_hits = await self._bm25_banks(session, query_text, bank_ids_arg, top_k)
+                        bm25_hits = await self._bm25_repo_docs(session, query_text, repo_id_arg, top_k)
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
@@ -281,9 +274,6 @@ class RagRetriever:
         repository_id: UUID,
         top_k: int,
     ) -> list[RetrievedChunk]:
-        # NOTE: 'english' tokenizer poorly fits code identifiers (snake_case/camelCase
-        # split, programming reserved words stem incorrectly). Evaluate `simple` secondary
-        # tsvector or per-store dictionary config.
         stmt = text(
             """
             SELECT
@@ -313,105 +303,6 @@ class RagRetriever:
                 score=float(row["score"]),
                 metadata={
                     "file_path": row["file_path"],
-                    "title": row["title"],
-                    "chunk_index": row["chunk_index"],
-                    "heading_path": row["heading_path"],
-                },
-            )
-            for row in result.mappings().all()
-        ]
-
-    async def _vector_banks(
-        self,
-        session: AsyncSession,
-        qvec: str,
-        bank_ids: list[UUID],
-        top_k: int,
-    ) -> list[RetrievedChunk]:
-        stmt = text(
-            """
-            SELECT
-                bdc.id AS chunk_id,
-                bdc.content AS content,
-                bdc.chunk_index AS chunk_index,
-                bdc.heading_path AS heading_path,
-                bd.title AS title,
-                bd.bank_id AS bank_id,
-                b.name AS bank_name,
-                1 - (bdc.embedding <=> CAST(:qvec AS vector)) AS score
-            FROM bank_document_chunks bdc
-            JOIN bank_documents bd ON bd.id = bdc.document_id
-            JOIN banks b ON b.id = bd.bank_id
-            WHERE bd.bank_id = ANY(:bank_ids)
-              AND bdc.embedding IS NOT NULL
-            ORDER BY bdc.embedding <=> CAST(:qvec AS vector)
-            LIMIT :top_k
-            """
-        )
-        result = await session.execute(
-            stmt,
-            {"qvec": qvec, "bank_ids": list(bank_ids), "top_k": top_k},
-        )
-        return [
-            RetrievedChunk(
-                store="banks",
-                chunk_id=row["chunk_id"],
-                content=row["content"],
-                score=float(row["score"]),
-                metadata={
-                    "bank_id": row["bank_id"],
-                    "bank_name": row["bank_name"],
-                    "title": row["title"],
-                    "chunk_index": row["chunk_index"],
-                    "heading_path": row["heading_path"],
-                },
-            )
-            for row in result.mappings().all()
-        ]
-
-    async def _bm25_banks(
-        self,
-        session: AsyncSession,
-        query_text: str,
-        bank_ids: list[UUID],
-        top_k: int,
-    ) -> list[RetrievedChunk]:
-        # NOTE: 'english' tokenizer poorly fits code identifiers (snake_case/camelCase
-        # split, programming reserved words stem incorrectly). Evaluate `simple` secondary
-        # tsvector or per-store dictionary config.
-        stmt = text(
-            """
-            SELECT
-                bdc.id AS chunk_id,
-                bdc.content AS content,
-                bdc.chunk_index AS chunk_index,
-                bdc.heading_path AS heading_path,
-                bd.title AS title,
-                bd.bank_id AS bank_id,
-                b.name AS bank_name,
-                ts_rank(bdc.content_tsv, plainto_tsquery('english', :query_text)) AS score
-            FROM bank_document_chunks bdc
-            JOIN bank_documents bd ON bd.id = bdc.document_id
-            JOIN banks b ON b.id = bd.bank_id
-            WHERE bd.bank_id = ANY(:bank_ids)
-              AND bdc.content_tsv @@ plainto_tsquery('english', :query_text)
-            ORDER BY score DESC
-            LIMIT :top_k
-            """
-        )
-        result = await session.execute(
-            stmt,
-            {"query_text": query_text, "bank_ids": list(bank_ids), "top_k": top_k},
-        )
-        return [
-            RetrievedChunk(
-                store="banks",
-                chunk_id=row["chunk_id"],
-                content=row["content"],
-                score=float(row["score"]),
-                metadata={
-                    "bank_id": row["bank_id"],
-                    "bank_name": row["bank_name"],
                     "title": row["title"],
                     "chunk_index": row["chunk_index"],
                     "heading_path": row["heading_path"],

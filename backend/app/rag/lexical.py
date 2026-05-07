@@ -25,7 +25,7 @@ from backend.app.rag.retriever import RetrievedChunk
 
 logger = logging.getLogger(__name__)
 
-Store = Literal["code", "repo_docs", "banks", "bank_facts", "md_collections"]
+Store = Literal["code", "repo_docs", "md_collections"]
 
 
 def _bind_temporal(stmt: TextClause) -> TextClause:
@@ -59,7 +59,6 @@ class LexicalRetriever:
         store: Store,
         query_text: str,
         repository_id: UUID | None = None,
-        bank_ids: list[UUID] | None = None,
         collection_id: UUID | None = None,
         top_k: int = 10,
         as_of: datetime | None = None,
@@ -88,30 +87,6 @@ class LexicalRetriever:
                 session,
                 query_text,
                 repository_id,
-                top_k,
-                as_of=as_of,
-                since=since,
-                until=until,
-            )
-        if store == "banks":
-            if not bank_ids:
-                return []
-            return await self._search_banks(
-                session,
-                query_text,
-                bank_ids,
-                top_k,
-                as_of=as_of,
-                since=since,
-                until=until,
-            )
-        if store == "bank_facts":
-            if not bank_ids:
-                return []
-            return await self._search_bank_facts(
-                session,
-                query_text,
-                bank_ids,
                 top_k,
                 as_of=as_of,
                 since=since,
@@ -254,69 +229,6 @@ class LexicalRetriever:
             for row in result.mappings().all()
         ]
 
-    async def _search_banks(
-        self,
-        session: AsyncSession,
-        query_text: str,
-        bank_ids: list[UUID],
-        top_k: int,
-        *,
-        as_of: datetime | None,
-        since: datetime | None,
-        until: datetime | None,
-    ) -> list[RetrievedChunk]:
-        stmt = text(
-            """
-            SELECT
-                bdc.id AS chunk_id,
-                bdc.content AS content,
-                bdc.chunk_index AS chunk_index,
-                bdc.heading_path AS heading_path,
-                bd.title AS title,
-                bd.bank_id AS bank_id,
-                b.name AS bank_name,
-                ts_rank_cd(bdc.content_tsv, plainto_tsquery('english', :query_text)) AS score
-            FROM bank_document_chunks bdc
-            JOIN bank_documents bd ON bd.id = bdc.document_id
-            JOIN banks b ON b.id = bd.bank_id
-            WHERE bd.bank_id = ANY(:bank_ids)
-              AND bdc.content_tsv @@ plainto_tsquery('english', :query_text)
-              AND (CAST(:as_of AS timestamp) IS NULL OR bd.updated_at <= CAST(:as_of AS timestamp))
-              AND (CAST(:since AS timestamp) IS NULL OR bd.updated_at >= CAST(:since AS timestamp))
-              AND (CAST(:until AS timestamp) IS NULL OR bd.updated_at <= CAST(:until AS timestamp))
-            ORDER BY score DESC
-            LIMIT :top_k
-            """
-        )
-        stmt = _bind_temporal(stmt)
-        result = await session.execute(
-            stmt,
-            {
-                "query_text": query_text,
-                "bank_ids": list(bank_ids),
-                "top_k": top_k,
-                "as_of": as_of,
-                "since": since,
-                "until": until,
-            },
-        )
-        return [
-            RetrievedChunk(
-                store="banks",
-                chunk_id=row["chunk_id"],
-                content=row["content"],
-                score=float(row["score"]),
-                metadata={
-                    "bank_id": row["bank_id"],
-                    "bank_name": row["bank_name"],
-                    "title": row["title"],
-                    "chunk_index": row["chunk_index"],
-                    "heading_path": row["heading_path"],
-                },
-            )
-            for row in result.mappings().all()
-        ]
-
     async def _search_md_collections(
         self,
         session: AsyncSession,
@@ -400,70 +312,6 @@ class LexicalRetriever:
             )
             for row in result.mappings().all()
         ]
-
-    async def _search_bank_facts(
-        self,
-        session: AsyncSession,
-        query_text: str,
-        bank_ids: list[UUID],
-        top_k: int,
-        *,
-        as_of: datetime | None,
-        since: datetime | None,
-        until: datetime | None,
-    ) -> list[RetrievedChunk]:
-        stmt = text(
-            """
-            SELECT
-                bf.id AS chunk_id,
-                bf.statement AS content,
-                bf.document_id AS document_id,
-                bf.heading_path AS heading_path,
-                bd.title AS title,
-                bf.bank_id AS bank_id,
-                b.name AS bank_name,
-                ts_rank_cd(bf.content_tsv, plainto_tsquery('english', :query_text)) AS score
-            FROM bank_facts bf
-            JOIN bank_documents bd ON bd.id = bf.document_id
-            JOIN banks b ON b.id = bf.bank_id
-            WHERE bf.bank_id = ANY(:bank_ids)
-              AND bf.content_tsv @@ plainto_tsquery('english', :query_text)
-              AND (CAST(:as_of AS timestamp) IS NULL OR bd.updated_at <= CAST(:as_of AS timestamp))
-              AND (CAST(:since AS timestamp) IS NULL OR bd.updated_at >= CAST(:since AS timestamp))
-              AND (CAST(:until AS timestamp) IS NULL OR bd.updated_at <= CAST(:until AS timestamp))
-            ORDER BY score DESC
-            LIMIT :top_k
-            """
-        )
-        stmt = _bind_temporal(stmt)
-        result = await session.execute(
-            stmt,
-            {
-                "query_text": query_text,
-                "bank_ids": list(bank_ids),
-                "top_k": top_k,
-                "as_of": as_of,
-                "since": since,
-                "until": until,
-            },
-        )
-        return [
-            RetrievedChunk(
-                store="bank_facts",
-                chunk_id=row["chunk_id"],
-                content=row["content"],
-                score=float(row["score"]),
-                metadata={
-                    "bank_id": row["bank_id"],
-                    "bank_name": row["bank_name"],
-                    "document_id": row["document_id"],
-                    "title": row["title"],
-                    "heading_path": row["heading_path"],
-                },
-            )
-            for row in result.mappings().all()
-        ]
-
 
 class SymbolLookup:
     """Fuzzy symbol-name lookup via pg_trgm similarity on ``qualified_name``.

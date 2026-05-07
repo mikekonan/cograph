@@ -64,6 +64,7 @@ export type MdDocumentBatchUploadResult = {
   indexed_documents: number;
   indexed_chunks: number;
   unchanged_documents: number;
+  upload_job_id: UUID | null;
 };
 
 export async function listMdCollections(
@@ -125,13 +126,22 @@ export async function updateMdCollection(
 export async function uploadMdDocumentBatch(
   collectionId: UUID,
   documents: Array<{ source_key: string; title?: string; content: string }>,
+  options: {
+    upload_job_id?: UUID | null;
+    upload_total?: number;
+    upload_final?: boolean;
+  } = {},
 ): Promise<MdDocumentBatchUploadResult> {
+  const body: Record<string, unknown> = { documents };
+  if (options.upload_job_id) body.upload_job_id = options.upload_job_id;
+  if (options.upload_total !== undefined) body.upload_total = options.upload_total;
+  if (options.upload_final) body.upload_final = true;
   return apiJson<MdDocumentBatchUploadResult>(
     `/api/md-collections/${collectionId}/documents/batch`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ documents }),
+      body: JSON.stringify(body),
     },
   );
 }
@@ -149,10 +159,12 @@ export async function deleteMdDocument(collectionId: UUID, documentId: UUID): Pr
   });
 }
 
+export type MdJobKind = "embed" | "resolve_links" | "upload";
+
 export type MdJob = {
   id: UUID;
   collection_id: UUID;
-  kind: "embed" | "resolve_links";
+  kind: MdJobKind;
   status: "queued" | "running" | "success" | "error";
   result_summary: Record<string, unknown>;
   error_message: string | null;

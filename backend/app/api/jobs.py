@@ -70,7 +70,6 @@ class SyncJobResponse(BaseModel):
     id: str
     batch_id: str
     repository_id: str | None
-    bank_id: str | None
     step: str
     title: str
     status: str
@@ -111,7 +110,6 @@ class SyncBatchSummaryResponse(BaseModel):
     trigger: str
     label: str
     repository_id: str | None
-    bank_id: str | None
     counts: SyncBatchCounts
     started_at: str
     is_complete: bool
@@ -166,7 +164,6 @@ def _job_to_response(job: SyncJob) -> SyncJobResponse:
         id=str(job.id),
         batch_id=str(job.batch_id),
         repository_id=str(job.repository_id) if job.repository_id else None,
-        bank_id=str(job.bank_id) if job.bank_id else None,
         step=job.step.value if isinstance(job.step, SyncStep) else str(job.step),
         title=job.title,
         status=job.status.value
@@ -223,7 +220,6 @@ def _batch_to_summary(
         else str(batch.trigger),
         label=batch.label,
         repository_id=str(batch.repository_id) if batch.repository_id else None,
-        bank_id=str(batch.bank_id) if batch.bank_id else None,
         counts=counts,
         started_at=_fmt_dt(started_at_dt) or "",
         is_complete=_is_batch_complete(counts),

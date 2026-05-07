@@ -21,8 +21,7 @@ type SyncJobUnits = { done: number; total: number; unit: string };
  * seed data since page load.
  *
  * Only considers `kind === "repo_sync"` batches for duration/step medians;
- * Confluence export and bank import have very different shapes and would
- * bias the numbers.
+ * Confluence export has a very different shape and would bias the numbers.
  */
 function computeStats(days: number): SyncStats {
   const now = Date.now();
@@ -151,8 +150,6 @@ function materialiseUnitsForStep(step: SyncStep): SyncJobUnits | null {
       return { done: 0, total: 8, unit: "pages" };
     case "export_confluence":
       return { done: 0, total: 18, unit: "pages" };
-    case "import_bank":
-      return { done: 0, total: 250, unit: "pages" };
   }
 }
 

@@ -43,10 +43,8 @@ def _bind_temporal(stmt: TextClause) -> TextClause:
         bindparam("until", type_=DateTime(timezone=True)),
     )
 
-Store = Literal["code", "repo_docs", "banks", "bank_facts", "md_collections"]
-_ALL_STORES: frozenset[Store] = frozenset(
-    {"code", "repo_docs", "banks", "bank_facts", "md_collections"}
-)
+Store = Literal["code", "repo_docs", "md_collections"]
+_ALL_STORES: frozenset[Store] = frozenset({"code", "repo_docs", "md_collections"})
 
 
 # ---------------------------------------------------------------------------
@@ -62,7 +60,6 @@ class _VectorSearcher(Protocol):
         store: Store,
         query_embedding: list[float],
         repository_id: UUID | None = None,
-        bank_ids: list[UUID] | None = None,
         collection_id: UUID | None = None,
         top_k: int = 10,
         as_of: datetime | None = None,
@@ -79,7 +76,6 @@ class _LexicalSearcher(Protocol):
         store: Store,
         query_text: str,
         repository_id: UUID | None = None,
-        bank_ids: list[UUID] | None = None,
         collection_id: UUID | None = None,
         top_k: int = 10,
         as_of: datetime | None = None,
@@ -131,7 +127,6 @@ class VectorRetriever:
         store: Store,
         query_embedding: list[float],
         repository_id: UUID | None = None,
-        bank_ids: list[UUID] | None = None,
         collection_id: UUID | None = None,
         top_k: int = 10,
         as_of: datetime | None = None,
@@ -162,30 +157,6 @@ class VectorRetriever:
                 session,
                 qvec,
                 repository_id,
-                top_k,
-                as_of=as_of,
-                since=since,
-                until=until,
-            )
-        if store == "banks":
-            if not bank_ids:
-                return []
-            return await self._banks(
-                session,
-                qvec,
-                list(bank_ids),
-                top_k,
-                as_of=as_of,
-                since=since,
-                until=until,
-            )
-        if store == "bank_facts":
-            if not bank_ids:
-                return []
-            return await self._bank_facts(
-                session,
-                qvec,
-                list(bank_ids),
                 top_k,
                 as_of=as_of,
                 since=since,
@@ -327,132 +298,6 @@ class VectorRetriever:
             for row in result.mappings().all()
         ]
 
-    async def _banks(
-        self,
-        session: AsyncSession,
-        qvec: str,
-        bank_ids: list[UUID],
-        top_k: int,
-        *,
-        as_of: datetime | None,
-        since: datetime | None,
-        until: datetime | None,
-    ) -> list[RetrievedChunk]:
-        stmt = text(
-            """
-            SELECT
-                bdc.id AS chunk_id,
-                bdc.content AS content,
-                bdc.chunk_index AS chunk_index,
-                bdc.heading_path AS heading_path,
-                bd.title AS title,
-                bd.bank_id AS bank_id,
-                b.name AS bank_name,
-                1 - (bdc.embedding <=> CAST(:qvec AS vector)) AS score
-            FROM bank_document_chunks bdc
-            JOIN bank_documents bd ON bd.id = bdc.document_id
-            JOIN banks b ON b.id = bd.bank_id
-            WHERE bd.bank_id = ANY(:bank_ids)
-              AND bdc.embedding IS NOT NULL
-              AND (CAST(:as_of AS timestamp) IS NULL OR bd.updated_at <= CAST(:as_of AS timestamp))
-              AND (CAST(:since AS timestamp) IS NULL OR bd.updated_at >= CAST(:since AS timestamp))
-              AND (CAST(:until AS timestamp) IS NULL OR bd.updated_at <= CAST(:until AS timestamp))
-            ORDER BY bdc.embedding <=> CAST(:qvec AS vector)
-            LIMIT :top_k
-            """
-        )
-        stmt = _bind_temporal(stmt)
-        result = await session.execute(
-            stmt,
-            {
-                "qvec": qvec,
-                "bank_ids": bank_ids,
-                "top_k": top_k,
-                "as_of": as_of,
-                "since": since,
-                "until": until,
-            },
-        )
-        return [
-            RetrievedChunk(
-                store="banks",
-                chunk_id=row["chunk_id"],
-                content=row["content"],
-                score=float(row["score"]),
-                metadata={
-                    "bank_id": row["bank_id"],
-                    "bank_name": row["bank_name"],
-                    "title": row["title"],
-                    "chunk_index": row["chunk_index"],
-                    "heading_path": row["heading_path"],
-                },
-            )
-            for row in result.mappings().all()
-        ]
-
-    async def _bank_facts(
-        self,
-        session: AsyncSession,
-        qvec: str,
-        bank_ids: list[UUID],
-        top_k: int,
-        *,
-        as_of: datetime | None,
-        since: datetime | None,
-        until: datetime | None,
-    ) -> list[RetrievedChunk]:
-        stmt = text(
-            """
-            SELECT
-                bf.id AS chunk_id,
-                bf.statement AS content,
-                bf.heading_path AS heading_path,
-                bf.document_id AS document_id,
-                bd.title AS title,
-                bf.bank_id AS bank_id,
-                b.name AS bank_name,
-                1 - (bf.embedding <=> CAST(:qvec AS vector)) AS score
-            FROM bank_facts bf
-            JOIN bank_documents bd ON bd.id = bf.document_id
-            JOIN banks b ON b.id = bf.bank_id
-            WHERE bf.bank_id = ANY(:bank_ids)
-              AND bf.embedding IS NOT NULL
-              AND (CAST(:as_of AS timestamp) IS NULL OR bd.updated_at <= CAST(:as_of AS timestamp))
-              AND (CAST(:since AS timestamp) IS NULL OR bd.updated_at >= CAST(:since AS timestamp))
-              AND (CAST(:until AS timestamp) IS NULL OR bd.updated_at <= CAST(:until AS timestamp))
-            ORDER BY bf.embedding <=> CAST(:qvec AS vector)
-            LIMIT :top_k
-            """
-        )
-        stmt = _bind_temporal(stmt)
-        result = await session.execute(
-            stmt,
-            {
-                "qvec": qvec,
-                "bank_ids": bank_ids,
-                "top_k": top_k,
-                "as_of": as_of,
-                "since": since,
-                "until": until,
-            },
-        )
-        return [
-            RetrievedChunk(
-                store="bank_facts",
-                chunk_id=row["chunk_id"],
-                content=row["content"],
-                score=float(row["score"]),
-                metadata={
-                    "bank_id": row["bank_id"],
-                    "bank_name": row["bank_name"],
-                    "document_id": row["document_id"],
-                    "title": row["title"],
-                    "heading_path": row["heading_path"],
-                },
-            )
-            for row in result.mappings().all()
-        ]
-
     async def _md_collections(
         self,
         session: AsyncSession,
@@ -559,7 +404,6 @@ class HybridRetriever:
         query_text: str,
         query_embedding: list[float],
         repository_id: UUID | None = None,
-        bank_ids: list[UUID] | None = None,
         collection_id: UUID | None = None,
         top_k: int = 10,
         stores: set[Store] | None = None,
@@ -576,10 +420,6 @@ class HybridRetriever:
             store_specs.append(("code", {"repository_id": repository_id}))
         if "repo_docs" in active and repository_id is not None:
             store_specs.append(("repo_docs", {"repository_id": repository_id}))
-        if "banks" in active and bank_ids:
-            store_specs.append(("banks", {"bank_ids": list(bank_ids)}))
-        if "bank_facts" in active and bank_ids:
-            store_specs.append(("bank_facts", {"bank_ids": list(bank_ids)}))
         if "md_collections" in active and collection_id is not None:
             store_specs.append(("md_collections", {"collection_id": collection_id}))
 

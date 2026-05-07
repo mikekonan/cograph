@@ -1,4 +1,4 @@
-"""Unit tests for RagRetriever — hybrid kNN + BM25 via RRF across code / repo_docs / banks."""
+"""Unit tests for RagRetriever — hybrid kNN + BM25 via RRF across code / repo_docs."""
 from __future__ import annotations
 
 import uuid
@@ -141,15 +141,13 @@ async def test_retrieve_from_code_store():
 
 
 @pytest.mark.asyncio
-async def test_retrieve_merges_all_three_stores_and_respects_top_k():
+async def test_retrieve_merges_both_stores_and_respects_top_k():
     retriever = RagRetriever()
     repo_id = uuid.uuid4()
-    bank_id = uuid.uuid4()
 
     code_chunk_a = uuid.uuid4()
     code_chunk_b = uuid.uuid4()
     repo_doc_chunk = uuid.uuid4()
-    bank_chunk = uuid.uuid4()
 
     code_rows = [
         _make_row(
@@ -184,38 +182,24 @@ async def test_retrieve_merges_all_three_stores_and_respects_top_k():
             score=0.80,
         ),
     ]
-    bank_rows = [
-        _make_row(
-            chunk_id=bank_chunk,
-            content="bank-top",
-            chunk_index=2,
-            heading_path=["Policy"],
-            title="Handbook",
-            bank_id=bank_id,
-            bank_name="Ops",
-            score=0.99,
-        ),
-    ]
-    # 6 calls: vector_code, bm25_code, vector_repo_docs, bm25_repo_docs, vector_banks, bm25_banks
-    session = _session_with_rows([code_rows, [], repo_doc_rows, [], bank_rows, []])
+    # 4 calls: vector_code, bm25_code, vector_repo_docs, bm25_repo_docs
+    session = _session_with_rows([code_rows, [], repo_doc_rows, []])
 
     result = await retriever.retrieve(
         session,
         "hello",
         query_embedding=[0.1] * 1536,
         repository_id=repo_id,
-        bank_ids=[bank_id],
-        top_k=3,
+        top_k=2,
     )
 
-    assert len(result) == 3
+    assert len(result) == 2
     scores = [c.score for c in result]
     assert scores == sorted(scores, reverse=True)
-    # code_chunk_b is rank 2 in the code store → lowest RRF score overall → dropped by top_k=3
     ids_returned = {c.chunk_id for c in result}
     assert code_chunk_b not in ids_returned
-    assert {code_chunk_a, repo_doc_chunk, bank_chunk} == ids_returned
-    assert any(c.store == "banks" for c in result)
+    assert {code_chunk_a, repo_doc_chunk} == ids_returned
+    assert any(c.store == "code" for c in result)
     assert any(c.store == "repo_docs" for c in result)
 
 
@@ -223,7 +207,6 @@ async def test_retrieve_merges_all_three_stores_and_respects_top_k():
 async def test_retrieve_degrades_gracefully_when_one_store_raises():
     retriever = RagRetriever()
     repo_id = uuid.uuid4()
-    bank_id = uuid.uuid4()
 
     good_code_rows = [
         _make_row(
@@ -237,18 +220,6 @@ async def test_retrieve_degrades_gracefully_when_one_store_raises():
             score=0.5,
         ),
     ]
-    good_bank_rows = [
-        _make_row(
-            chunk_id=uuid.uuid4(),
-            content="bank-ok",
-            chunk_index=0,
-            heading_path=[],
-            title="Doc",
-            bank_id=bank_id,
-            bank_name="B",
-            score=0.6,
-        ),
-    ]
 
     call_index = {"i": 0}
 
@@ -256,8 +227,7 @@ async def test_retrieve_degrades_gracefully_when_one_store_raises():
         i = call_index["i"]
         call_index["i"] += 1
         # call 0 = vector_code (ok), 1 = bm25_code (ok empty),
-        # 2 = vector_repo_docs (raises), 3 = bm25_repo_docs (ok empty, independent block),
-        # 4 = vector_banks (ok), 5 = bm25_banks (ok empty)
+        # 2 = vector_repo_docs (raises), 3 = bm25_repo_docs (ok empty)
         if i == 0:
             result = MagicMock()
             result.mappings.return_value.all.return_value = good_code_rows
@@ -268,14 +238,6 @@ async def test_retrieve_degrades_gracefully_when_one_store_raises():
             return result
         if i == 2:
             raise RuntimeError("pgvector index missing")
-        if i == 3:
-            result = MagicMock()
-            result.mappings.return_value.all.return_value = []
-            return result
-        if i == 4:
-            result = MagicMock()
-            result.mappings.return_value.all.return_value = good_bank_rows
-            return result
         result = MagicMock()
         result.mappings.return_value.all.return_value = []
         return result
@@ -288,47 +250,11 @@ async def test_retrieve_degrades_gracefully_when_one_store_raises():
         "hello",
         query_embedding=[0.1] * 1536,
         repository_id=repo_id,
-        bank_ids=[bank_id],
         top_k=10,
     )
 
-    assert len(result) == 2
-    stores_returned = {c.store for c in result}
-    assert stores_returned == {"code", "banks"}
-
-
-@pytest.mark.asyncio
-async def test_retrieve_skips_banks_when_bank_ids_empty():
-    """Banks store should only be queried when bank_ids is non-empty."""
-    retriever = RagRetriever()
-    repo_id = uuid.uuid4()
-
-    code_rows = [
-        _make_row(
-            chunk_id=uuid.uuid4(),
-            content="c",
-            qualified_name="pkg.c",
-            file_path="a.py",
-            language="python",
-            start_line=1,
-            end_line=2,
-            score=0.5,
-        ),
-    ]
-    # 4 calls: vector_code, bm25_code, vector_repo_docs, bm25_repo_docs
-    session = _session_with_rows([code_rows, [], [], []])
-
-    result = await retriever.retrieve(
-        session,
-        "foo",
-        query_embedding=[0.1] * 1536,
-        repository_id=repo_id,
-        bank_ids=[],
-        top_k=5,
-    )
-
-    assert all(c.store in {"code", "repo_docs"} for c in result)
     assert len(result) == 1
+    assert result[0].store == "code"
 
 
 # ---------------------------------------------------------------------------

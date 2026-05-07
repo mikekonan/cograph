@@ -21,14 +21,7 @@ import { useRepos } from "@/hooks/useRepos";
 import { useRetrieve } from "@/hooks/useRetrieve";
 import { buildSourceUrl } from "@/lib/git";
 import { cn } from "@/lib/utils";
-import {
-  BookOpenText,
-  Code2,
-  FileText,
-  Network,
-  Search as SearchIcon,
-  Sparkles,
-} from "lucide-react";
+import { Code2, FileText, Network, Search as SearchIcon, Sparkles } from "lucide-react";
 import {
   type ComponentType,
   type FormEvent,
@@ -39,14 +32,7 @@ import {
 } from "react";
 import { useSearchParams } from "react-router";
 
-const LAYER_ORDER: RetrievalLayer[] = [
-  "code",
-  "ast_summary",
-  "ast",
-  "repo_doc",
-  "bank_fact",
-  "bank",
-];
+const LAYER_ORDER: RetrievalLayer[] = ["code", "ast_summary", "ast", "repo_doc"];
 
 const LAYER_META: Record<
   RetrievalLayer,
@@ -75,16 +61,6 @@ const LAYER_META: Record<
     label: "Repo Docs",
     hint: "Markdown docs discovered inside the repository.",
     icon: FileText,
-  },
-  bank: {
-    label: "Banks",
-    hint: "External bank chunks attached to the query.",
-    icon: BookOpenText,
-  },
-  bank_fact: {
-    label: "Bank Facts",
-    hint: "LLM-distilled facts extracted from bank chunks.",
-    icon: BookOpenText,
   },
 };
 
@@ -357,14 +333,6 @@ function SearchResultCard({
                   : undefined
               }
             />
-          )}
-          {result.provenance.bank_name && (
-            <p className="text-sm text-[color:var(--color-fg-muted)]">
-              Bank:{" "}
-              <span className="font-medium text-[color:var(--color-fg)]">
-                {result.provenance.bank_name}
-              </span>
-            </p>
           )}
         </div>
 

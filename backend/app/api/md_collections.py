@@ -10,10 +10,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
+from backend.app.auth.actor import AuthenticatedActor
 from backend.app.core.md_collection_access import get_readable_md_collection
 from backend.app.core.deps import (
     get_current_user_optional,
     get_db_session,
+    require_actor_csrf,
     require_csrf,
     require_current_user,
 )
@@ -201,6 +203,9 @@ class MdDocumentUploadResponse(BaseModel):
 
 class MdDocumentBatchUploadRequest(BaseModel):
     documents: list[MdDocumentBatchItem]
+    upload_job_id: UUID | None = None
+    upload_total: int | None = Field(default=None, ge=0)
+    upload_final: bool = False
 
 
 class MdDocumentBatchItem(BaseModel):
@@ -214,6 +219,7 @@ class MdDocumentBatchUploadResponse(BaseModel):
     indexed_documents: int
     indexed_chunks: int
     unchanged_documents: int
+    upload_job_id: UUID | None = None
 
 
 class MdDocumentDetailResponse(BaseModel):
@@ -410,14 +416,12 @@ async def upload_md_document(
     request: Request,
     collection_id: UUID,
     session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_current_user),
-    _csrf: User = Depends(require_csrf),
+    actor: AuthenticatedActor = Depends(require_actor_csrf),
 ) -> MdDocumentUploadResponse:
-    del _csrf
     await _require_collection_owner_or_admin(
         session=session,
         collection_id=collection_id,
-        current_user=current_user,
+        current_user=actor.user,
     )
     document_input = await _parse_single_document_upload(request)
     result = await _md_indexer.upsert_document(
@@ -446,14 +450,12 @@ async def upload_md_document_batch(
     collection_id: UUID,
     payload: MdDocumentBatchUploadRequest,
     session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_current_user),
-    _csrf: User = Depends(require_csrf),
+    actor: AuthenticatedActor = Depends(require_actor_csrf),
 ) -> MdDocumentBatchUploadResponse:
-    del _csrf
     await _require_collection_owner_or_admin(
         session=session,
         collection_id=collection_id,
-        current_user=current_user,
+        current_user=actor.user,
     )
     documents = [
         MdDocumentInput(
@@ -464,6 +466,14 @@ async def upload_md_document_batch(
         for item in payload.documents
     ]
     _validate_batch_source_keys(documents)
+
+    upload_job = await _attach_or_create_upload_job(
+        session=session,
+        collection_id=collection_id,
+        upload_job_id=payload.upload_job_id,
+        upload_total=payload.upload_total,
+    )
+
     result = await _md_indexer.upsert_documents(
         session=session,
         collection_id=collection_id,
@@ -477,11 +487,21 @@ async def upload_md_document_batch(
         collection_id=collection_id,
         changed_document_ids=changed_document_ids,
     )
+
+    if upload_job is not None:
+        await _advance_upload_job(
+            session=session,
+            job=upload_job,
+            batch_size=len(documents),
+            final=payload.upload_final,
+        )
+
     return MdDocumentBatchUploadResponse(
         items=[_build_document_upload_response(item) for item in result.items],
         indexed_documents=result.indexed_documents,
         indexed_chunks=result.indexed_chunks,
         unchanged_documents=result.unchanged_documents,
+        upload_job_id=upload_job.id if upload_job is not None else None,
     )
 
 
@@ -1205,3 +1225,85 @@ async def _require_collection_owner_or_admin(
     if collection.owner_id == current_user.id:
         return collection
     raise ApiError(403, "FORBIDDEN", "Collection access denied")
+
+
+async def _attach_or_create_upload_job(
+    *,
+    session: AsyncSession,
+    collection_id: UUID,
+    upload_job_id: UUID | None,
+    upload_total: int | None,
+) -> MdJob | None:
+    """Resolve the MdJob row tracking a bulk-upload session.
+
+    The batch route is also reachable from PAT scripts that don't care
+    about progress UI; in that case both ``upload_job_id`` and
+    ``upload_total`` are ``None`` and we return ``None`` (no row
+    created — the embed/resolve_links jobs that follow are sufficient).
+
+    When the FE bulk-uploader sends the first batch it provides
+    ``upload_total``; we create a fresh ``kind=upload`` row and the
+    handler returns the new id. Subsequent batches echo
+    ``upload_job_id`` back; we attach to the existing row, validate it
+    matches this collection and is still active, and the handler
+    advances ``processed`` after the indexer succeeds.
+    """
+    from backend.app.md_rag.job_tracker import MdJobTracker
+    from backend.app.models.enums import MdJobKind, MdJobStatus
+
+    if upload_job_id is None and upload_total is None:
+        return None
+
+    if upload_job_id is not None:
+        job = await session.get(MdJob, upload_job_id)
+        if job is None:
+            raise ApiError(404, "NOT_FOUND", "Upload job not found")
+        if job.collection_id != collection_id:
+            raise ApiError(403, "FORBIDDEN", "Upload job belongs to another collection")
+        if job.kind is not MdJobKind.UPLOAD:
+            raise ApiError(409, "INVALID_JOB_KIND", "Job is not an upload tracker")
+        if job.status not in (MdJobStatus.QUEUED, MdJobStatus.RUNNING):
+            raise ApiError(409, "JOB_TERMINAL", "Upload job has already finished")
+        return job
+
+    job = await MdJobTracker.create(
+        session, collection_id=collection_id, kind=MdJobKind.UPLOAD
+    )
+    job.result_summary = {
+        "total": upload_total or 0,
+        "processed": 0,
+        "failed": 0,
+        "current_item": None,
+    }
+    await session.commit()
+    await session.refresh(job)
+    return job
+
+
+async def _advance_upload_job(
+    *,
+    session: AsyncSession,
+    job: MdJob,
+    batch_size: int,
+    final: bool,
+) -> None:
+    """Advance a ``kind=upload`` MdJob after a successful batch upsert."""
+    from datetime import UTC, datetime
+
+    from backend.app.models.enums import MdJobStatus
+
+    summary = dict(job.result_summary or {})
+    processed = int(summary.get("processed", 0)) + batch_size
+    total = int(summary.get("total", 0))
+    summary["processed"] = processed
+
+    job.result_summary = summary
+    if job.status is MdJobStatus.QUEUED:
+        job.status = MdJobStatus.RUNNING
+        job.started_at = datetime.now(UTC)
+
+    if final or (total > 0 and processed >= total):
+        job.status = MdJobStatus.SUCCESS
+        job.finished_at = datetime.now(UTC)
+
+    await session.commit()

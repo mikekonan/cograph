@@ -49,10 +49,6 @@ class SyncJob(CreatedAtMixin, Base):
         ForeignKey("repositories.id", ondelete="CASCADE"),
         nullable=True,
     )
-    bank_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid(as_uuid=True),
-        nullable=True,
-    )
 
     step: Mapped[SyncStep] = mapped_column(
         Enum(

@@ -31,7 +31,6 @@ const batch: SyncBatchSummary = {
   trigger: "initial",
   label: "fastapi/fastapi",
   repository_id: "repo-1",
-  bank_id: null,
   counts: {
     queued: 0,
     running: 0,
@@ -50,7 +49,6 @@ const secondBatch: SyncBatchSummary = {
   trigger: "manual",
   label: "tailwindlabs/tailwindcss",
   repository_id: "repo-2",
-  bank_id: null,
   counts: {
     queued: 0,
     running: 0,
@@ -84,7 +82,6 @@ const jobs: SyncJob[] = [
     id: `job-${step}`,
     batch_id: batch.batch_id,
     repository_id: "repo-1",
-    bank_id: null,
     step,
     title: `Step ${index + 1}: ${step}`,
     status: isSkipped ? "skipped" : "success",
@@ -106,7 +103,6 @@ const secondBatchJobs: SyncJob[] = [
     id: "job-tailwind-clone",
     batch_id: secondBatch.batch_id,
     repository_id: "repo-2",
-    bank_id: null,
     step: "clone",
     title: "Clone repository",
     status: "success",
@@ -188,7 +184,6 @@ describe("JobsPage", () => {
     expect(screen.getByRole("option", { name: "All batches" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Repo syncs" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "Confluence exports" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: "Bank imports" })).not.toBeInTheDocument();
   });
 
   it("matches repository names in the search filter", async () => {

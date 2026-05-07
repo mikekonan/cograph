@@ -39,7 +39,6 @@ class User(CreatedAtMixin, Base):
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     sync_runs = relationship("RepoSyncRun", back_populates="requester")
-    banks = relationship("Bank", back_populates="owner")
 
     @property
     def is_owner(self) -> bool:

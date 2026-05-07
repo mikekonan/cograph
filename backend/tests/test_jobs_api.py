@@ -488,7 +488,6 @@ async def test_get_job_returns_correct_shape(client, db_session, settings):
     assert body["id"] == str(job.id)
     assert body["batch_id"] == str(batch.id)
     assert body["repository_id"] == str(repo.id)
-    assert body["bank_id"] is None
     assert body["step"] == "embed"
     assert body["title"] == "Embed 1,247 nodes"
     assert body["status"] == "running"
@@ -595,39 +594,12 @@ async def test_list_batches_returns_summary_shape(client, db_session, settings):
     assert b["trigger"] == "manual"
     assert b["label"] == "acme/a"
     assert b["repository_id"] == str(repo.id)
-    assert b["bank_id"] is None
     assert "counts" in b
     assert b["counts"]["success"] == 1
     assert b["counts"]["queued"] == 1
     assert b["counts"]["skipped"] == 0
     assert b["is_complete"] is False
     assert "started_at" in b
-
-
-async def test_list_batches_filter_by_kind(client, db_session, settings):
-    admin = User(email="admin@example.com", password_hash="hashed", role=UserRole.ADMIN)
-    repo = _make_repo()
-    db_session.add_all([admin, repo])
-    await db_session.commit()
-
-    batch_rs = _make_batch(repo, kind=SyncBatchKind.REPO_SYNC)
-    batch_bi = SyncBatch(
-        kind=SyncBatchKind.BANK_IMPORT,
-        trigger=SyncBatchTrigger.MANUAL,
-        label="my-bank",
-        repository_id=None,
-        status=SyncJobStatus.SUCCESS,
-    )
-    db_session.add_all([batch_rs, batch_bi])
-    await db_session.commit()
-
-    await _auth_admin(client, settings, admin)
-
-    r = await client.get("/api/jobs/batches?kind=bank_import")
-    assert r.status_code == 200
-    items = r.json()["items"]
-    assert len(items) == 1
-    assert items[0]["kind"] == "bank_import"
 
 
 async def test_list_batches_is_complete_true_when_all_terminal_including_skipped(
@@ -1038,7 +1010,6 @@ async def test_shape_parity_sync_job_running(client, db_session, settings):
         "id",
         "batch_id",
         "repository_id",
-        "bank_id",
         "step",
         "title",
         "status",
@@ -1102,7 +1073,6 @@ async def test_shape_parity_sync_batch_summary(client, db_session, settings):
         "trigger",
         "label",
         "repository_id",
-        "bank_id",
         "counts",
         "started_at",
         "is_complete",

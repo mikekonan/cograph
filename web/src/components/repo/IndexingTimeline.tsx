@@ -28,7 +28,7 @@ type IndexingTimelineProps = {
  *   [ clone ][ parse ][ extract ][ ███ embed ███ ][ docs ][ summaries ][ wiki ]
  *    5s       45s      20s        4m 30s           1m 10s   40s          55s
  *
- * Shows only the core repo-sync pipeline steps. Confluence/bank steps are
+ * Shows only the core repo-sync pipeline steps. Confluence export steps are
  * unrelated to a repo's own indexing timeline and are excluded.
  */
 export function IndexingTimeline({ batch, jobs, isPending, className }: IndexingTimelineProps) {
@@ -282,8 +282,6 @@ function stepCopy(step: SyncStep): { full: string } {
       return { full: "Generate wiki" };
     case "export_confluence":
       return { full: "Export Confluence" };
-    case "import_bank":
-      return { full: "Import bank" };
   }
 }
 

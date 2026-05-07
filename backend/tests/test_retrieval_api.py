@@ -10,11 +10,9 @@ from backend.app.api.retrieval import (
     get_hybrid_retriever,
     get_query_embed_provider,
 )
-from backend.app.models.bank import Bank, BankDocument, BankDocumentChunk, BankFact
 from backend.app.models.code_node import CodeNode
 from backend.app.models.code_node_summary import CodeNodeSummary
 from backend.app.models.enums import (
-    BankDocumentSourceKind,
     CodeNodeType,
     RepositoryStatus,
     RepositoryVisibility,
@@ -48,7 +46,7 @@ class _StubRetriever:
 async def test_retrieve_rejects_top_k_gt_100(client):
     response = await client.post(
         "/api/retrieve",
-        json={"query": "repo", "bank_ids": [str(uuid4())], "top_k": 101},
+        json={"query": "repo", "repository_id": str(uuid4()), "top_k": 101},
     )
 
     assert response.status_code == 422
@@ -60,7 +58,11 @@ async def test_retrieve_rejects_top_k_gt_100(client):
 async def test_retrieve_rejects_unknown_layer_name(client):
     response = await client.post(
         "/api/retrieve",
-        json={"query": "repo", "bank_ids": [str(uuid4())], "stores": ["made_up"]},
+        json={
+            "query": "repo",
+            "repository_id": str(uuid4()),
+            "stores": ["made_up"],
+        },
     )
 
     assert response.status_code == 422
@@ -93,43 +95,6 @@ async def test_retrieve_hides_admin_only_repo_from_anonymous(client, db_session)
 
 
 @pytest.mark.asyncio
-async def test_retrieve_requires_authentication_for_bank_ids(client, db_session):
-    owner = User(email="owner@example.com", password_hash="hashed", role=UserRole.USER)
-    bank = Bank(name="Runbooks", description="Ops", owner=owner)
-    db_session.add_all([owner, bank])
-    await db_session.commit()
-
-    response = await client.post(
-        "/api/retrieve",
-        json={"query": "runbook", "bank_ids": [str(bank.id)]},
-    )
-
-    assert response.status_code == 401
-    assert response.json()["error"]["code"] == "UNAUTHENTICATED"
-
-
-@pytest.mark.asyncio
-async def test_retrieve_rejects_bank_ids_for_non_owner(app, client, db_session):
-    owner = User(email="owner@example.com", password_hash="hashed", role=UserRole.USER)
-    other = User(email="other@example.com", password_hash="hashed", role=UserRole.USER)
-    bank = Bank(name="Runbooks", description="Ops", owner=owner)
-    db_session.add_all([owner, other, bank])
-    await db_session.commit()
-
-    app.dependency_overrides[get_current_user_optional] = lambda: other
-    try:
-        response = await client.post(
-            "/api/retrieve",
-            json={"query": "runbook", "bank_ids": [str(bank.id)]},
-        )
-    finally:
-        app.dependency_overrides.pop(get_current_user_optional, None)
-
-    assert response.status_code == 403
-    assert response.json()["error"]["code"] == "FORBIDDEN"
-
-
-@pytest.mark.asyncio
 async def test_retrieve_returns_composite_results_and_graph_context(app, client, db_session):
     window_start = datetime(2026, 4, 1, 0, 0, tzinfo=UTC)
     window_end = datetime(2026, 4, 21, 12, 0, tzinfo=UTC)
@@ -144,8 +109,7 @@ async def test_retrieve_returns_composite_results_and_graph_context(app, client,
         sync_schedule=SyncSchedule.MANUAL,
     )
     owner = User(email="owner@example.com", password_hash="hashed", role=UserRole.USER)
-    bank = Bank(name="Runbooks", description="Ops", owner=owner)
-    db_session.add_all([repository, owner, bank])
+    db_session.add_all([repository, owner])
     await db_session.flush()
 
     helper_id = uuid4()
@@ -239,41 +203,6 @@ async def test_retrieve_returns_composite_results_and_graph_context(app, client,
     db_session.add(
         RepoDocumentChunkMention(chunk_id=repo_chunk.id, code_node_id=error_node.id)
     )
-
-    bank_document = BankDocument(
-        bank_id=bank.id,
-        title="Ops guide",
-        source_kind=BankDocumentSourceKind.UPLOAD,
-        source_key="runbooks/repo.md",
-        external_id=None,
-        content="# Ops\n\nIf the repo is not ready, retry later.",
-        content_hash="bank-doc-hash",
-        bytes=48,
-        document_metadata={},
-    )
-    db_session.add(bank_document)
-    await db_session.flush()
-    bank_chunk = BankDocumentChunk(
-        document_id=bank_document.id,
-        chunk_index=0,
-        heading_path=["Ops"],
-        content="If the repo is not ready, retry later.",
-        content_hash="bank-chunk-hash",
-    )
-    db_session.add(bank_chunk)
-    await db_session.flush()
-    bank_fact = BankFact(
-        bank_id=bank.id,
-        document_id=bank_document.id,
-        chunk_id=bank_chunk.id,
-        statement="Repository actions should be retried after indexing finishes.",
-        source_excerpt="Retry later if the repo is not ready.",
-        heading_path=["Ops"],
-        content_hash="bank-fact-hash",
-        extraction_model="gpt-4o-mini",
-        model="fake-embed-v1",
-    )
-    db_session.add(bank_fact)
     await db_session.commit()
 
     retriever = _StubRetriever(
@@ -300,20 +229,6 @@ async def test_retrieve_returns_composite_results_and_graph_context(app, client,
                 score=0.4,
                 metadata={"lexical_rank": 1},
             ),
-            RetrievedChunk(
-                store="bank_facts",
-                chunk_id=bank_fact.id,
-                content=bank_fact.statement,
-                score=0.18,
-                metadata={"lexical_rank": 1},
-            ),
-            RetrievedChunk(
-                store="banks",
-                chunk_id=bank_chunk.id,
-                content=bank_chunk.content,
-                score=0.2,
-                metadata={"vector_rank": 1},
-            ),
         ]
     )
     app.dependency_overrides[get_query_embed_provider] = lambda: _StubEmbedProvider()
@@ -326,8 +241,7 @@ async def test_retrieve_returns_composite_results_and_graph_context(app, client,
             json={
                 "query": "repo not ready",
                 "repository_id": str(repository.id),
-                "bank_ids": [str(bank.id)],
-                "stores": ["code", "ast", "ast_summary", "repo_doc", "bank_fact", "bank"],
+                "stores": ["code", "ast", "ast_summary", "repo_doc"],
                 "top_k": 5,
                 "since": window_start.isoformat().replace("+00:00", "Z"),
                 "until": window_end.isoformat().replace("+00:00", "Z"),
@@ -346,8 +260,6 @@ async def test_retrieve_returns_composite_results_and_graph_context(app, client,
         "ast",
         "ast_summary",
         "repo_doc",
-        "bank_fact",
-        "bank",
     ]
     assert payload["results"][0]["related_repo_doc_chunks"][0]["file_path"] == "docs/errors.md"
     assert payload["results"][0]["provenance"]["first_seen_commit"] == "1111111111111111111111111111111111111111"
@@ -355,7 +267,7 @@ async def test_retrieve_returns_composite_results_and_graph_context(app, client,
     assert payload["results"][0]["provenance"]["last_changed_at"] == "2026-04-18T09:30:00+00:00"
     assert payload["nodes"][str(error_node.id)]["callees"][0]["name"] == "helper"
     assert payload["nodes"][str(error_node.id)]["summary"] == "Raises the repo-not-ready guardrail."
-    assert retriever.calls[0]["stores"] == {"code", "repo_docs", "bank_facts", "banks"}
+    assert retriever.calls[0]["stores"] == {"code", "repo_docs"}
     assert retriever.calls[0]["since"] == window_start
     assert retriever.calls[0]["until"] == window_end
 
@@ -366,7 +278,7 @@ async def test_retrieve_rejects_inverted_temporal_window(client):
         "/api/retrieve",
         json={
             "query": "repo",
-            "bank_ids": [str(uuid4())],
+            "repository_id": str(uuid4()),
             "since": "2026-04-21T12:00:00Z",
             "until": "2026-04-01T00:00:00Z",
         },

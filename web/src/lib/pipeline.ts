@@ -18,9 +18,8 @@ export const PIPELINE_ORDER: Record<SyncStep, number> = {
   embed_repo_docs: 5,
   generate_summaries: 6,
   generate_wiki: 7,
-  // Export / import run after a successful repo sync, so they sit at the
-  // end. They never coexist with the six repo-sync steps in a single
+  // Confluence export runs after a successful repo sync, so it sits at
+  // the end. It never coexists with the six repo-sync steps in a single
   // batch, so sharing an index doesn't cause ordering ambiguity.
   export_confluence: 8,
-  import_bank: 8,
 };

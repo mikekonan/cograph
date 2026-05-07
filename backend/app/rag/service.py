@@ -18,7 +18,6 @@ async def retrieve_composite(
     *,
     query: str,
     repository_id: UUID | None,
-    bank_ids: list[UUID] | None,
     requested_layers: set[RetrievalLayer],
     top_k: int,
     as_of: datetime | None,
@@ -33,7 +32,6 @@ async def retrieve_composite(
 ) -> RetrievalResponse:
     validate_retrieval_scope(
         repository_id=repository_id,
-        bank_ids=bank_ids,
         requested_layers=requested_layers,
     )
 
@@ -74,7 +72,6 @@ async def retrieve_composite(
         query_text=query,
         query_embedding=query_embedding,
         repository_id=repository_id,
-        bank_ids=bank_ids,
         top_k=top_k,
         as_of=as_of,
         since=since,
@@ -102,24 +99,19 @@ def engine_stores_from_layers(layers: set[RetrievalLayer]) -> set[str]:
         stores.add("code")
     if RetrievalLayer.REPO_DOC in layers:
         stores.add("repo_docs")
-    if RetrievalLayer.BANK in layers:
-        stores.add("banks")
-    if RetrievalLayer.BANK_FACT in layers:
-        stores.add("bank_facts")
     return stores
 
 
 def validate_retrieval_scope(
     *,
     repository_id: UUID | None,
-    bank_ids: list[UUID] | None,
     requested_layers: set[RetrievalLayer],
 ) -> None:
-    if not repository_id and not bank_ids:
+    if not repository_id:
         raise ApiError(
             422,
             "VALIDATION_FAILED",
-            "repository_id or bank_ids is required",
+            "repository_id is required",
         )
 
     uses_repository = bool(
@@ -136,14 +128,4 @@ def validate_retrieval_scope(
             422,
             "VALIDATION_FAILED",
             "repository_id is required for code or repo_doc retrieval",
-        )
-
-    if (
-        RetrievalLayer.BANK in requested_layers
-        or RetrievalLayer.BANK_FACT in requested_layers
-    ) and not bank_ids:
-        raise ApiError(
-            422,
-            "VALIDATION_FAILED",
-            "bank_ids is required for bank retrieval",
         )

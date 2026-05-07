@@ -532,8 +532,8 @@ function DeleteUserDialog({ user, onClose }: { user: AdminUser | null; onClose: 
         <DialogHeader>
           <DialogTitle>Delete {user.email}?</DialogTitle>
           <DialogDescription>
-            This permanently removes the account and revokes any sessions. Their banks and sync runs
-            stay in place — only the login is destroyed.
+            This permanently removes the account and revokes any sessions. Their sync runs stay in
+            place — only the login is destroyed.
           </DialogDescription>
         </DialogHeader>
         {topError && (

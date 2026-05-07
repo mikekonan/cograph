@@ -46,24 +46,6 @@ async def test_vector_search_with_none_temporal_filters_does_not_crash(
     assert result == []
 
 
-@pytest.mark.parametrize("store", ["banks", "bank_facts"])
-async def test_vector_bank_search_with_none_temporal_filters_does_not_crash(
-    pg_session: AsyncSession, store: str
-) -> None:
-    bank_id = uuid.uuid4()
-    result = await VectorRetriever().search(
-        pg_session,
-        store=store,  # type: ignore[arg-type]
-        query_embedding=_QVEC,
-        bank_ids=[bank_id],
-        top_k=5,
-        as_of=None,
-        since=None,
-        until=None,
-    )
-    assert result == []
-
-
 @pytest.mark.parametrize("store", ["code", "repo_docs"])
 async def test_lexical_search_with_none_temporal_filters_does_not_crash(
     pg_session: AsyncSession, store: str
@@ -74,24 +56,6 @@ async def test_lexical_search_with_none_temporal_filters_does_not_crash(
         store=store,  # type: ignore[arg-type]
         query_text=_QUERY,
         repository_id=repo_id,
-        top_k=5,
-        as_of=None,
-        since=None,
-        until=None,
-    )
-    assert result == []
-
-
-@pytest.mark.parametrize("store", ["banks", "bank_facts"])
-async def test_lexical_bank_search_with_none_temporal_filters_does_not_crash(
-    pg_session: AsyncSession, store: str
-) -> None:
-    bank_id = uuid.uuid4()
-    result = await LexicalRetriever().search(
-        pg_session,
-        store=store,  # type: ignore[arg-type]
-        query_text=_QUERY,
-        bank_ids=[bank_id],
         top_k=5,
         as_of=None,
         since=None,

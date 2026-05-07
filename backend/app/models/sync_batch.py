@@ -17,9 +17,8 @@ if TYPE_CHECKING:
 class SyncBatch(CreatedAtMixin, Base):
     """One end-to-end sync run composed of multiple SyncJob step-rows.
 
-    kind=repo_sync is the default. confluence_export and bank_import are
-    future add-ons; the column is already present so the migration stays
-    backward compatible.
+    kind=repo_sync is the default. confluence_export is a future add-on;
+    the column already exists so the migration stays backward compatible.
     """
 
     __tablename__ = "sync_batches"
@@ -56,15 +55,10 @@ class SyncBatch(CreatedAtMixin, Base):
     # Human-readable label, e.g. "fastapi/fastapi" for repo_sync.
     label: Mapped[str] = mapped_column(String(512), nullable=False, default="")
 
-    # Set for repo_sync / confluence_export; null for bank_import.
+    # Set for repo_sync / confluence_export.
     repository_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("repositories.id", ondelete="CASCADE"),
-        nullable=True,
-    )
-    # Set for bank_import; null otherwise.
-    bank_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid(as_uuid=True),
         nullable=True,
     )
 

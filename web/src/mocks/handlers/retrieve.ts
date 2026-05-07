@@ -23,14 +23,10 @@ export const retrieveHandlers = [
       return HttpResponse.json(err("VALIDATION_FAILED", "query is required"), { status: 422 });
     }
 
-    if (!body.repository_id && !(body.bank_ids && body.bank_ids.length > 0)) {
-      return HttpResponse.json(err("VALIDATION_FAILED", "repository_id or bank_ids is required"), {
+    if (!body.repository_id) {
+      return HttpResponse.json(err("VALIDATION_FAILED", "repository_id is required"), {
         status: 422,
       });
-    }
-
-    if (!body.repository_id) {
-      return HttpResponse.json({ results: [], nodes: {} });
     }
 
     const repo = getReadableMockRepo(body.repository_id);

@@ -8,7 +8,6 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.config import Settings
-from backend.app.core.bank_access import ensure_readable_banks
 from backend.app.core.deps import (
     get_current_user_optional,
     get_db_session,
@@ -45,7 +44,6 @@ class RetrievalIncludeRequest(BaseModel):
 class RetrievalRequest(BaseModel):
     query: str = Field(min_length=1)
     repository_id: UUID | None = None
-    bank_ids: list[UUID] | None = None
     stores: list[RetrievalLayer] | None = None
     top_k: int = Field(default=10, ge=1, le=100)
     as_of: datetime | None = None
@@ -148,16 +146,10 @@ async def retrieve(
             settings=settings,
             current_user=current_user,
         )
-    await ensure_readable_banks(
-        session=session,
-        bank_ids=payload.bank_ids,
-        current_user=current_user,
-    )
     return await retrieve_composite(
         session,
         query=payload.query,
         repository_id=payload.repository_id,
-        bank_ids=payload.bank_ids,
         requested_layers=set(payload.stores) if payload.stores else set(RetrievalLayer),
         top_k=payload.top_k,
         as_of=payload.as_of,

@@ -40,7 +40,7 @@ const ROLE_LABEL: Record<LLMRole, string> = {
 
 const ROLE_DESCRIPTION: Record<LLMRole, string> = {
   embedding:
-    "Hot path for code + repo-doc + bank embeddings. Dim is hard-locked to 1536; switching to 3072 is V2 work.",
+    "Hot path for code + repo-doc + md-collection embeddings. Dim is hard-locked to 1536; switching to 3072 is V2 work.",
   completion_fast: "Classifier and suggestion prompts where latency matters more than quality.",
   completion_writer: "Default writer for wiki section authoring and chat answers.",
   completion_reasoning: "Reasoning model used by wiki Stage 4d/4e. Supports `reasoning_effort`.",

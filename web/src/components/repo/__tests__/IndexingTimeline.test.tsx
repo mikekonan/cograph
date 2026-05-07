@@ -9,7 +9,6 @@ const batch: SyncBatchSummary = {
   trigger: "manual",
   label: "acme/repo",
   repository_id: "repo-1",
-  bank_id: null,
   counts: {
     queued: 0,
     running: 0,
@@ -105,7 +104,6 @@ function makeJob(step: SyncJob["step"], startedAt: string, finishedAt: string): 
     id: `job-${step}`,
     batch_id: "batch-1",
     repository_id: "repo-1",
-    bank_id: null,
     step,
     title: step,
     status: "success",

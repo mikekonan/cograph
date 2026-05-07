@@ -105,6 +105,9 @@ export function useUploadMdDocuments() {
     mutationFn: ({
       collectionId,
       documents,
+      uploadJobId,
+      uploadTotal,
+      uploadFinal,
     }: {
       collectionId: string;
       documents: Array<{
@@ -112,7 +115,15 @@ export function useUploadMdDocuments() {
         title?: string;
         content: string;
       }>;
-    }) => uploadMdDocumentBatch(collectionId, documents),
+      uploadJobId?: string | null;
+      uploadTotal?: number;
+      uploadFinal?: boolean;
+    }) =>
+      uploadMdDocumentBatch(collectionId, documents, {
+        upload_job_id: uploadJobId,
+        upload_total: uploadTotal,
+        upload_final: uploadFinal,
+      }),
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({
         queryKey: collectionKey(variables.collectionId),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from uuid import UUID
 
 import pytest
 
@@ -863,4 +864,192 @@ async def test_pat_without_api_read_cannot_read_collection(
     response = await client.get(f"/api/md-collections/{col.id}", headers=headers)
 
     assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_pat_with_api_write_can_upload_single_document(
+    client, settings, db_session, user, collection
+):
+    """PAT with api:write must be able to push a single doc with no CSRF."""
+    headers = await _mint_pat(
+        db_session,
+        user,
+        "cgr_pat_md_upload_single_token_000000000000000000000000",
+        scopes=["api:write"],
+    )
+
+    response = await client.post(
+        f"/api/md-collections/{collection.id}/documents",
+        json={"source_key": "from-pat.md", "content": "# Hello\n"},
+        headers=headers,
+    )
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["source_key"] == "from-pat.md"
+
+
+@pytest.mark.asyncio
+async def test_pat_without_api_write_rejected_on_upload(
+    client, settings, db_session, user, collection
+):
+    """PAT minted with mcp scope only must get 403 INSUFFICIENT_SCOPE on POST."""
+    headers = await _mint_pat(
+        db_session,
+        user,
+        "cgr_pat_md_upload_noscope_token_00000000000000000000000",
+        scopes=["api:read"],
+    )
+
+    response = await client.post(
+        f"/api/md-collections/{collection.id}/documents",
+        json={"source_key": "denied.md", "content": "# Denied\n"},
+        headers=headers,
+    )
+
+    assert response.status_code == 403
     assert response.json()["error"]["code"] == "INSUFFICIENT_SCOPE"
+
+
+@pytest.mark.asyncio
+async def test_pat_with_api_write_can_upload_batch(
+    client, settings, db_session, user, collection
+):
+    """PAT with api:write must be able to push a batch with no CSRF."""
+    headers = await _mint_pat(
+        db_session,
+        user,
+        "cgr_pat_md_upload_batch_token_0000000000000000000000000",
+        scopes=["api:write"],
+    )
+
+    response = await client.post(
+        f"/api/md-collections/{collection.id}/documents/batch",
+        json={"documents": [{"source_key": "pat-batch.md", "content": "# Hi\n"}]},
+        headers=headers,
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["indexed_documents"] == 1
+
+
+@pytest.mark.asyncio
+async def test_unknown_pat_returns_401(client, settings, db_session, collection):
+    response = await client.post(
+        f"/api/md-collections/{collection.id}/documents/batch",
+        json={"documents": [{"source_key": "x.md", "content": "# x"}]},
+        headers={"Authorization": "Bearer cgr_pat_unknown_token_zzzzzzzzzzzzzzzzzzzz"},
+    )
+
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_batch_upload_creates_upload_job_when_total_supplied(
+    client, settings, user, collection, db_session
+):
+    """First batch with upload_total creates a kind=upload MdJob, status running."""
+    await _auth_user(client, settings, user)
+
+    response = await client.post(
+        f"/api/md-collections/{collection.id}/documents/batch",
+        json={
+            "documents": [{"source_key": "first.md", "content": "# first"}],
+            "upload_total": 5,
+        },
+        headers={"X-CSRF-Token": _TEST_CSRF},
+    )
+    assert response.status_code == 201, response.text
+    upload_job_id = response.json()["upload_job_id"]
+    assert upload_job_id is not None
+
+    job = await db_session.get(MdJob, UUID(upload_job_id))
+    assert job is not None
+    assert job.kind is MdJobKind.UPLOAD
+    assert job.status is MdJobStatus.RUNNING
+    assert job.result_summary["total"] == 5
+    assert job.result_summary["processed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_batch_upload_attaches_to_existing_upload_job_and_finishes(
+    client, settings, user, collection, db_session
+):
+    """Second batch attaches via upload_job_id; final flips to success."""
+    await _auth_user(client, settings, user)
+
+    first = await client.post(
+        f"/api/md-collections/{collection.id}/documents/batch",
+        json={
+            "documents": [{"source_key": "a.md", "content": "# a"}],
+            "upload_total": 2,
+        },
+        headers={"X-CSRF-Token": _TEST_CSRF},
+    )
+    assert first.status_code == 201
+    upload_job_id = first.json()["upload_job_id"]
+
+    second = await client.post(
+        f"/api/md-collections/{collection.id}/documents/batch",
+        json={
+            "documents": [{"source_key": "b.md", "content": "# b"}],
+            "upload_job_id": upload_job_id,
+            "upload_final": True,
+        },
+        headers={"X-CSRF-Token": _TEST_CSRF},
+    )
+    assert second.status_code == 201
+    assert second.json()["upload_job_id"] == upload_job_id
+
+    db_session.expire_all()
+    job = await db_session.get(MdJob, UUID(upload_job_id))
+    assert job is not None
+    assert job.status is MdJobStatus.SUCCESS
+    assert job.result_summary["processed"] == 2
+    assert job.finished_at is not None
+
+
+@pytest.mark.asyncio
+async def test_batch_upload_rejects_upload_job_id_from_other_collection(
+    client, settings, user, db_session
+):
+    """An upload_job_id pointing at a different collection must 403."""
+    col_a = MdCollection(
+        name="upload-job-col-a",
+        description="",
+        visibility="private",
+        owner_id=user.id,
+    )
+    col_b = MdCollection(
+        name="upload-job-col-b",
+        description="",
+        visibility="private",
+        owner_id=user.id,
+    )
+    db_session.add_all([col_a, col_b])
+    await db_session.commit()
+    await db_session.refresh(col_a)
+    await db_session.refresh(col_b)
+
+    foreign_job = MdJob(
+        collection_id=col_a.id,
+        kind=MdJobKind.UPLOAD,
+        status=MdJobStatus.RUNNING,
+        result_summary={"total": 1, "processed": 0, "failed": 0, "current_item": None},
+    )
+    db_session.add(foreign_job)
+    await db_session.commit()
+    await db_session.refresh(foreign_job)
+
+    await _auth_user(client, settings, user)
+    response = await client.post(
+        f"/api/md-collections/{col_b.id}/documents/batch",
+        json={
+            "documents": [{"source_key": "x.md", "content": "# x"}],
+            "upload_job_id": str(foreign_job.id),
+        },
+        headers={"X-CSRF-Token": _TEST_CSRF},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "FORBIDDEN"

@@ -1,3 +1,4 @@
+import { uploadMdDocumentBatch } from "@/api/mdCollections";
 import { MdCollectionSettings } from "@/components/md/MdCollectionSettings";
 import { MdCollectionVisibilityBadge } from "@/components/md/MdCollectionVisibilityBadge";
 import { EmptyState } from "@/components/shared/EmptyState";
@@ -20,12 +21,24 @@ import {
   useMdCollectionEmbedStatus,
   useMdCollectionSearch,
   useReembedMdCollection,
-  useUploadMdDocuments,
 } from "@/hooks/useMdCollections";
 import { cn, formatRelativeTime } from "@/lib/utils";
-import { ArrowLeft, FileText, FileUp, RefreshCw, Search, Trash2 } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { AlertCircle, ArrowLeft, FileText, FileUp, RefreshCw, Search, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
+
+const UPLOAD_BATCH_SIZE = 100;
+
+type FailedUpload = { file: File; message: string };
+type UploadProgress = {
+  status: "running" | "done" | "error";
+  sent: number;
+  total: number;
+  failed: FailedUpload[];
+  uploadJobId: string | null;
+  message?: string;
+};
 
 export default function MdCollectionPage() {
   const { id } = useParams<{ id: string }>();
@@ -34,14 +47,13 @@ export default function MdCollectionPage() {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const { data, isLoading } = useMdCollection(id!, page, 10, debouncedSearch || undefined);
-  const upload = useUploadMdDocuments();
+  const qc = useQueryClient();
   const del = useDeleteMdDocument();
 
   const [dragOver, setDragOver] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
-  const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const [uploadSuccess, setUploadSuccess] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
+  const uploadAbortedRef = useRef(false);
   const [docToDelete, setDocToDelete] = useState<{ id: string; title: string } | null>(null);
 
   const [semanticQuery, setSemanticQuery] = useState("");
@@ -102,11 +114,17 @@ export default function MdCollectionPage() {
       return name.endsWith(".md") || name.endsWith(".mdx") || name.endsWith(".txt");
     });
     if (accepted.length === 0) {
-      setUploadError("Only .md, .mdx, and .txt files are supported.");
+      setUploadProgress({
+        status: "error",
+        sent: 0,
+        total: 0,
+        failed: [],
+        message: "Only .md, .mdx, and .txt files are supported.",
+        uploadJobId: null,
+      });
       return;
     }
-    setUploadError(null);
-    setUploadSuccess(false);
+    setUploadProgress(null);
     setFiles((prev) => {
       const map = new Map(prev.map((f) => [f.name, f]));
       for (const f of accepted) {
@@ -116,37 +134,97 @@ export default function MdCollectionPage() {
     });
   }, []);
 
-  async function handleUpload() {
-    if (!files.length || !id) return;
-    setUploading(true);
-    setUploadError(null);
-    setUploadSuccess(false);
-    const documents: Array<{ source_key: string; content: string }> = [];
-    try {
-      for (const file of files) {
-        const content = await file.text();
-        documents.push({ source_key: file.name, content });
+  const streamUpload = useCallback(
+    async (filesToUpload: File[]) => {
+      if (!filesToUpload.length || !id) return;
+      const total = filesToUpload.length;
+      uploadAbortedRef.current = false;
+      setUploadProgress({
+        status: "running",
+        sent: 0,
+        total,
+        failed: [],
+        uploadJobId: null,
+      });
+
+      let uploadJobId: string | null = null;
+      const failures: FailedUpload[] = [];
+
+      const chunks: File[][] = [];
+      for (let i = 0; i < filesToUpload.length; i += UPLOAD_BATCH_SIZE) {
+        chunks.push(filesToUpload.slice(i, i + UPLOAD_BATCH_SIZE));
       }
-      upload.mutate(
-        { collectionId: id, documents },
-        {
-          onSuccess: () => {
-            setFiles([]);
-            setUploadSuccess(true);
-          },
-          onError: (err: Error) => {
-            setUploadError(err.message || "Upload failed");
-          },
-          onSettled: () => {
-            setUploading(false);
-          },
-        },
+
+      let sent = 0;
+      for (let bi = 0; bi < chunks.length; bi += 1) {
+        if (uploadAbortedRef.current) break;
+        const batch = chunks[bi];
+        const isFinal = bi === chunks.length - 1;
+        try {
+          const documents = await Promise.all(
+            batch.map(async (file) => ({
+              source_key: file.name,
+              content: await file.text(),
+            })),
+          );
+          const result = await uploadMdDocumentBatch(id, documents, {
+            upload_job_id: uploadJobId,
+            upload_total: bi === 0 ? total : undefined,
+            upload_final: isFinal,
+          });
+          if (result.upload_job_id) {
+            uploadJobId = result.upload_job_id;
+          }
+          sent += batch.length;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "Upload failed";
+          for (const file of batch) failures.push({ file, message });
+        }
+        setUploadProgress((prev) =>
+          prev
+            ? {
+                ...prev,
+                sent,
+                failed: [...failures],
+                uploadJobId,
+              }
+            : prev,
+        );
+      }
+
+      qc.invalidateQueries({ queryKey: ["md-collection", id] });
+      qc.invalidateQueries({ queryKey: ["md-collection-embed-status", id] });
+      qc.invalidateQueries({ queryKey: ["md-jobs"] });
+
+      setUploadProgress((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: failures.length ? "error" : "done",
+              uploadJobId,
+              failed: failures,
+              sent,
+            }
+          : prev,
       );
-    } catch (err) {
-      setUploading(false);
-      setUploadError(String(err));
-    }
-  }
+      if (!failures.length) {
+        setFiles([]);
+      } else {
+        const failedNames = new Set(failures.map((f) => f.file.name));
+        setFiles((prev) => prev.filter((f) => failedNames.has(f.name)));
+      }
+    },
+    [id, qc],
+  );
+
+  const handleUpload = useCallback(() => {
+    void streamUpload(files);
+  }, [files, streamUpload]);
+
+  const handleRetryFailed = useCallback(() => {
+    if (!uploadProgress) return;
+    void streamUpload(uploadProgress.failed.map((f) => f.file));
+  }, [streamUpload, uploadProgress]);
 
   useEffect(() => {
     function onDragOver(e: DragEvent) {
@@ -264,7 +342,7 @@ export default function MdCollectionPage() {
               </label>
             </div>
 
-            {files.length > 0 && (
+            {files.length > 0 && uploadProgress?.status !== "running" && (
               <div className="mt-4">
                 <div className="mb-2 flex items-center justify-between">
                   <span className="text-sm font-medium">{files.length} file(s) ready</span>
@@ -273,10 +351,8 @@ export default function MdCollectionPage() {
                     className="text-xs text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg-base)]"
                     onClick={() => {
                       setFiles([]);
-                      setUploadError(null);
-                      setUploadSuccess(false);
+                      setUploadProgress(null);
                     }}
-                    disabled={uploading}
                   >
                     Clear all
                   </button>
@@ -295,19 +371,16 @@ export default function MdCollectionPage() {
                   ))}
                 </div>
                 <div className="flex items-center gap-3">
-                  <Button onClick={handleUpload} disabled={uploading}>
-                    {uploading
-                      ? `Uploading ${files.length} files…`
-                      : `Upload ${files.length} files`}
-                  </Button>
+                  <Button onClick={handleUpload}>Upload {files.length} files</Button>
                 </div>
               </div>
             )}
-            {uploadError && <p className="mt-3 text-xs text-red-500">{uploadError}</p>}
-            {uploadSuccess && (
-              <p className="mt-3 text-xs text-green-500">
-                Upload complete! Background jobs started — see panel below.
-              </p>
+            {uploadProgress && (
+              <UploadProgressCard
+                progress={uploadProgress}
+                onRetry={handleRetryFailed}
+                onDismiss={() => setUploadProgress(null)}
+              />
             )}
 
             <div className="mt-3 flex items-center gap-2">
@@ -631,6 +704,90 @@ function DocumentRow({
           <Trash2 className="h-3.5 w-3.5" />
         </button>
       </Tooltip>
+    </div>
+  );
+}
+
+function UploadProgressCard({
+  progress,
+  onRetry,
+  onDismiss,
+}: {
+  progress: UploadProgress;
+  onRetry: () => void;
+  onDismiss: () => void;
+}) {
+  const { status, sent, total, failed, message } = progress;
+  const pct = total > 0 ? Math.round((sent / total) * 100) : 0;
+  return (
+    <div
+      className={cn(
+        "mt-4 rounded-lg border p-3 text-sm",
+        status === "running" &&
+          "border-[color:var(--color-accent)] bg-[color:var(--color-accent-muted)]",
+        status === "done" &&
+          "border-[color:var(--color-success)] bg-[color:var(--color-success-subtle)]",
+        status === "error" &&
+          "border-[color:var(--color-danger)] bg-[color:var(--color-danger-subtle)]",
+      )}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-medium">
+          {status === "running" && `Uploading ${sent} / ${total}`}
+          {status === "done" && `Uploaded ${sent} / ${total} files`}
+          {status === "error" &&
+            (message ?? `Uploaded ${sent} / ${total} · ${failed.length} failed`)}
+        </span>
+        <div className="flex items-center gap-2">
+          {status === "error" && failed.length > 0 && (
+            <Button size="sm" variant="secondary" onClick={onRetry}>
+              <RefreshCw className="mr-1 h-3 w-3" /> Retry failed
+            </Button>
+          )}
+          {status !== "running" && (
+            <button
+              type="button"
+              className="text-xs text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg-base)]"
+              onClick={onDismiss}
+            >
+              Dismiss
+            </button>
+          )}
+        </div>
+      </div>
+      {total > 0 && (
+        <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[color:var(--color-bg-base)]">
+          <div
+            className={cn(
+              "h-full transition-all",
+              status === "error"
+                ? "bg-[color:var(--color-danger)]"
+                : "bg-[color:var(--color-accent)]",
+            )}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      )}
+      {failed.length > 0 && (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-xs text-[color:var(--color-fg-muted)]">
+            <AlertCircle className="mr-1 inline h-3 w-3" />
+            {failed.length} failed file(s)
+          </summary>
+          <ul className="mt-1 max-h-32 overflow-y-auto text-xs text-[color:var(--color-fg-muted)]">
+            {failed.map((f) => (
+              <li key={f.file.name} className="truncate">
+                {f.file.name} — {f.message}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      {status === "done" && (
+        <p className="mt-2 text-xs text-[color:var(--color-fg-muted)]">
+          Background embedding jobs started — see panel below.
+        </p>
+      )}
     </div>
   );
 }

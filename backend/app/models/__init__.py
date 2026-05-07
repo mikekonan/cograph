@@ -1,5 +1,4 @@
 from backend.app.models.enums import (
-    BankDocumentSourceKind,
     CodeEdgeType,
     CodeNodeRole,
     CodeNodeType,
@@ -19,14 +18,6 @@ from backend.app.models.enums import (
     UserRole,
 )
 from backend.app.models.audit_event import AuditEvent
-from backend.app.models.bank import (
-    Bank,
-    BankDocument,
-    BankDocumentChunk,
-    BankEntity,
-    BankFact,
-    BankObservation,
-)
 from backend.app.models.code_edge import CodeEdge
 from backend.app.models.code_embedding import CodeEmbedding
 from backend.app.models.code_node import CodeNode
@@ -70,13 +61,6 @@ from backend.app.models.user_identity import UserIdentity
 
 __all__ = [
     "AuditEvent",
-    "Bank",
-    "BankDocument",
-    "BankDocumentChunk",
-    "BankEntity",
-    "BankFact",
-    "BankObservation",
-    "BankDocumentSourceKind",
     "CodeEdge",
     "CodeEdgeType",
     "CodeEmbedding",

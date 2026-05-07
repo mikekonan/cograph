@@ -9,7 +9,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.config import Settings
-from backend.app.core.bank_access import ensure_readable_banks
 from backend.app.core.errors import ApiError
 from backend.app.core.md_collection_access import (
     apply_md_collection_read_scope,
@@ -102,7 +101,6 @@ async def retrieve_payload(
     services: MCPServices,
     query: str,
     repository_id: UUID | None,
-    bank_ids: list[UUID] | None,
     requested_layers: set[RetrievalLayer],
     top_k: int,
     as_of: datetime | None,
@@ -114,11 +112,6 @@ async def retrieve_payload(
     current_user: User | None,
 ) -> RetrievalResponse:
     async with services.session_manager.session() as session:
-        await ensure_readable_banks(
-            session=session,
-            bank_ids=bank_ids,
-            current_user=current_user,
-        )
         embed_provider = services.embed_provider
         if embed_provider is None:
             runtime_providers = await build_runtime_providers(
@@ -130,7 +123,6 @@ async def retrieve_payload(
             session,
             query=query,
             repository_id=repository_id,
-            bank_ids=bank_ids,
             requested_layers=requested_layers,
             top_k=top_k,
             as_of=as_of,

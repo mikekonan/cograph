@@ -87,6 +87,7 @@ describe("useMdCollections mutations", () => {
       indexed_documents: 1,
       indexed_chunks: 1,
       unchanged_documents: 0,
+      upload_job_id: null,
     });
 
     const { result } = renderHook(() => useUploadMdDocuments(), {

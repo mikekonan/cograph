@@ -6,8 +6,6 @@ so they run without a live Postgres / pgvector server.
 Assertions:
 - After a repo pipeline run with RepoDocumentEmbedderService wired in,
   all repo_document_chunks.embedding columns are NOT NULL.
-- After a BankIndexer.upsert + BankDocumentEmbedderService.embed_bank call,
-  all bank_document_chunks.embedding columns are NOT NULL.
 """
 from __future__ import annotations
 
@@ -16,16 +14,12 @@ from pathlib import Path
 import pytest
 from sqlalchemy import func, select
 
-from backend.app.banks.indexer import BankDocumentUpsertInput, BankIndexer
-from backend.app.llm.bank_document_embedder import BankDocumentEmbedderService
 from backend.app.llm.code_embedder import CodeEmbedderService
 from backend.app.llm.embedder import FakeEmbedProvider
 from backend.app.llm.repo_document_embedder import RepoDocumentEmbedderService
-from backend.app.models.bank import Bank, BankDocumentChunk
 from backend.app.models.enums import RepositoryStatus, SyncSchedule
 from backend.app.models.repo_document import RepoDocumentChunk
 from backend.app.models.repository import Repository
-from backend.app.models.user import User
 from backend.app.pipeline.processor import RepoSyncProcessor
 
 
@@ -119,68 +113,3 @@ async def test_repo_pipeline_skips_on_second_run(db_session, tmp_path):
     assert second.repo_doc_embed_result.skipped_nodes == first_embedded
 
 
-@pytest.mark.asyncio
-async def test_bank_upload_embeds_chunks(db_session):
-    """After upsert + embed_bank, all bank_document_chunks have embeddings."""
-    owner = User(email="owner@example.com", password_hash="hashed")
-    bank = Bank(name="Docs Bank", owner=owner)
-    db_session.add(bank)
-    await db_session.flush()
-
-    indexer = BankIndexer()
-    await indexer.upsert_document(
-        session=db_session,
-        bank_id=bank.id,
-        document=BankDocumentUpsertInput(
-            source_key="adr/ADR-001.md",
-            content="# ADR-001\n\nWe chose PostgreSQL.\n\n## Context\n\nPrimary data store.\n",
-        ),
-    )
-
-    provider = FakeEmbedProvider(dims=8)
-    embedder = BankDocumentEmbedderService(provider, batch_size=128)
-    embed_result = await embedder.embed_bank(session=db_session, bank_id=bank.id)
-
-    assert embed_result.embedded_nodes > 0
-    await db_session.commit()
-
-    null_count = await db_session.scalar(
-        select(func.count())
-        .select_from(BankDocumentChunk)
-        .where(BankDocumentChunk.embedding.is_(None))
-    )
-    assert null_count == 0, "All bank_document_chunks must have embeddings after embed_bank"
-
-
-@pytest.mark.asyncio
-async def test_bank_embed_skips_on_re_upload_same_content(db_session):
-    """Re-uploading the same document skips embedding (all chunks already up to date)."""
-    owner = User(email="owner2@example.com", password_hash="hashed")
-    bank = Bank(name="Stable Docs", owner=owner)
-    db_session.add(bank)
-    await db_session.flush()
-
-    content = "# Guide\n\nHello world.\n\n## Details\n\nMore info here.\n"
-    indexer = BankIndexer()
-    provider = FakeEmbedProvider(dims=8)
-    embedder = BankDocumentEmbedderService(provider, batch_size=128)
-
-    # First upload + embed.
-    await indexer.upsert_document(
-        session=db_session,
-        bank_id=bank.id,
-        document=BankDocumentUpsertInput(source_key="guide.md", content=content),
-    )
-    first = await embedder.embed_bank(session=db_session, bank_id=bank.id)
-    assert first.embedded_nodes > 0
-    await db_session.commit()
-
-    # Second upload (same content) + embed — should skip.
-    await indexer.upsert_document(
-        session=db_session,
-        bank_id=bank.id,
-        document=BankDocumentUpsertInput(source_key="guide.md", content=content),
-    )
-    second = await embedder.embed_bank(session=db_session, bank_id=bank.id)
-    assert second.embedded_nodes == 0
-    assert second.skipped_nodes == first.embedded_nodes

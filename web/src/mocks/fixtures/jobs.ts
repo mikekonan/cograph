@@ -24,7 +24,6 @@ type JobInput = Pick<SyncJob, "id" | "batch_id" | "step" | "title" | "status"> &
 function job(p: JobInput): SyncJob {
   return {
     repository_id: p.repository_id ?? null,
-    bank_id: p.bank_id ?? null,
     created_at: p.created_at ?? iso(-600),
     error_code: p.error_code ?? null,
     error_msg: p.error_msg ?? null,
@@ -239,7 +238,7 @@ const REPO_LABELS = {
  * by far the biggest slice, docs medium. Keep this in one place so history
  * generation and the "slowest step" stat agree.
  */
-const STEP_SHARE: Record<Exclude<SyncStep, "export_confluence" | "import_bank">, number> = {
+const STEP_SHARE: Record<Exclude<SyncStep, "export_confluence">, number> = {
   clone: 0.03,
   parse: 0.1,
   extract_graph: 0.07,
@@ -323,8 +322,6 @@ function titleFor(step: SyncStep): string {
       return "Generate wiki";
     case "export_confluence":
       return "Push to Confluence";
-    case "import_bank":
-      return "Import pages";
   }
 }
 
@@ -536,7 +533,6 @@ const historicBatches: SyncBatchSummary[] = HISTORY.map((spec) => {
     trigger: spec.trigger,
     label: REPO_LABELS[spec.repo],
     repository_id: REPO_IDS[spec.repo],
-    bank_id: null,
     counts: countStatuses(jobs),
     started_at: iso(-spec.startedAgoSec),
     is_complete: jobs.every(isTerminal),
@@ -554,7 +550,6 @@ export const seedBatches: SyncBatchSummary[] = [
     trigger: "initial",
     label: "fastapi/fastapi",
     repository_id: fastapiRepoId,
-    bank_id: null,
     counts: countStatuses(batch1Jobs),
     started_at: iso(-900),
     is_complete: batch1Jobs.every(isTerminal),
@@ -565,7 +560,6 @@ export const seedBatches: SyncBatchSummary[] = [
     trigger: "schedule",
     label: "tailwindlabs/tailwindcss",
     repository_id: twRepoId,
-    bank_id: null,
     counts: countStatuses(batch2Jobs),
     started_at: iso(-7200),
     is_complete: batch2Jobs.every(isTerminal),
