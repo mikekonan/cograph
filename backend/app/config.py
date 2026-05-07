@@ -173,6 +173,22 @@ class RetrievalSettings(BaseModel):
     rerank: RerankSettings = Field(default_factory=RerankSettings)
 
 
+class McpSettings(BaseModel):
+    """DNS-rebinding protection for the mounted MCP transport.
+
+    FastMCP can validate the `Host` and `Origin` headers on every MCP
+    request and reject anything not on an allowlist. We default both
+    lists to empty so the protection stays *off* — turning it on with
+    no allowlist would 421/403 every request and silently break
+    deployments. Operators opt in by listing their public hostname
+    (e.g. ``cograph.internal``) and Origin (e.g. ``https://cograph.internal``);
+    once non-empty, the middleware activates automatically.
+    """
+
+    allowed_hosts: list[str] = Field(default_factory=list)
+    allowed_origins: list[str] = Field(default_factory=list)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="COGRAPH_",
@@ -195,6 +211,7 @@ class Settings(BaseSettings):
     embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
     completion: CompletionSettings = Field(default_factory=CompletionSettings)
     retrieval: RetrievalSettings = Field(default_factory=RetrievalSettings)
+    mcp: McpSettings = Field(default_factory=McpSettings)
 
     @model_validator(mode="after")
     def _enforce_production_auth_secret(self) -> "Settings":

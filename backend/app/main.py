@@ -85,6 +85,14 @@ def _emit_boot_banner(settings: Settings) -> None:
         settings.retrieval.rrf_k,
         settings.retrieval.candidate_cap,
     )
+    mcp_protection = bool(settings.mcp.allowed_hosts)
+    logger.info(
+        "Cograph boot: mcp.dns_rebind_protection=%s mcp.allowed_hosts=%s "
+        "mcp.allowed_origins=%s",
+        mcp_protection,
+        settings.mcp.allowed_hosts or "(unset)",
+        settings.mcp.allowed_origins or "(unset)",
+    )
 
 
 async def _maybe_emit_bootstrap_token(
@@ -272,14 +280,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings=resolved_settings,
         session_manager=session_manager,
     )
+    # DNS-rebinding protection: FastMCP validates Host/Origin against
+    # configured allowlists when enabled. We auto-enable when the
+    # operator has populated `mcp.allowed_hosts` (= they took an
+    # explicit deployment decision); empty list keeps protection off so
+    # a fresh `docker compose up` doesn't 421 every request. Operators
+    # who want the protection set:
+    #   COGRAPH_MCP__ALLOWED_HOSTS='["cograph.example.com"]'
+    #   COGRAPH_MCP__ALLOWED_ORIGINS='["https://cograph.example.com"]'
+    mcp_protection_enabled = bool(resolved_settings.mcp.allowed_hosts)
     mcp_server = create_mcp_server(
         services=mcp_services,
         streamable_http_path="/",
-        # The mounted MCP app sits behind the public web proxy, so the proxy/
-        # ingress layer owns external host validation. FastMCP's direct-host
-        # DNS-rebinding guard would otherwise reject proxied same-origin hosts.
         transport_security=TransportSecuritySettings(
-            enable_dns_rebinding_protection=False,
+            enable_dns_rebinding_protection=mcp_protection_enabled,
+            allowed_hosts=list(resolved_settings.mcp.allowed_hosts),
+            allowed_origins=list(resolved_settings.mcp.allowed_origins),
         ),
     )
     mcp_http_app = mcp_server.streamable_http_app()
