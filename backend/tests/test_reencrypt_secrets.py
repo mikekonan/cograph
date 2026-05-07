@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 import pytest
@@ -12,9 +13,19 @@ from backend.app.admin.secret_reencryption import reencrypt_secrets
 from backend.app.admin.secret_service import SecretCipher
 from backend.app.auth.oidc_cipher import OIDCSecretCipher
 from backend.app.cli import run_cli
-from backend.app.config import Settings
+from backend.app.config import (
+    AuthSettings,
+    CorsSettings,
+    DatabaseSettings,
+    EmbeddingSettings,
+    Environment,
+    GitSettings,
+    RedisSettings,
+    Settings,
+)
 from backend.app.db.base import Base
 from backend.app.db.session import SessionManager
+from backend.app.main import _emit_boot_banner
 from backend.app.models.identity_provider import IdentityProvider
 from backend.app.models.llm_secret import LLMSecret
 
@@ -255,6 +266,72 @@ async def test_reencrypt_secrets_cli_runs_end_to_end(settings, capsys):
                 await connection.run_sync(Base.metadata.drop_all)
         finally:
             await cleanup.dispose()
+
+
+def _make_prod_settings(tmp_path, **auth_overrides) -> Settings:
+    auth_kwargs = {
+        "jwt_secret": SecretStr("a" * 48),
+        "secure_cookies": True,
+        "registration_enabled": False,
+        "public_read": False,
+    }
+    auth_kwargs.update(auth_overrides)
+    return Settings(
+        environment=Environment.PRODUCTION,
+        database=DatabaseSettings(
+            url=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+            echo=False,
+        ),
+        redis=RedisSettings(url="redis://localhost:6379/15"),
+        git=GitSettings(checkouts_root=tmp_path / "checkouts"),
+        auth=AuthSettings(**auth_kwargs),
+        cors=CorsSettings(allowed_origins=[]),
+        embedding=EmbeddingSettings(enabled=False),
+    )
+
+
+def test_boot_banner_warns_in_production_when_jwt_derived(tmp_path, caplog):
+    prod_settings = _make_prod_settings(tmp_path)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="backend.app.main"):
+        _emit_boot_banner(prod_settings)
+    warning_records = [
+        record
+        for record in caplog.records
+        if record.levelno == logging.WARNING
+        and "at-rest secret encryption falls back to jwt_secret" in record.getMessage()
+    ]
+    assert len(warning_records) == 1
+    assert "reencrypt-secrets" in warning_records[0].getMessage()
+
+
+def test_boot_banner_does_not_warn_when_independent_secrets_set(tmp_path, caplog):
+    prod_settings = _make_prod_settings(
+        tmp_path,
+        llm_encryption_secret=SecretStr("dedicated-llm-secret-32+chars-long"),
+        oidc_encryption_secret=SecretStr("dedicated-oidc-secret-32+chars-long"),
+    )
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="backend.app.main"):
+        _emit_boot_banner(prod_settings)
+    fallback_warnings = [
+        record
+        for record in caplog.records
+        if "at-rest secret encryption falls back" in record.getMessage()
+    ]
+    assert fallback_warnings == []
+
+
+def test_boot_banner_does_not_warn_in_development(settings, caplog):
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="backend.app.main"):
+        _emit_boot_banner(settings)
+    fallback_warnings = [
+        record
+        for record in caplog.records
+        if "at-rest secret encryption falls back" in record.getMessage()
+    ]
+    assert fallback_warnings == []
 
 
 async def test_reencrypt_secrets_cli_dry_run_keeps_legacy(settings, capsys):
