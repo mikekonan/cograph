@@ -138,6 +138,116 @@ def test_oidc_cipher_domain_separated(settings):
 
 
 # ---------------------------------------------------------------------------
+# CRIT-03: independent encryption secrets (opt-in, JWT-fallback by default)
+# ---------------------------------------------------------------------------
+
+
+def _settings_with_independent_secrets(
+    base_settings, *, llm: str | None = None, oidc: str | None = None
+):
+    """Return a Settings copy with the new independent encryption fields set."""
+    from pydantic import SecretStr
+
+    auth = base_settings.auth.model_copy(
+        update={
+            "llm_encryption_secret": SecretStr(llm) if llm is not None else None,
+            "oidc_encryption_secret": SecretStr(oidc) if oidc is not None else None,
+        }
+    )
+    return base_settings.model_copy(update={"auth": auth})
+
+
+def test_llm_cipher_uses_jwt_fallback_when_independent_secret_unset(settings):
+    """Default state: no behavior change — uses JWT-derived key."""
+    from backend.app.admin.secret_service import SecretCipher
+
+    cipher = SecretCipher(settings)
+    assert cipher.uses_independent_secret is False
+    blob = cipher.encrypt("openai-key")
+    assert cipher.decrypt(blob) == "openai-key"
+
+
+def test_llm_cipher_with_independent_secret_round_trips(settings):
+    """Opt-in mode: dedicated secret produces a usable Fernet key."""
+    from backend.app.admin.secret_service import SecretCipher
+
+    s = _settings_with_independent_secrets(settings, llm="llm-only-secret-32-bytes-min!!!")
+    cipher = SecretCipher(s)
+    assert cipher.uses_independent_secret is True
+    blob = cipher.encrypt("openai-key")
+    assert cipher.decrypt(blob) == "openai-key"
+
+
+def test_llm_cipher_independent_secret_decouples_from_jwt(settings):
+    """Knowing jwt_secret must not let an attacker decrypt rows written
+    under the independent llm_encryption_secret."""
+    from backend.app.admin.secret_service import SecretCipher
+
+    indep = _settings_with_independent_secrets(settings, llm="llm-only-secret-32-bytes-min!!!")
+    cipher_indep = SecretCipher(indep)
+    blob = cipher_indep.encrypt("openai-key")
+
+    # `settings` has the independent secret unset, so its cipher uses the
+    # legacy jwt-derived key. It must NOT decrypt rows from the
+    # independent-secret deployment.
+    cipher_legacy = SecretCipher(settings)
+    from cryptography.fernet import InvalidToken
+
+    with pytest.raises((InvalidToken, ApiError)):
+        cipher_legacy.decrypt(blob)
+
+
+def test_oidc_cipher_uses_jwt_fallback_when_independent_secret_unset(settings):
+    cipher = OIDCSecretCipher(settings)
+    assert cipher.uses_independent_secret is False
+    blob = cipher.encrypt("idp-client-secret")
+    assert cipher.decrypt(blob) == "idp-client-secret"
+
+
+def test_oidc_cipher_with_independent_secret_round_trips(settings):
+    s = _settings_with_independent_secrets(settings, oidc="oidc-only-secret-32-bytes-min!!!")
+    cipher = OIDCSecretCipher(s)
+    assert cipher.uses_independent_secret is True
+    blob = cipher.encrypt("idp-client-secret")
+    assert cipher.decrypt(blob) == "idp-client-secret"
+
+
+def test_oidc_cipher_independent_secret_decouples_from_jwt(settings):
+    indep = _settings_with_independent_secrets(settings, oidc="oidc-only-secret-32-bytes-min!!!")
+    cipher_indep = OIDCSecretCipher(indep)
+    blob = cipher_indep.encrypt("idp-client-secret")
+
+    cipher_legacy = OIDCSecretCipher(settings)
+    from cryptography.fernet import InvalidToken
+
+    with pytest.raises((InvalidToken, ApiError)):
+        cipher_legacy.decrypt(blob)
+
+
+def test_independent_llm_and_oidc_secrets_remain_domain_separated(settings):
+    """Independent mode: LLM and OIDC ciphers configured with different
+    secrets must not be able to decrypt each other's blobs."""
+    from backend.app.admin.secret_service import SecretCipher
+    from cryptography.fernet import InvalidToken
+
+    s = _settings_with_independent_secrets(
+        settings,
+        llm="llm-only-secret-32-bytes-min!!!",
+        oidc="oidc-only-secret-32-bytes-min!!!",
+    )
+    llm = SecretCipher(s)
+    oidc = OIDCSecretCipher(s)
+
+    llm_blob = llm.encrypt("llm-key")
+    oidc_blob = oidc.encrypt("oidc-key")
+
+    with pytest.raises((InvalidToken, ApiError)):
+        oidc.decrypt(llm_blob)
+    with pytest.raises((InvalidToken, ApiError)):
+        llm.decrypt(oidc_blob)
+
+
+# ---------------------------------------------------------------------------
 # Helpers — PKCE / state / return_to sanitisation
 # ---------------------------------------------------------------------------
 

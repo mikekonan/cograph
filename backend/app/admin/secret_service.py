@@ -30,20 +30,45 @@ class SecretTestResult:
     message: str
 
 
-class SecretCipher:
-    """Encrypt API secrets using a key derived from the app secret.
+_LLM_SECRETS_DOMAIN = b"cograph-provider-secrets:"
 
-    Same Fernet derivation as the prior ``ProviderSecretCipher`` so any
-    operator who reused the same ``auth.jwt_secret`` keeps the ability
-    to decrypt their existing keys (although Phase 30.7 also drops the
-    old llm_providers rows wholesale, so this only matters across
-    in-flight redeploys, not data continuity).
+
+def _llm_fernet_key(settings: Settings) -> bytes:
+    """Resolve the Fernet key for LLM-secret encryption.
+
+    CRIT-03 compatibility shim: if ``auth.llm_encryption_secret`` is
+    set, derive the key from that secret directly (independent of
+    ``jwt_secret``). Otherwise fall back to the historical
+    domain-prefixed-jwt_secret derivation so already-encrypted rows
+    stay readable. The fallback path is intentionally identical to the
+    pre-CRIT-03 code so cutover is a settings change followed by a
+    one-shot re-encryption migration.
+    """
+    independent = settings.auth.llm_encryption_secret
+    if independent is not None:
+        master = independent.get_secret_value().encode("utf-8")
+        digest = hashlib.sha256(master).digest()
+    else:
+        master = settings.auth.jwt_secret.get_secret_value().encode("utf-8")
+        digest = hashlib.sha256(_LLM_SECRETS_DOMAIN + master).digest()
+    return base64.urlsafe_b64encode(digest)
+
+
+class SecretCipher:
+    """Encrypt LLM provider API secrets with a Fernet key.
+
+    Key source — see :func:`_llm_fernet_key`. Existing deployments keep
+    decrypting under the historical jwt-derived key until the operator
+    sets ``auth.llm_encryption_secret`` and re-encrypts the rows.
     """
 
     def __init__(self, settings: Settings) -> None:
-        master = settings.auth.jwt_secret.get_secret_value().encode("utf-8")
-        digest = hashlib.sha256(b"cograph-provider-secrets:" + master).digest()
-        self._fernet = Fernet(base64.urlsafe_b64encode(digest))
+        self._settings = settings
+        self._fernet = Fernet(_llm_fernet_key(settings))
+
+    @property
+    def uses_independent_secret(self) -> bool:
+        return self._settings.auth.llm_encryption_secret is not None
 
     def encrypt(self, raw_secret: str) -> str:
         return self._fernet.encrypt(raw_secret.encode("utf-8")).decode("utf-8")

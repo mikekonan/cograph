@@ -93,6 +93,17 @@ def _emit_boot_banner(settings: Settings) -> None:
         settings.mcp.allowed_hosts or "(unset)",
         settings.mcp.allowed_origins or "(unset)",
     )
+    # CRIT-03 visibility: tell operators which derivation mode each
+    # cipher is in. `independent` = key derived from a dedicated secret;
+    # `jwt-derived` = legacy fallback (still safe, just couples
+    # rotation across surfaces).
+    llm_mode = "independent" if settings.auth.llm_encryption_secret else "jwt-derived"
+    oidc_mode = "independent" if settings.auth.oidc_encryption_secret else "jwt-derived"
+    logger.info(
+        "Cograph boot: llm_secret_cipher=%s oidc_secret_cipher=%s",
+        llm_mode,
+        oidc_mode,
+    )
 
 
 async def _maybe_emit_bootstrap_token(
