@@ -104,6 +104,22 @@ def _emit_boot_banner(settings: Settings) -> None:
         llm_mode,
         oidc_mode,
     )
+    # In production, nudge operators toward the independent-secrets path.
+    # `jwt-derived` is still safe but means a JWT-secret leak compromises
+    # at-rest provider/IdP credentials too. The fix is a settings change
+    # plus `cograph-backend reencrypt-secrets` (CRIT-03 phase 2).
+    if settings.environment is Environment.PRODUCTION and (
+        settings.auth.llm_encryption_secret is None
+        or settings.auth.oidc_encryption_secret is None
+    ):
+        logger.warning(
+            "Cograph boot: at-rest secret encryption falls back to jwt_secret "
+            "(llm=%s, oidc=%s). Set auth.llm_encryption_secret + "
+            "auth.oidc_encryption_secret and run "
+            "`cograph-backend reencrypt-secrets` to decouple rotation.",
+            llm_mode,
+            oidc_mode,
+        )
 
 
 async def _maybe_emit_bootstrap_token(
@@ -183,7 +199,9 @@ async def _maybe_emit_bootstrap_token(
     )
 
 
-async def _probe_oidc_providers(session_manager: SessionManager, settings: Settings) -> None:
+async def _probe_oidc_providers(
+    session_manager: SessionManager, settings: Settings
+) -> None:
     """Best-effort discovery probe per enabled OIDC provider.
 
     Logs INFO on success (issuer + endpoints reached) and WARNING on
