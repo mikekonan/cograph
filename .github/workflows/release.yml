@@ -43,8 +43,13 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          # Fine-grained PATs don't support GHCR write for personal
+          # namespaces, so RELEASE_PAT is a classic PAT with `repo` +
+          # `write:packages`. The default GITHUB_TOKEN gets denied with
+          # `write_package` even though `permissions: packages: write`
+          # is set on this workflow — using the user PAT bypasses that.
+          username: mikekonan
+          password: ${{ secrets.RELEASE_PAT }}
 
       - name: Compute tags
         id: meta
