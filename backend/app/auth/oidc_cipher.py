@@ -28,9 +28,9 @@ from backend.app.core.errors import ApiError
 _OIDC_SECRETS_DOMAIN = b"cograph-oidc-secrets:"
 
 
-def _oidc_fernet_key(settings: Settings) -> bytes:
+def _oidc_fernet_key(settings: Settings, *, force_legacy: bool = False) -> bytes:
     independent = settings.auth.oidc_encryption_secret
-    if independent is not None:
+    if independent is not None and not force_legacy:
         master = independent.get_secret_value().encode("utf-8")
         digest = hashlib.sha256(master).digest()
     else:
@@ -40,14 +40,23 @@ def _oidc_fernet_key(settings: Settings) -> bytes:
 
 
 class OIDCSecretCipher:
-    """Encrypt/decrypt OIDC `client_secret` values."""
+    """Encrypt/decrypt OIDC `client_secret` values.
 
-    def __init__(self, settings: Settings) -> None:
+    ``force_legacy`` mirrors :class:`SecretCipher` — when True, always
+    uses the JWT-derived key. The reencrypt-secrets CLI relies on this
+    to decrypt legacy ciphertexts after the operator has flipped on
+    ``auth.oidc_encryption_secret``.
+    """
+
+    def __init__(self, settings: Settings, *, force_legacy: bool = False) -> None:
         self._settings = settings
-        self._fernet = Fernet(_oidc_fernet_key(settings))
+        self._force_legacy = force_legacy
+        self._fernet = Fernet(_oidc_fernet_key(settings, force_legacy=force_legacy))
 
     @property
     def uses_independent_secret(self) -> bool:
+        if self._force_legacy:
+            return False
         return self._settings.auth.oidc_encryption_secret is not None
 
     def encrypt(self, raw_secret: str) -> str:
@@ -64,3 +73,16 @@ class OIDCSecretCipher:
                 "OIDC_SECRET_DECRYPT_FAILED",
                 "Stored OIDC client secret could not be decrypted",
             ) from exc
+
+    def try_decrypt(self, encrypted_secret: str) -> str | None:
+        """Decrypt without raising — returns ``None`` on InvalidToken.
+
+        Used by the re-encryption migration to detect already-migrated
+        rows.
+        """
+        try:
+            return self._fernet.decrypt(encrypted_secret.encode("utf-8")).decode(
+                "utf-8"
+            )
+        except InvalidToken:
+            return None

@@ -33,19 +33,19 @@ class SecretTestResult:
 _LLM_SECRETS_DOMAIN = b"cograph-provider-secrets:"
 
 
-def _llm_fernet_key(settings: Settings) -> bytes:
+def _llm_fernet_key(settings: Settings, *, force_legacy: bool = False) -> bytes:
     """Resolve the Fernet key for LLM-secret encryption.
 
     CRIT-03 compatibility shim: if ``auth.llm_encryption_secret`` is
-    set, derive the key from that secret directly (independent of
-    ``jwt_secret``). Otherwise fall back to the historical
-    domain-prefixed-jwt_secret derivation so already-encrypted rows
-    stay readable. The fallback path is intentionally identical to the
-    pre-CRIT-03 code so cutover is a settings change followed by a
-    one-shot re-encryption migration.
+    set and ``force_legacy`` is False, derive the key from that secret
+    directly (independent of ``jwt_secret``). Otherwise fall back to
+    the historical domain-prefixed-jwt_secret derivation so already-
+    encrypted rows stay readable. ``force_legacy=True`` is used by the
+    re-encryption migration to read rows that are still under the JWT-
+    derived key even after the operator has switched the setting.
     """
     independent = settings.auth.llm_encryption_secret
-    if independent is not None:
+    if independent is not None and not force_legacy:
         master = independent.get_secret_value().encode("utf-8")
         digest = hashlib.sha256(master).digest()
     else:
@@ -60,14 +60,21 @@ class SecretCipher:
     Key source — see :func:`_llm_fernet_key`. Existing deployments keep
     decrypting under the historical jwt-derived key until the operator
     sets ``auth.llm_encryption_secret`` and re-encrypts the rows.
+
+    ``force_legacy`` is a migration knob: when True the cipher always
+    uses the JWT-derived key, even if an independent secret is set.
+    The reencrypt-secrets CLI uses this to read legacy ciphertexts.
     """
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, *, force_legacy: bool = False) -> None:
         self._settings = settings
-        self._fernet = Fernet(_llm_fernet_key(settings))
+        self._force_legacy = force_legacy
+        self._fernet = Fernet(_llm_fernet_key(settings, force_legacy=force_legacy))
 
     @property
     def uses_independent_secret(self) -> bool:
+        if self._force_legacy:
+            return False
         return self._settings.auth.llm_encryption_secret is not None
 
     def encrypt(self, raw_secret: str) -> str:
@@ -84,6 +91,20 @@ class SecretCipher:
                 "SECRET_DECRYPT_FAILED",
                 "Stored API secret could not be decrypted",
             ) from exc
+
+    def try_decrypt(self, encrypted_secret: str) -> str | None:
+        """Decrypt without raising — returns ``None`` on InvalidToken.
+
+        Used by the re-encryption migration to detect already-migrated
+        rows: if the *current* cipher decrypts successfully, the row is
+        already under the new key and must be skipped.
+        """
+        try:
+            return self._fernet.decrypt(encrypted_secret.encode("utf-8")).decode(
+                "utf-8"
+            )
+        except InvalidToken:
+            return None
 
 
 class AdminSecretService:
