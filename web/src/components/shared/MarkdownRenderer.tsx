@@ -7,7 +7,30 @@ import { Link2 } from "lucide-react";
 import { type ComponentProps, type MouseEvent, useCallback, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeRaw from "rehype-raw";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
+
+// Sanitization schema for the rehype-sanitize pass that runs AFTER
+// rehype-raw. Starts from the safe GitHub-flavored default and adds the
+// specific attributes our citation chip needs (`title` for the tooltip
+// and the `data-key` data attribute for the unresolved-citation marker).
+// Keeping the schema explicit means a malicious `.md` file in an indexed
+// repo cannot ship `<img onerror=...>` or `<script>` payloads through
+// the docs/wiki render path even though raw HTML support stays on for
+// pipeline-generated chips.
+const _SANITIZE_SCHEMA = {
+  ...defaultSchema,
+  attributes: {
+    ...(defaultSchema.attributes ?? {}),
+    // hast property names are camelCase (`dataKey`, not `data-key`).
+    // `title` is already covered by defaultSchema.attributes['*'].
+    span: [
+      ...((defaultSchema.attributes?.span as unknown[] | undefined) ?? []),
+      "className",
+      "dataKey",
+    ],
+  },
+};
 
 type MarkdownRendererProps = {
   source: string;
@@ -145,7 +168,7 @@ export function MarkdownRenderer({
     >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={allowRawHtml ? [rehypeRaw] : []}
+        rehypePlugins={allowRawHtml ? [rehypeRaw, [rehypeSanitize, _SANITIZE_SCHEMA]] : []}
         urlTransform={allowUnsafeUrls ? preserveUrl : safeUrlTransform}
         components={{
           // Headings get slugified anchor IDs + a hover-reveal # link so any

@@ -1,6 +1,6 @@
 """Minimal provider-agnostic OIDC client.
 
-Built on `httpx` (HTTP) + `python-jose` (JWT/JWKS) — no `authlib` dep.
+Built on `httpx` (HTTP) + `PyJWT` (JWT/JWKS) — no `authlib` dep.
 The spec calls out `authlib` but everything we need (discovery, JWKS,
 PKCE, ID-token verify) is a thin wrapper over what we already have.
 """
@@ -16,8 +16,9 @@ from typing import Any
 from urllib.parse import urlencode
 
 import httpx
-from jose import jwt
-from jose.exceptions import JWTError
+import jwt
+from jwt import PyJWK
+from jwt.exceptions import InvalidTokenError
 
 from backend.app.core.errors import ApiError
 
@@ -271,7 +272,7 @@ class OIDCClient:
     ) -> IdTokenClaims:
         try:
             header = jwt.get_unverified_header(id_token)
-        except JWTError as exc:
+        except InvalidTokenError as exc:
             raise ApiError(
                 401,
                 "OIDC_ID_TOKEN_HEADER_INVALID",
@@ -288,31 +289,45 @@ class OIDCClient:
                     return key
             return {}
 
-        key = await _find_key()
-        if not key:
+        jwk_dict = await _find_key()
+        if not jwk_dict:
             # `kid` may have rotated between cache and now — refresh once.
             await self.jwks(force_refresh=True)
-            key = await _find_key()
-        if not key:
+            jwk_dict = await _find_key()
+        if not jwk_dict:
             raise ApiError(
                 401,
                 "OIDC_ID_TOKEN_KEY_NOT_FOUND",
                 "Signing key for ID token not found in JWKS",
             )
 
+        # PyJWT consumes a PEM/cryptography key, not a JWK dict directly.
+        # PyJWK converts on construction and exposes the underlying key
+        # via the `.key` attribute.
+        try:
+            verify_key = PyJWK(jwk_dict, algorithm=alg).key
+        except (InvalidTokenError, ValueError, KeyError) as exc:
+            raise ApiError(
+                401,
+                "OIDC_ID_TOKEN_KEY_INVALID",
+                f"Could not load JWKS key for alg={alg}: {exc}",
+            ) from exc
+
         try:
             payload = jwt.decode(
                 id_token,
-                key,
+                verify_key,
                 algorithms=[alg],
                 audience=self.client_id,
                 issuer=self.issuer_url,
+                leeway=_CLOCK_SKEW_S,
                 options={
+                    # The ID token's at_hash binding to access_token isn't
+                    # exposed by PyJWT directly; we don't rely on it.
                     "verify_at_hash": False,
-                    "leeway": _CLOCK_SKEW_S,
                 },
             )
-        except JWTError as exc:
+        except InvalidTokenError as exc:
             raise ApiError(
                 401,
                 "OIDC_ID_TOKEN_INVALID",
