@@ -5,6 +5,21 @@ server {
     # Repo zip uploads are capped at 200 MB on the backend; let nginx pass them through.
     client_max_body_size 200m;
 
+    # Hide the nginx version from the Server header — pure fingerprint reduction.
+    server_tokens off;
+
+    # Defense-in-depth response headers. `always` makes nginx emit them on
+    # error responses too (4xx / 5xx), which is where header omission is
+    # easiest to miss. CSP is intentionally omitted for now — the Vite
+    # bundle relies on a small inline boot script and we want to land a
+    # well-tuned policy in a follow-up rather than ship 'unsafe-inline' as
+    # a permanent default.
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
+    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+
     root /usr/share/nginx/html;
     index index.html;
 
@@ -54,6 +69,14 @@ server {
     }
 
     location = /index.html {
+        # nginx inheritance gotcha: any `add_header` at a lower level
+        # shadows the entire `add_header` set at the server block, so the
+        # security headers above must be repeated here.
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
+        add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
         add_header Cache-Control "no-cache, no-store, must-revalidate";
         add_header Pragma "no-cache";
         add_header Expires "0";
