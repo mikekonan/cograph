@@ -53,9 +53,45 @@ describe("transformUnresolvedMarkers", () => {
 
 describe("MarkdownRenderer", () => {
   it("keeps raw HTML for trusted generated/repo markdown", () => {
-    render(<MarkdownRenderer source={'<span data-testid="trusted-html">ok</span>'} />);
+    render(<MarkdownRenderer source={'<span class="trusted-html">ok</span>'} />);
 
-    expect(screen.getByTestId("trusted-html")).toHaveTextContent("ok");
+    // rehype-sanitize strips most data-* attributes by default, so this
+    // assertion uses a className lookup instead of data-testid: the
+    // tag survives, only known-bad attrs are scrubbed.
+    expect(document.querySelector("span.trusted-html")).toHaveTextContent("ok");
+  });
+
+  it("strips <script> tags from rendered repo markdown", () => {
+    // HIGH-01 regression guard: an attacker who can commit to an indexed
+    // repo embeds a <script> tag. With rehype-sanitize chained after
+    // rehype-raw, the tag is dropped before it reaches the DOM even though
+    // raw HTML support is still on for the citation-chip use case.
+    const md = "<p>before</p><script>window.__pwn = true;</script><p>after</p>";
+    render(<MarkdownRenderer source={md} />);
+    expect(document.querySelector("script")).toBeNull();
+    // biome-ignore lint/suspicious/noExplicitAny: probe arbitrary payload var
+    expect((window as any).__pwn).toBeUndefined();
+  });
+
+  it("strips inline event handlers like onerror from raw HTML", () => {
+    // HIGH-01 regression guard: <img src=x onerror=...> is the canonical
+    // XSS smoke test. The element may render but the handler attribute
+    // must be gone after the sanitize pass.
+    const md = '<img src="x" onerror="window.__bad = true" />';
+    render(<MarkdownRenderer source={md} />);
+    const img = document.querySelector("img");
+    expect(img?.getAttribute("onerror")).toBeNull();
+  });
+
+  it("preserves the citation-chip span (class, title, data-key)", () => {
+    // HIGH-01 must not break the legitimate raw-HTML use case: the
+    // unresolved-citation chip injected by transformUnresolvedMarkers.
+    const md = "Plain text with ⚠️ unresolved: node:pkg.MissingFn afterwards.";
+    render(<MarkdownRenderer source={md} />);
+    const chip = document.querySelector("span.cograph-unresolved");
+    expect(chip).not.toBeNull();
+    expect(chip?.getAttribute("data-key")).toBe("node:pkg.MissingFn");
+    expect(chip?.getAttribute("title")).toBeTruthy();
   });
 
   it("promotes multi-line single-backtick spans to a code block", () => {

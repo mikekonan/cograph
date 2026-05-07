@@ -4,6 +4,55 @@ import { cn } from "@/lib/utils";
 import { AlertTriangle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+// Mermaid's `securityLevel: "antiscript"` only strips <script> tags. It
+// does NOT scrub `onclick`/`onerror`/`onload` and similar event-handler
+// attributes that survive in HTML labels (foreignObject contents) or in
+// SVG element attributes themselves. Diagram source ultimately comes
+// from repository content, so a crafted node label like
+// `A["<img src=x onerror=alert(1)>"]` would otherwise execute on render.
+//
+// We deliberately skip DOMPurify here: its SVG profile aggressively
+// strips HTML inside `<foreignObject>` (the path Mermaid uses for the
+// htmlLabels: true mode that lets long FQN node labels wrap via `<br>`),
+// even with USE_PROFILES.html and ADD_TAGS workarounds. A manual walk
+// keeps the full Mermaid output intact and removes only the things we
+// need to remove: any attribute whose name starts with `on` (event
+// handlers), any `<script>` element, and any `javascript:` URL value
+// on `href`/`xlink:href`.
+export function sanitizeMermaidSvg(svg: string): string {
+  if (typeof DOMParser === "undefined") return svg;
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(svg, "image/svg+xml");
+  const root = doc.documentElement;
+  if (!root || root.nodeName === "parsererror") return "";
+
+  const queue: Element[] = [root];
+  while (queue.length > 0) {
+    const el = queue.shift();
+    if (!el) continue;
+    if (el.tagName.toLowerCase() === "script") {
+      el.remove();
+      continue;
+    }
+    for (const attr of Array.from(el.attributes)) {
+      const name = attr.name.toLowerCase();
+      if (name.startsWith("on")) {
+        el.removeAttribute(attr.name);
+        continue;
+      }
+      if (name === "href" || name === "xlink:href") {
+        const value = attr.value.trim().toLowerCase();
+        if (value.startsWith("javascript:") || value.startsWith("data:text/html")) {
+          el.removeAttribute(attr.name);
+        }
+      }
+    }
+    for (const child of Array.from(el.children)) queue.push(child);
+  }
+
+  return new XMLSerializer().serializeToString(root);
+}
+
 type MermaidDiagramProps = {
   source: string;
   className?: string;
@@ -111,7 +160,7 @@ export function MermaidDiagram({ source, className }: MermaidDiagramProps) {
       try {
         const id = `mmd-${++idCounter}`;
         const { svg } = await mermaid.render(id, source.trim());
-        if (!cancelled) setSvg(svg);
+        if (!cancelled) setSvg(sanitizeMermaidSvg(svg));
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Diagram render failed");
@@ -157,7 +206,7 @@ export function MermaidDiagram({ source, className }: MermaidDiagramProps) {
       {svg ? (
         <div
           ref={ref}
-          // biome-ignore lint/security/noDangerouslySetInnerHtml: Mermaid renders SVG with securityLevel="antiscript" — script tags are stripped; HTML labels (br, span) are intentionally kept for long-label wrapping.
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: Mermaid renders SVG with securityLevel="antiscript" AND the result is run through DOMPurify (sanitizeMermaidSvg) before reaching here, which strips event handlers (onclick/onerror/onload) that survive antiscript. HTML labels (br, span) are intentionally kept for long-label wrapping.
           dangerouslySetInnerHTML={{ __html: svg }}
           className="mermaid-diagram flex justify-center [&_svg]:max-w-full"
         />

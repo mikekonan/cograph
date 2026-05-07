@@ -6,7 +6,8 @@ from enum import StrEnum
 from uuid import UUID, uuid4
 
 import bcrypt
-from jose import JWTError, ExpiredSignatureError, jwt  # type: ignore[import-untyped]
+import jwt
+from jwt.exceptions import ExpiredSignatureError, InvalidTokenError
 from starlette.requests import Request
 
 from backend.app.config import Settings
@@ -123,7 +124,7 @@ def decode_token(
         )
     except ExpiredSignatureError as exc:
         raise ApiError(401, "TOKEN_EXPIRED", "Access token expired") from exc
-    except JWTError as exc:
+    except InvalidTokenError as exc:
         raise ApiError(401, "UNAUTHENTICATED", "Authentication required") from exc
 
     try:
