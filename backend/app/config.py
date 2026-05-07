@@ -74,6 +74,29 @@ class CorsSettings(BaseModel):
     )
 
 
+class LoggingSettings(BaseModel):
+    """Process-wide logging knobs.
+
+    The defaults make ``backend.*`` loggers visible at INFO so login
+    flows, OIDC discovery, PAT use, and per-request access lines surface
+    in ``docker logs``. Flip ``format=json`` for structured collectors.
+    """
+
+    level: str = "INFO"
+    format: str = "text"
+    access_log: bool = True
+
+    @model_validator(mode="after")
+    def _validate(self) -> "LoggingSettings":
+        if self.level.upper() not in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
+            raise ValueError(
+                "logging.level must be one of DEBUG, INFO, WARNING, ERROR, CRITICAL"
+            )
+        if self.format not in ("text", "json"):
+            raise ValueError("logging.format must be 'text' or 'json'")
+        return self
+
+
 class EmbeddingSettings(BaseModel):
     """Embedding provider config.  disabled by default until a provider is configured."""
 
@@ -168,6 +191,7 @@ class Settings(BaseSettings):
     archive_upload: ArchiveUploadSettings = Field(default_factory=ArchiveUploadSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
     cors: CorsSettings = Field(default_factory=CorsSettings)
+    logging: LoggingSettings = Field(default_factory=LoggingSettings)
     embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
     completion: CompletionSettings = Field(default_factory=CompletionSettings)
     retrieval: RetrievalSettings = Field(default_factory=RetrievalSettings)

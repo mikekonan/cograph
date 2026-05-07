@@ -16,6 +16,7 @@ PAT actors cannot initiate `link/start` — token-laundering guard.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse
 from uuid import UUID
@@ -49,6 +50,8 @@ from backend.app.core.deps import (
 from backend.app.core.errors import ApiError
 from backend.app.models.identity_provider import IdentityProvider
 from backend.app.models.oidc_login_state import OIDCLoginState
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth/oidc", tags=["auth", "oidc"])
 
@@ -188,6 +191,11 @@ async def oidc_login(
             code_challenge=challenge,
             nonce=nonce,
         )
+        logger.info(
+            "OIDC[%s] login: redirecting to authorize endpoint return_to=%s",
+            slug,
+            safe_return,
+        )
         return RedirectResponse(url=url, status_code=302)
     finally:
         await client.aclose()
@@ -304,6 +312,7 @@ async def _handle_callback(
     settings: Settings,
 ) -> RedirectResponse:
     provider = await _load_provider(session, slug=slug)
+    logger.info("OIDC[%s] callback received", slug)
     state_row = await _consume_state(
         session, state=state, expected_provider_id=provider.id
     )
@@ -321,6 +330,11 @@ async def _handle_callback(
             )
         except ApiError as exc:
             await session.commit()  # persist the consumed_at flip
+            logger.warning(
+                "OIDC[%s] token exchange/verify failed: code=%s",
+                slug,
+                exc.code,
+            )
             return _login_error_redirect(
                 request=request,
                 settings=settings,
@@ -343,14 +357,33 @@ async def _handle_callback(
 
             user = await session.get(_User, user_id)
             assert user is not None
+            logger.info(
+                "OIDC[%s] identity linked: user_id=%s subject=%s",
+                slug,
+                user.id,
+                claims.sub,
+            )
         else:
             user = await find_or_create_user(
                 session,
                 provider=provider,
                 claims=claims,
             )
+            logger.info(
+                "OIDC[%s] login ok: user_id=%s email=%s subject=%s",
+                slug,
+                user.id,
+                user.email,
+                claims.sub,
+            )
     except ApiError as exc:
         await session.commit()  # keep the consumed state, audit trail intact
+        logger.warning(
+            "OIDC[%s] provisioning failed: code=%s subject=%s",
+            slug,
+            exc.code,
+            claims.sub,
+        )
         return _login_error_redirect(
             request=request,
             settings=settings,

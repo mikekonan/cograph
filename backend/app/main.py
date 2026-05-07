@@ -18,6 +18,7 @@ from backend.app.api.scim import (
 from backend.app.config import Environment, Settings, get_settings
 from backend.app.core.bootstrap import generate_bootstrap_token, hash_bootstrap_token
 from backend.app.core.errors import register_exception_handlers
+from backend.app.core.logging_config import configure_logging, mask_url
 from backend.app.core.middleware import install_middleware
 from backend.app.core.rate_limit import InMemoryRateLimiter, RedisRateLimiter
 from backend.app.db.session import SessionManager
@@ -27,6 +28,119 @@ from backend.app.models.enums import UserRole
 from backend.app.models.user import User
 
 logger = logging.getLogger(__name__)
+
+
+def _emit_boot_banner(settings: Settings) -> None:
+    """Log a single boot banner so operators can see how the process is wired.
+
+    Secrets are masked: passwords inside DB/Redis URLs collapse to ``***``,
+    JWT secret never appears, embedding/completion API keys collapse to a
+    boolean. The banner is emitted at INFO so production deploys see it
+    in `docker logs` on every restart.
+    """
+    masked_db = mask_url(settings.database.url)
+    masked_redis = mask_url(settings.redis.url)
+    logger.info(
+        "Cograph boot: app=%s version=%s env=%s api_prefix=%s",
+        settings.app_name,
+        settings.version,
+        settings.environment.value,
+        settings.api_prefix,
+    )
+    logger.info(
+        "Cograph boot: database.url=%s database.echo=%s",
+        masked_db,
+        settings.database.echo,
+    )
+    logger.info(
+        "Cograph boot: redis.url=%s redis.allow_in_memory_rate_limit_fallback=%s",
+        masked_redis,
+        settings.redis.allow_in_memory_rate_limit_fallback,
+    )
+    logger.info(
+        "Cograph boot: auth.registration_enabled=%s auth.public_read=%s "
+        "auth.secure_cookies=%s auth.external_url=%s",
+        settings.auth.registration_enabled,
+        settings.auth.public_read,
+        settings.effective_secure_cookies,
+        settings.auth.external_url or "(unset)",
+    )
+    logger.info(
+        "Cograph boot: embedding.enabled=%s completion.enabled=%s "
+        "completion.preview_enabled=%s",
+        settings.embedding.enabled,
+        settings.completion.enabled,
+        settings.completion.preview_enabled,
+    )
+    logger.info(
+        "Cograph boot: rerank.enabled=%s rerank.provider=%s retrieval.rrf_k=%s "
+        "retrieval.candidate_cap=%s",
+        settings.retrieval.rerank.enabled,
+        settings.retrieval.rerank.provider,
+        settings.retrieval.rrf_k,
+        settings.retrieval.candidate_cap,
+    )
+
+
+async def _probe_oidc_providers(session_manager: SessionManager, settings: Settings) -> None:
+    """Best-effort discovery probe per enabled OIDC provider.
+
+    Logs INFO on success (issuer + endpoints reached) and WARNING on
+    failure (network / TLS / discovery JSON malformed) so a misconfigured
+    IdP shows up in logs on the very first restart instead of waiting
+    for the first user to click 'Sign in'.
+    """
+    from backend.app.auth.oidc_cipher import OIDCSecretCipher
+    from backend.app.auth.oidc_client import OIDCClient
+    from backend.app.models.identity_provider import IdentityProvider
+
+    try:
+        async with session_manager.session() as session:
+            providers = (
+                await session.scalars(
+                    select(IdentityProvider).where(IdentityProvider.enabled.is_(True))
+                )
+            ).all()
+    except OperationalError:
+        # Schema not migrated yet — skip silently (boot must still come up).
+        return
+
+    if not providers:
+        logger.info("OIDC: no enabled identity providers configured")
+        return
+
+    cipher = OIDCSecretCipher(settings)
+    for provider in providers:
+        secret = (
+            cipher.decrypt(provider.client_secret_encrypted)
+            if provider.client_secret_encrypted
+            else None
+        )
+        client = OIDCClient(
+            issuer_url=provider.issuer_url,
+            client_id=provider.client_id,
+            client_secret=secret,
+            scopes=list(provider.scopes),
+        )
+        try:
+            doc = await client.discovery()
+            logger.info(
+                "OIDC[%s]: discovery ok issuer=%s authorize=%s token=%s jwks=%s",
+                provider.slug,
+                doc.issuer,
+                doc.authorization_endpoint,
+                doc.token_endpoint,
+                doc.jwks_uri,
+            )
+        except Exception as exc:  # ApiError or transport error
+            logger.warning(
+                "OIDC[%s]: discovery failed issuer=%s err=%s",
+                provider.slug,
+                provider.issuer_url,
+                exc,
+            )
+        finally:
+            await client.aclose()
 
 
 async def _install_rate_limiter(app: FastAPI, settings: Settings) -> None:
@@ -70,6 +184,7 @@ async def _install_rate_limiter(app: FastAPI, settings: Settings) -> None:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     resolved_settings = settings or get_settings()
+    configure_logging(resolved_settings)
     session_manager = SessionManager(resolved_settings)
     mcp_services, _ = build_mcp_services(
         settings=resolved_settings,
@@ -101,6 +216,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.summary_generator = None
         app.state.mcp_server = mcp_server
 
+        _emit_boot_banner(resolved_settings)
+
         # Mounted Starlette sub-app lifespans do not start under FastAPI mounts,
         # so the parent app owns the MCP session-manager lifecycle explicitly.
         # Keep the manager in its own task so startup/shutdown happen in the
@@ -116,6 +233,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             async with anyio.create_task_group() as task_group:
                 await task_group.start(run_mcp_session_manager)
                 await _install_rate_limiter(app, resolved_settings)
+                await _probe_oidc_providers(session_manager, resolved_settings)
 
                 # Embedding role is enforced lazily by callsites
                 # (workers, retrieval API, MCP) — first-boot lifespan must
@@ -167,6 +285,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         # Testing path continues here (no task_group).
         await _install_rate_limiter(app, resolved_settings)
+        await _probe_oidc_providers(session_manager, resolved_settings)
 
         # Embedding role is enforced lazily by callsites
         # (workers, retrieval API, MCP) — first-boot lifespan must

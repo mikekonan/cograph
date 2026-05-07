@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -27,6 +28,8 @@ from backend.app.pipeline.checkout import GitCheckoutAdapter
 from backend.app.pipeline.orchestrator import RepoSyncOrchestrator, RepoSyncQueue
 from backend.app.pipeline.worker import build_redis_settings
 from backend.app.pipeline.zip_checkout import ZipCheckoutAdapter
+
+logger = logging.getLogger(__name__)
 
 PAT_PLAINTEXT_PREFIX = "cgr_pat_"
 PAT_PREFIX_DISPLAY_CHARS = 16
@@ -60,6 +63,8 @@ async def require_current_user(
             client_ip=_request_client_ip(request),
             required_scope=_required_pat_scope_for_method(request.method),
         )
+        request.state.user_id = str(actor.user.id)
+        request.state.auth_method = "pat"
         return actor.user
 
     token = extract_access_token(request, settings)
@@ -77,6 +82,8 @@ async def require_current_user(
     if not user.is_active:
         raise ApiError(401, "UNAUTHENTICATED", "Account is disabled")
 
+    request.state.user_id = str(user.id)
+    request.state.auth_method = "cookie_jwt"
     return user
 
 
@@ -178,8 +185,20 @@ async def _resolve_pat_or_raise(
 ) -> AuthenticatedActor:
     actor = await _resolve_pat(bearer, session, client_ip=client_ip)
     if actor is None:
+        logger.warning(
+            "PAT auth rejected: ip=%s prefix=%s reason=unknown_or_revoked_or_expired",
+            client_ip,
+            bearer[:PAT_PREFIX_DISPLAY_CHARS],
+        )
         raise ApiError(401, "UNAUTHENTICATED", "Authentication required")
     if required_scope not in actor.scopes:
+        logger.warning(
+            "PAT scope rejected: user_id=%s token_id=%s required=%s scopes=%s",
+            actor.user.id,
+            actor.token_id,
+            required_scope,
+            sorted(actor.scopes),
+        )
         raise ApiError(
             403,
             "INSUFFICIENT_SCOPE",
@@ -258,7 +277,14 @@ async def require_authenticated(
     if bearer is not None and bearer.startswith(PAT_PLAINTEXT_PREFIX):
         actor = await _resolve_pat(bearer, session, client_ip=client_ip)
         if actor is None:
+            logger.warning(
+                "PAT auth rejected: ip=%s prefix=%s reason=unknown_or_revoked_or_expired",
+                client_ip,
+                bearer[:PAT_PREFIX_DISPLAY_CHARS],
+            )
             raise ApiError(401, "UNAUTHENTICATED", "Authentication required")
+        request.state.user_id = str(actor.user.id)
+        request.state.auth_method = "pat"
         return actor
 
     user = await require_current_user(request=request, session=session, settings=settings)
@@ -279,6 +305,13 @@ def require_scope(scope: str):
         if actor.method != "pat":
             return actor
         if scope not in actor.scopes:
+            logger.warning(
+                "PAT scope rejected: user_id=%s token_id=%s required=%s scopes=%s",
+                actor.user.id,
+                actor.token_id,
+                scope,
+                sorted(actor.scopes),
+            )
             raise ApiError(
                 403,
                 "INSUFFICIENT_SCOPE",
@@ -306,6 +339,12 @@ async def require_actor_csrf(
         return actor
     if actor.method == "pat":
         if "api:write" not in actor.scopes:
+            logger.warning(
+                "PAT scope rejected: user_id=%s token_id=%s required=api:write scopes=%s",
+                actor.user.id,
+                actor.token_id,
+                sorted(actor.scopes),
+            )
             raise ApiError(
                 403,
                 "INSUFFICIENT_SCOPE",
@@ -314,6 +353,11 @@ async def require_actor_csrf(
         return actor
 
     if not x_csrf_token:
+        logger.warning(
+            "CSRF rejected: user_id=%s reason=missing_header path=%s",
+            actor.user.id,
+            request.url.path,
+        )
         raise ApiError(403, "CSRF_INVALID", "X-CSRF-Token header is required")
 
     token = extract_access_token(request, settings)
@@ -323,6 +367,11 @@ async def require_actor_csrf(
 
     expected_csrf = claims.csrf or ""
     if not secrets.compare_digest(x_csrf_token, expected_csrf):
+        logger.warning(
+            "CSRF rejected: user_id=%s reason=token_mismatch path=%s",
+            actor.user.id,
+            request.url.path,
+        )
         raise ApiError(403, "CSRF_INVALID", "CSRF token mismatch")
     return actor
 

@@ -416,12 +416,27 @@ async def login(
             limit=_EMAIL_LIMIT,
         )
         if not email_fail.allowed:
+            logger.warning(
+                "Login rate-limited: email=%s ip=%s",
+                payload.email,
+                client_ip,
+            )
             return _rate_limited_response(request, email_fail.retry_after_seconds)
+        logger.warning(
+            "Login failed: email=%s ip=%s reason=invalid_credentials",
+            payload.email,
+            client_ip,
+        )
         raise ApiError(401, "UNAUTHENTICATED", "Invalid credentials")
 
     # Disabled accounts cannot log in even with the right password.
     assert user is not None  # narrow for type-checkers; falsy paths returned above
     if not user.is_active:
+        logger.warning(
+            "Login failed: email=%s ip=%s reason=account_disabled",
+            payload.email,
+            client_ip,
+        )
         raise ApiError(401, "UNAUTHENTICATED", "Account is disabled")
 
     # Successful login -- issue tokens.
@@ -462,6 +477,14 @@ async def login(
         settings=settings,
     )
 
+    logger.info(
+        "Login ok: user_id=%s email=%s role=%s ip=%s",
+        user.id,
+        user.email,
+        user.role.value,
+        client_ip,
+    )
+
     return LoginResponse(user=_to_user_response(user))
 
 
@@ -473,6 +496,7 @@ async def logout(
     settings: Settings = Depends(get_settings_dep),
 ) -> None:
     refresh_cookie = request.cookies.get(settings.auth.refresh_cookie_name)
+    user_id_for_log: UUID | None = None
     if refresh_cookie:
         try:
             claims = decode_token(
@@ -480,6 +504,7 @@ async def logout(
                 settings=settings,
                 expected_type=TokenType.REFRESH,
             )
+            user_id_for_log = claims.user_id
             if claims.family:
                 family_row = await session.get(RefreshTokenFamily, claims.family)
                 if family_row is not None and family_row.revoked_at is None:
@@ -489,6 +514,7 @@ async def logout(
             pass
 
     _clear_auth_cookies(response, settings)
+    logger.info("Logout: user_id=%s", user_id_for_log)
 
 
 @router.post("/refresh", response_model=LoginResponse)
@@ -528,6 +554,11 @@ async def refresh_tokens(
         family_row.revoked_at = datetime.now(UTC)
         await session.commit()
         _clear_auth_cookies(response, settings)
+        logger.warning(
+            "Refresh failed: user_id=%s reason=family_reuse_detected family=%s",
+            claims.user_id,
+            claims.family,
+        )
         raise ApiError(401, "REFRESH_INVALID", "Refresh token missing or invalid")
 
     user = await session.get(User, claims.user_id)
