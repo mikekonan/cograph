@@ -88,6 +88,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="embed: backfill embeddings; resolve-links: resolve cross-document links; all: both",
     )
 
+    reencrypt = subparsers.add_parser(
+        "reencrypt-secrets",
+        help=(
+            "CRIT-03 phase 2: re-encrypt llm_secrets + identity_providers "
+            "rows from the legacy JWT-derived key to the independent "
+            "auth.*_encryption_secret keys. Idempotent."
+        ),
+    )
+    reencrypt.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the migration plan without committing.",
+    )
+
     return parser
 
 
@@ -678,8 +692,42 @@ async def run_cli(
             action=args.action,
         )
 
+    if args.command == "reencrypt-secrets":
+        return await _run_reencrypt_secrets_cli(
+            settings=resolved_settings,
+            dry_run=args.dry_run,
+        )
+
     parser.error(f"Unsupported command: {args.command}")
     return 2
+
+
+async def _run_reencrypt_secrets_cli(
+    *,
+    settings: Settings,
+    dry_run: bool,
+) -> int:
+    from backend.app.admin.secret_reencryption import (
+        format_report,
+        reencrypt_secrets,
+    )
+
+    session_manager = SessionManager(settings)
+    try:
+        async with session_manager.session() as session:
+            report = await reencrypt_secrets(
+                session,
+                settings=settings,
+                dry_run=dry_run,
+            )
+            if dry_run:
+                await session.rollback()
+            else:
+                await session.commit()
+        print(format_report(report))
+        return 1 if report.has_failures else 0
+    finally:
+        await session_manager.dispose()
 
 
 async def _run_md_rag_cli(
