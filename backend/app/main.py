@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 import anyio
@@ -16,7 +17,11 @@ from backend.app.api.scim import (
     router as scim_router,
 )
 from backend.app.config import Environment, Settings, get_settings
-from backend.app.core.bootstrap import generate_bootstrap_token, hash_bootstrap_token
+from backend.app.core.bootstrap import (
+    generate_bootstrap_token,
+    hash_bootstrap_token,
+    resolve_bootstrap_token_path,
+)
 from backend.app.core.errors import register_exception_handlers
 from backend.app.core.logging_config import configure_logging, mask_url
 from backend.app.core.middleware import install_middleware
@@ -79,6 +84,83 @@ def _emit_boot_banner(settings: Settings) -> None:
         settings.retrieval.rerank.provider,
         settings.retrieval.rrf_k,
         settings.retrieval.candidate_cap,
+    )
+
+
+async def _maybe_emit_bootstrap_token(
+    app: FastAPI, session_manager: SessionManager
+) -> None:
+    """Provision the one-time bootstrap token when no admin exists yet.
+
+    Writes the plaintext token to ``$COGRAPH_BOOTSTRAP_TOKEN_FILE`` (default
+    ``./.cograph/bootstrap.token``) with 0600 permissions and logs only the
+    file path + a masked prefix. The token never enters the structured log
+    stream where centralised collectors can index it. The hash is held in
+    ``app.state.bootstrap_token_hash`` for the consumer endpoint to verify
+    against; once consumed (or once an admin appears) the file is removed.
+
+    Catches ``OperationalError`` in case the schema hasn't been migrated yet
+    — that state is treated as "no admin" so the process can still start.
+    """
+    try:
+        async with session_manager.session() as session:
+            has_admin = await session.scalar(
+                select(User)
+                .where(User.role.in_((UserRole.OWNER, UserRole.ADMIN)))
+                .limit(1)
+            )
+    except OperationalError:
+        has_admin = None
+
+    if has_admin is not None:
+        app.state.bootstrap_token_hash = None
+        return
+
+    token = generate_bootstrap_token()
+    app.state.bootstrap_token_hash = hash_bootstrap_token(token)
+
+    token_path = resolve_bootstrap_token_path()
+    masked = token[:4] + "*" * 8
+    try:
+        token_path.parent.mkdir(parents=True, exist_ok=True)
+        # Write atomically with restrictive perms so a concurrent reader
+        # never sees a half-written file and only the process owner can
+        # read the resulting file.
+        fd = os.open(
+            str(token_path),
+            os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+            0o600,
+        )
+        with os.fdopen(fd, "w") as fh:
+            fh.write(token + "\n")
+        location_hint = str(token_path)
+    except OSError as exc:
+        # Fallback: keep the token in memory only and tell the operator
+        # to restart with a writable token-file location. This keeps
+        # boot working in a read-only container without leaking the token.
+        logger.error(
+            "Could not write bootstrap token file at %s: %s. "
+            "The setup endpoint will still accept the token if you can "
+            "read it from this banner; otherwise restart with "
+            "COGRAPH_BOOTSTRAP_TOKEN_FILE pointing to a writable path.",
+            token_path,
+            exc,
+        )
+        location_hint = "(in-memory only — see error log)"
+
+    logger.warning(
+        "\n================================================================\n"
+        "COGRAPH FIRST-RUN SETUP\n"
+        "No owner or admin account exists yet. Open the Cograph web UI in your browser,\n"
+        "go to the /setup page, and paste the one-time setup token from:\n"
+        "\n"
+        "  token_file: %s\n"
+        "  token_prefix: %s   (sanity-check the file contents start with this)\n"
+        "\n"
+        "The token expires once an admin is created or the server restarts.\n"
+        "================================================================",
+        location_hint,
+        masked,
     )
 
 
@@ -238,37 +320,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # Embedding role is enforced lazily by callsites
                 # (workers, retrieval API, MCP) — first-boot lifespan must
                 # come up cleanly so the admin can configure secrets via UI.
-
-                # Bootstrap token: emit a one-time setup token if no admin exists yet.
-                # Catch OperationalError in case the schema hasn't been migrated yet —
-                # treat that state as "no admin" so the process can still start.
-                try:
-                    async with session_manager.session() as session:
-                        has_admin = await session.scalar(
-                            select(User)
-                            .where(User.role.in_((UserRole.OWNER, UserRole.ADMIN)))
-                            .limit(1)
-                        )
-                except OperationalError:
-                    has_admin = None
-
-                if has_admin is None:
-                    token = generate_bootstrap_token()
-                    app.state.bootstrap_token_hash = hash_bootstrap_token(token)
-                    logger.warning(
-                        "\n================================================================\n"
-                        "COGRAPH FIRST-RUN SETUP\n"
-                        "No owner or admin account exists yet. Open the Cograph web UI in your browser,\n"
-                        "go to the /setup page, and enter this one-time setup token:\n"
-                        "\n"
-                        "  setup_token: %s\n"
-                        "\n"
-                        "The token expires once an admin is created or the server restarts.\n"
-                        "================================================================",
-                        token,
-                    )
-                else:
-                    app.state.bootstrap_token_hash = None
+                await _maybe_emit_bootstrap_token(app, session_manager)
 
                 try:
                     yield
@@ -290,37 +342,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Embedding role is enforced lazily by callsites
         # (workers, retrieval API, MCP) — first-boot lifespan must
         # come up cleanly so the admin can configure secrets via UI.
-
-        # Bootstrap token: emit a one-time setup token if no admin exists yet.
-        # Catch OperationalError in case the schema hasn't been migrated yet —
-        # treat that state as "no admin" so the process can still start.
-        try:
-            async with session_manager.session() as session:
-                has_admin = await session.scalar(
-                    select(User)
-                    .where(User.role.in_((UserRole.OWNER, UserRole.ADMIN)))
-                    .limit(1)
-                )
-        except OperationalError:
-            has_admin = None
-
-        if has_admin is None:
-            token = generate_bootstrap_token()
-            app.state.bootstrap_token_hash = hash_bootstrap_token(token)
-            logger.warning(
-                "\n================================================================\n"
-                "COGRAPH FIRST-RUN SETUP\n"
-                "No owner or admin account exists yet. Open the Cograph web UI in your browser,\n"
-                "go to the /setup page, and enter this one-time setup token:\n"
-                "\n"
-                "  setup_token: %s\n"
-                "\n"
-                "The token expires once an admin is created or the server restarts.\n"
-                "================================================================",
-                token,
-            )
-        else:
-            app.state.bootstrap_token_hash = None
+        await _maybe_emit_bootstrap_token(app, session_manager)
 
         try:
             yield
@@ -339,10 +361,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 except asyncio.CancelledError:
                     pass
 
+    # Hide the interactive OpenAPI surface outside development. The schema
+    # is a complete map of every endpoint — convenient for developers,
+    # unnecessary surface area on a self-hosted production deployment.
+    # Tests run under Environment.TESTING and don't need /docs either, so
+    # only the development environment exposes them.
+    docs_enabled = resolved_settings.is_development
     app = FastAPI(
         title=resolved_settings.app_name,
         version=resolved_settings.version,
         lifespan=lifespan,
+        docs_url="/docs" if docs_enabled else None,
+        redoc_url="/redoc" if docs_enabled else None,
+        openapi_url="/openapi.json" if docs_enabled else None,
     )
     app.state.settings = resolved_settings
     app.state.session_manager = session_manager

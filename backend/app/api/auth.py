@@ -21,7 +21,10 @@ from backend.app.core.auth import (
     validate_password_length,
     verify_password,
 )
-from backend.app.core.bootstrap import hash_bootstrap_token
+from backend.app.core.bootstrap import (
+    hash_bootstrap_token,
+    remove_bootstrap_token_file,
+)
 from backend.app.core.deps import get_db_session, get_rate_limiter, get_settings_dep, require_current_user
 from backend.app.core.errors import ApiError, build_error_response
 from backend.app.core.rate_limit import RateLimiter
@@ -210,6 +213,7 @@ async def get_auth_config(
         # If an admin appears (e.g. via CLI) we must immediately exit bootstrap
         # mode without requiring a backend restart.
         request.app.state.bootstrap_token_hash = None
+        remove_bootstrap_token_file()
         needs_bootstrap = False
     elif has_admin is False:
         needs_bootstrap = True
@@ -301,6 +305,7 @@ async def bootstrap_admin(
     )
     if existing_admin is not None:
         request.app.state.bootstrap_token_hash = None
+        remove_bootstrap_token_file()
         raise ApiError(409, "ADMIN_ALREADY_EXISTS", "An admin user already exists.")
 
     # Create the bootstrap admin as the singleton OWNER (Phase 30.1).
@@ -347,6 +352,7 @@ async def bootstrap_admin(
 
     # Consume the bootstrap token — no further bootstrap calls are accepted.
     request.app.state.bootstrap_token_hash = None
+    remove_bootstrap_token_file()
     logger.info("Bootstrap admin created: %s", user.email)
 
     _set_auth_cookies(
