@@ -8,11 +8,11 @@ Key resolution (CRIT-03):
 2. Otherwise fall back to the historical domain-prefixed-jwt_secret
    derivation so already-encrypted client_secret values stay readable.
 
-Existing deployments cut over by setting
-``auth.oidc_encryption_secret`` AND running the re-encryption migration
-(lands in a follow-up commit). Domain prefix is preserved on the
-fallback path so the LLM and OIDC fallbacks still produce different
-keys for the same ``jwt_secret``.
+Existing deployments cut over by setting ``auth.oidc_encryption_secret``
+AND running ``cograph-backend reencrypt-secrets`` (CRIT-03 phase 2 —
+see ``backend/app/admin/secret_reencryption.py``). Domain prefix is
+preserved on the fallback path so the LLM and OIDC fallbacks still
+produce different keys for the same ``jwt_secret``.
 """
 
 from __future__ import annotations

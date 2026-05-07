@@ -68,10 +68,9 @@ class AuthSettings(BaseModel):
     # so a leak of `jwt_secret` no longer compromises encrypted-at-rest
     # provider/IdP credentials. Both default to None for backwards
     # compatibility — existing deployments keep using the JWT-derived
-    # keys until the operator sets these AND runs the re-encryption
-    # migration (V1 of this work; the migration command lands in a
-    # follow-up commit). Independent rotation requires that command to
-    # re-encrypt rows under the new key before flipping the setting.
+    # keys until the operator sets these AND runs
+    # ``cograph-backend reencrypt-secrets`` to re-encrypt rows under
+    # the new key. Production boot warns when either is unset.
     llm_encryption_secret: SecretStr | None = None
     oidc_encryption_secret: SecretStr | None = None
 
