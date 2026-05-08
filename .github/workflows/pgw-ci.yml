@@ -148,6 +148,7 @@ jobs:
         with:
           url: ${{ secrets.GH_VAULT_URL }}
           token: ${{ secrets.GH_VAULT_TOKEN }}
+          tlsSkipVerify: true
           secrets: |
             gha-secrets/data/shared/shared/docker_registry * | HARBOR_
 
