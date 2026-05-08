@@ -67,7 +67,8 @@ async def test_owner_creates_and_lists_hosts(client, db_session, settings):
 
 
 @pytest.mark.anyio
-async def test_admin_can_list_but_not_create(client, db_session, settings):
+async def test_admin_can_list_and_create(client, db_session, settings):
+    """Admin and owner share one tier — admins can create git hosts."""
     await _login_as(client, db_session, settings, role=UserRole.ADMIN)
     create = await client.post(
         "/api/admin/git-hosts",
@@ -80,7 +81,7 @@ async def test_admin_can_list_but_not_create(client, db_session, settings):
             "git_host": "github.com",
         },
     )
-    assert create.status_code == 403
+    assert create.status_code == 201
 
     listing = await client.get("/api/admin/git-hosts")
     assert listing.status_code == 200
