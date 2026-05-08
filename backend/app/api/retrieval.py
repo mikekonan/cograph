@@ -13,24 +13,22 @@ from backend.app.core.deps import (
     get_db_session,
     get_settings_dep,
 )
-from backend.app.core.errors import ApiError
-from backend.app.core.repository_access import (
-    get_readable_repository,
-    get_readable_repository_by_slug,
-)
+from backend.app.core.repository_access import get_readable_repository
 from backend.app.llm.runtime_providers import build_runtime_providers
-from backend.app.models.enums import RepositoryStatus
 from backend.app.models.user import User
-from backend.app.rag.blended_search import BlendedSearchResponse, BlendedSearchService
 from backend.app.rag.context_builder import (
     ContextBuilder,
     RetrievalLayer,
     RetrievalResponse,
 )
 from backend.app.rag.hybrid import HybridRetriever
-from backend.app.rag.lexical import LexicalRetriever, SymbolLookup
 from backend.app.rag.runtime import build_hybrid_retriever
 from backend.app.rag.service import retrieve_composite
+from backend.app.rag.snippet import (
+    DEFAULT_SNIPPET_CHARS,
+    MAX_SNIPPET_CHARS,
+    MIN_SNIPPET_CHARS,
+)
 
 router = APIRouter(tags=["retrieval"])
 
@@ -46,6 +44,11 @@ class RetrievalRequest(BaseModel):
     repository_id: UUID | None = None
     stores: list[RetrievalLayer] | None = None
     top_k: int = Field(default=10, ge=1, le=100)
+    snippet_chars: int = Field(
+        default=DEFAULT_SNIPPET_CHARS,
+        ge=MIN_SNIPPET_CHARS,
+        le=MAX_SNIPPET_CHARS,
+    )
     as_of: datetime | None = None
     since: datetime | None = None
     until: datetime | None = None
@@ -76,19 +79,6 @@ class RetrievalRequest(BaseModel):
         return self
 
 
-class BlendedSearchRequest(BaseModel):
-    query: str = Field(min_length=1)
-    top_k: int = Field(default=10, ge=1, le=50)
-
-    @field_validator("query")
-    @classmethod
-    def _strip_query(cls, value: str) -> str:
-        stripped = value.strip()
-        if not stripped:
-            raise ValueError("query must not be blank")
-        return stripped
-
-
 async def get_query_embed_provider(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
@@ -106,27 +96,6 @@ def get_hybrid_retriever(request: Request) -> HybridRetriever:
 
 def get_context_builder() -> ContextBuilder:
     return ContextBuilder()
-
-
-def get_lexical_retriever() -> LexicalRetriever:
-    return LexicalRetriever()
-
-
-def get_symbol_lookup() -> SymbolLookup:
-    return SymbolLookup()
-
-
-def get_blended_search_service(
-    settings: Settings = Depends(get_settings_dep),
-    lexical: LexicalRetriever = Depends(get_lexical_retriever),
-    symbol: SymbolLookup = Depends(get_symbol_lookup),
-) -> BlendedSearchService:
-    return BlendedSearchService(
-        lexical=lexical,
-        symbol=symbol,
-        rrf_k=settings.retrieval.rrf_k,
-        candidate_cap=settings.retrieval.candidate_cap,
-    )
 
 
 @router.post("/retrieve", response_model=RetrievalResponse)
@@ -161,34 +130,5 @@ async def retrieve(
         embed_provider=embed_provider,
         retriever=retriever,
         context_builder=context_builder,
-    )
-
-
-@router.post("/repos/{host}/{owner}/{name}/search", response_model=BlendedSearchResponse)
-async def search_repository(
-    host: str,
-    owner: str,
-    name: str,
-    payload: BlendedSearchRequest,
-    session: AsyncSession = Depends(get_db_session),
-    settings: Settings = Depends(get_settings_dep),
-    current_user: User | None = Depends(get_current_user_optional),
-    search_service: BlendedSearchService = Depends(get_blended_search_service),
-) -> BlendedSearchResponse:
-    repository = await get_readable_repository_by_slug(
-        session=session,
-        host=host,
-        owner=owner,
-        name=name,
-        settings=settings,
-        current_user=current_user,
-    )
-    if repository.status is not RepositoryStatus.READY:
-        raise ApiError(409, "REPO_NOT_READY", "Repository is not ready yet")
-    return await search_service.search(
-        session,
-        repository_id=repository.id,
-        repo_slug_path=f"{repository.host}/{repository.owner}/{repository.name}",
-        query=payload.query,
-        top_k=payload.top_k,
+        snippet_chars=payload.snippet_chars,
     )

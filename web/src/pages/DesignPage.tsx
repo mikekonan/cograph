@@ -187,16 +187,16 @@ async def embed_batch(items: list[str], embedder: Embedder) -> list[list[float]]
     return await asyncio.gather(*(embedder.embed(s) for s in items))
 `;
 
-const tsSample = `import type { RetrieveResponse } from "@/api/types";
+const tsSample = `import type { RetrievalResponse } from "@/api/types";
 
-export async function searchRepo(
-  repoSlug: string,
+export async function retrieve(
+  repositoryId: string,
   query: string,
   signal?: AbortSignal,
-): Promise<RetrieveResponse> {
-  const res = await fetch(\`/api/repos/\${repoSlug}/search\`, {
+): Promise<RetrievalResponse> {
+  const res = await fetch("/api/retrieve", {
     method: "POST",
-    body: JSON.stringify({ query }),
+    body: JSON.stringify({ query, repository_id: repositoryId }),
     signal,
   });
   return res.json();
