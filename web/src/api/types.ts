@@ -218,6 +218,7 @@ export type RetrieveRequest = {
   repository_id?: UUID;
   stores?: RetrievalLayer[];
   top_k?: number;
+  snippet_chars?: number;
   as_of?: ISODateTime;
   since?: ISODateTime;
   until?: ISODateTime;
@@ -257,6 +258,7 @@ export type RetrievalResult = {
   layer: RetrievalLayer;
   score?: number | null;
   snippet: string;
+  content_truncated: boolean;
   provenance: RetrievalProvenance;
   metadata: RetrievalMetadata;
   related_repo_doc_chunks: LinkedRepoDocumentChunk[];
@@ -290,6 +292,8 @@ export type RetrievalGraphNode = {
 export type RetrieveResponse = {
   results: RetrievalResult[];
   nodes: Record<string, RetrievalGraphNode>;
+  total_tokens_estimate: number;
+  mode: string | null;
 };
 
 // --- sync jobs (repository pipeline + optional Confluence flow) ------------
