@@ -158,8 +158,7 @@ def _resolve_initial_role(
 ) -> UserRole:
     """Decide the role for a freshly auto-provisioned user.
 
-    Owner role is NEVER assigned via OIDC — only transferred via the
-    explicit `transfer-owner` endpoint (Phase 30.1).
+    OWNER is a bootstrap-only label and is never assigned via OIDC.
     """
     if provider.admin_group_mode != "owner_delegated":
         return UserRole.USER
