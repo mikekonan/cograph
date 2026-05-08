@@ -67,9 +67,16 @@ export const usersHandlers = [
 
     const payload = (await request.json()) as UpdateUserPayload;
 
-    if (user.is_owner && payload.role && payload.role !== "owner") {
+    // OWNER label is bootstrap-only — transitions to/from owner are rejected.
+    if (
+      payload.role &&
+      ((user.role === "owner" && payload.role !== "owner") || payload.role === "owner")
+    ) {
       return HttpResponse.json(
-        err("OWNER_PROTECTED", "The owner cannot be demoted from administrator."),
+        err(
+          "OWNER_LABEL_LOCKED",
+          "Owner role is set at instance bootstrap and cannot be changed via API.",
+        ),
         { status: 409 },
       );
     }
@@ -97,10 +104,15 @@ export const usersHandlers = [
       return HttpResponse.json(err("NOT_FOUND", "User not found"), { status: 404 });
     }
     const user = mockDb.users[idx]!;
-    if (user.is_owner) {
-      return HttpResponse.json(err("OWNER_PROTECTED", "The owner cannot be deleted."), {
-        status: 409,
-      });
+    // Last-admin protection: refuse to delete the only remaining active admin/owner.
+    const otherActiveAdmins = mockDb.users.filter(
+      (u) => u.id !== user.id && (u.role === "owner" || u.role === "admin") && u.is_active,
+    ).length;
+    if ((user.role === "owner" || user.role === "admin") && otherActiveAdmins === 0) {
+      return HttpResponse.json(
+        err("LAST_ADMIN_PROTECTED", "Cannot delete the last administrator."),
+        { status: 409 },
+      );
     }
     if (user.id === currentUserId()) {
       return HttpResponse.json(
