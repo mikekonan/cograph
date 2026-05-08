@@ -33,9 +33,9 @@ import { useMemo, useState } from "react";
 
 /**
  * AdminUsersPage — `/admin/users`. Manage the user list (create, edit role,
- * reset password, delete). Owner-row protections mirror the backend:
- * cannot demote, cannot delete. Self-row protections too: an admin cannot
- * demote or delete themselves.
+ * reset password, delete). OWNER is a label set at bootstrap; OWNER and
+ * ADMIN share one privilege tier, so role transitions to/from owner are
+ * locked but disable/delete is gated only by last-admin protection.
  */
 export default function AdminUsersPage() {
   const { user: currentUser } = useAuth();
@@ -58,8 +58,9 @@ export default function AdminUsersPage() {
             <Users className="h-5 w-5" aria-hidden="true" /> Users
           </h2>
           <p className="max-w-3xl text-sm text-[color:var(--color-fg-muted)]">
-            Create, promote, and deactivate accounts. The owner — the first admin you bootstrapped —
-            can never be demoted or deleted.
+            Create, promote, and deactivate accounts. The owner label is set at bootstrap and cannot
+            be reassigned through the UI; otherwise admins and the owner share full access. Deleting
+            the last administrator is rejected to keep the instance reachable.
           </p>
         </div>
         <Button onClick={() => setCreateOpen(true)}>
@@ -120,6 +121,10 @@ function UsersTable({
     );
   }
 
+  const activeAdminsCount = users.filter(
+    (u) => (u.role === "owner" || u.role === "admin") && u.is_active,
+  ).length;
+
   return (
     <section
       className={cn(
@@ -140,7 +145,13 @@ function UsersTable({
         <tbody>
           {users.map((user) => {
             const isSelf = user.id === currentUserId;
-            const protectedRow = user.is_owner;
+            const isLastAdmin =
+              (user.role === "owner" || user.role === "admin") &&
+              user.is_active &&
+              activeAdminsCount <= 1;
+            // Hide delete for the last active admin/owner (would brick the instance)
+            // and for self (server rejects). OWNER label has no extra protection.
+            const protectedRow = isLastAdmin;
             return (
               <tr
                 key={user.id}
@@ -407,6 +418,7 @@ function EditUserDialog({
 
   if (!user) return null;
   const isSelf = user.id === currentUserId;
+  // OWNER label is bootstrap-only — backend rejects role transitions to/from owner.
   const ownerLocked = user.is_owner;
   const cannotChangeRole = ownerLocked || isSelf;
 
@@ -441,7 +453,7 @@ function EditUserDialog({
           <DialogTitle>Edit {user.email}</DialogTitle>
           <DialogDescription>
             {ownerLocked
-              ? "Owners cannot be demoted. You can still rename them or reset their password."
+              ? "The owner label is set at bootstrap and cannot be changed. You can still rename them or reset their password."
               : isSelf
                 ? "You cannot demote your own account. Ask another admin if you need this."
                 : "Change role, rename, or reset password."}
