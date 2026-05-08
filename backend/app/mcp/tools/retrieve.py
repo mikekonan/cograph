@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from mcp.server.fastmcp import Context, FastMCP
@@ -12,13 +13,44 @@ from backend.app.mcp.services import (
     retrieve_payload,
 )
 from backend.app.rag.context_builder import RetrievalLayer
+from backend.app.rag.snippet import (
+    DEFAULT_SNIPPET_CHARS,
+    MAX_SNIPPET_CHARS,
+    MIN_SNIPPET_CHARS,
+)
+
+RetrieveMode = Literal["code", "wiki", "mixed"]
+
+_MODE_TO_LAYERS: dict[RetrieveMode, set[RetrievalLayer]] = {
+    "code": {RetrievalLayer.CODE, RetrievalLayer.AST, RetrievalLayer.AST_SUMMARY},
+    "wiki": {RetrievalLayer.REPO_DOC},
+    "mixed": set(RetrievalLayer),
+}
+
+_RETRIEVE_DESCRIPTION = (
+    "Hybrid search across code, AST summaries, and repo docs. "
+    "Returns query-anchored excerpts with citations and a "
+    "`total_tokens_estimate` so the agent can self-budget.\n"
+    "Use when: the user asks a natural-language question and needs "
+    "file-anchored snippets back. Pick mode='code' for "
+    "'where is X implemented', mode='wiki' for 'what is the auth flow about', "
+    "mode='mixed' only when the target is unclear.\n"
+    "Do NOT use for symbol-exact lookups (use cograph.search_code) or "
+    "to read a known node fully (use cograph.read_node)."
+)
 
 
 class RetrieveToolArgs(BaseModel):
     query: str = Field(min_length=1)
     repository: str | None = None
+    mode: RetrieveMode = "mixed"
     stores: list[RetrievalLayer] | None = None
     top_k: int = Field(default=10, ge=1, le=100)
+    snippet_chars: int = Field(
+        default=DEFAULT_SNIPPET_CHARS,
+        ge=MIN_SNIPPET_CHARS,
+        le=MAX_SNIPPET_CHARS,
+    )
     as_of: datetime | None = None
     since: datetime | None = None
     until: datetime | None = None
@@ -42,22 +74,25 @@ class RetrieveToolArgs(BaseModel):
             raise ValueError("since must be earlier than or equal to as_of")
         return self
 
+    def resolved_layers(self) -> set[RetrievalLayer]:
+        # Explicit `stores=` wins over `mode=` so power users keep precise control.
+        if self.stores:
+            return set(self.stores)
+        return set(_MODE_TO_LAYERS[self.mode])
+
 
 def register(server: FastMCP, services: MCPServices) -> None:
     @server.tool(
         name="cograph.retrieve",
-        description=(
-            "Hybrid retrieval across code, AST summaries, and repo docs. "
-            "The optional `repository` argument is the compound slug "
-            "'host/owner/name', e.g. 'github.com/mikekonan/cograph'; omit it "
-            "to search across every readable repository."
-        ),
+        description=_RETRIEVE_DESCRIPTION,
     )
     async def retrieve(
         query: str,
         repository: str | None = None,
+        mode: RetrieveMode = "mixed",
         stores: list[RetrievalLayer] | None = None,
         top_k: int = 10,
+        snippet_chars: int = DEFAULT_SNIPPET_CHARS,
         as_of: datetime | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
@@ -69,8 +104,10 @@ def register(server: FastMCP, services: MCPServices) -> None:
         args = RetrieveToolArgs(
             query=query,
             repository=repository,
+            mode=mode,
             stores=stores,
             top_k=top_k,
+            snippet_chars=snippet_chars,
             as_of=as_of,
             since=since,
             until=until,
@@ -93,7 +130,7 @@ def register(server: FastMCP, services: MCPServices) -> None:
             services=services,
             query=args.query,
             repository_id=repository_id,
-            requested_layers=set(args.stores) if args.stores else set(RetrievalLayer),
+            requested_layers=args.resolved_layers(),
             top_k=args.top_k,
             as_of=args.as_of,
             since=args.since,
@@ -102,5 +139,7 @@ def register(server: FastMCP, services: MCPServices) -> None:
             include_graph=args.include_graph,
             include_scores=args.include_scores,
             current_user=current_user,
+            snippet_chars=args.snippet_chars,
+            mode=args.mode,
         )
         return encode_payload(response)
