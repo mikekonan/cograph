@@ -15,6 +15,7 @@ const FASTAPI_SEARCH: RetrieveResponse = {
       metadata: {
         candidate_from: ["vector", "lexical", "symbol"],
       },
+      content_truncated: false,
       related_repo_doc_chunks: [
         {
           chunk_id: "doc-fastapi-1",
@@ -39,6 +40,7 @@ const FASTAPI_SEARCH: RetrieveResponse = {
       metadata: {
         candidate_from: ["vector", "lexical", "symbol"],
       },
+      content_truncated: false,
       related_repo_doc_chunks: [],
     },
     {
@@ -54,6 +56,7 @@ const FASTAPI_SEARCH: RetrieveResponse = {
       metadata: {
         candidate_from: ["vector", "lexical", "symbol", "graph"],
       },
+      content_truncated: false,
       related_repo_doc_chunks: [],
     },
     {
@@ -67,6 +70,7 @@ const FASTAPI_SEARCH: RetrieveResponse = {
       metadata: {
         candidate_from: ["lexical"],
       },
+      content_truncated: false,
       related_repo_doc_chunks: [],
     },
   ],
@@ -106,6 +110,8 @@ const FASTAPI_SEARCH: RetrieveResponse = {
       parent: null,
     },
   },
+  total_tokens_estimate: 60,
+  mode: null,
 };
 
 const TAILWIND_SEARCH: RetrieveResponse = {
@@ -124,6 +130,7 @@ const TAILWIND_SEARCH: RetrieveResponse = {
       metadata: {
         candidate_from: ["vector", "lexical"],
       },
+      content_truncated: false,
       related_repo_doc_chunks: [],
     },
     {
@@ -138,6 +145,7 @@ const TAILWIND_SEARCH: RetrieveResponse = {
       metadata: {
         candidate_from: ["vector"],
       },
+      content_truncated: false,
       related_repo_doc_chunks: [],
     },
   ],
@@ -157,6 +165,8 @@ const TAILWIND_SEARCH: RetrieveResponse = {
       parent: null,
     },
   },
+  total_tokens_estimate: 40,
+  mode: null,
 };
 
 export const retrieveFixtures: Record<string, Record<string, RetrieveResponse>> = {
