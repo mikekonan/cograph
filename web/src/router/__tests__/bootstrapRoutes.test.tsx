@@ -1,11 +1,16 @@
 import { AuthContext, AuthProvider } from "@/contexts/AuthContext";
 import { LoginRoute, SetupRoute } from "@/router/router";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { type ReactNode, useState } from "react";
 import { RouterProvider, createMemoryRouter } from "react-router";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+
+function makeQueryClient() {
+  return new QueryClient({ defaultOptions: { queries: { retry: false } } });
+}
 
 const server = setupServer(
   http.get("/api/auth/config", () =>
@@ -94,9 +99,11 @@ describe("Router bootstrap routes (issue #8)", () => {
     );
 
     render(
-      <AuthProvider>
-        <RouterProvider router={router} />
-      </AuthProvider>,
+      <QueryClientProvider client={makeQueryClient()}>
+        <AuthProvider>
+          <RouterProvider router={router} />
+        </AuthProvider>
+      </QueryClientProvider>,
     );
 
     await screen.findByRole("heading", { name: "Log in" });
@@ -113,9 +120,11 @@ describe("Router bootstrap routes (issue #8)", () => {
     );
 
     render(
-      <AuthProvider>
-        <RouterProvider router={router} />
-      </AuthProvider>,
+      <QueryClientProvider client={makeQueryClient()}>
+        <AuthProvider>
+          <RouterProvider router={router} />
+        </AuthProvider>
+      </QueryClientProvider>,
     );
 
     await screen.findByRole("heading", { name: "Log in" });
@@ -146,9 +155,11 @@ describe("Router bootstrap routes (issue #8)", () => {
     );
 
     render(
-      <AuthProvider>
-        <RouterProvider router={router} />
-      </AuthProvider>,
+      <QueryClientProvider client={makeQueryClient()}>
+        <AuthProvider>
+          <RouterProvider router={router} />
+        </AuthProvider>
+      </QueryClientProvider>,
     );
 
     await screen.findByRole("heading", { name: "Log in" });
