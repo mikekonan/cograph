@@ -261,6 +261,11 @@ async def test_retrieve_returns_composite_results_and_graph_context(app, client,
         "ast_summary",
         "repo_doc",
     ]
+    assert payload["mode"] is None
+    assert payload["total_tokens_estimate"] > 0
+    for item in payload["results"]:
+        assert item["snippet"]
+        assert item["content_truncated"] is False
     assert payload["results"][0]["related_repo_doc_chunks"][0]["file_path"] == "docs/errors.md"
     assert payload["results"][0]["provenance"]["first_seen_commit"] == "1111111111111111111111111111111111111111"
     assert payload["results"][0]["provenance"]["last_changed_commit"] == "2222222222222222222222222222222222222222"
