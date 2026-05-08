@@ -98,16 +98,16 @@ Twelve tools (target). Status flags mark migration progress.
 |------|--------|---------|----------|
 | `cograph.repositories` | ✅ | List of readable repos | Inventory / target a repo by slug |
 | `cograph.collections` | ✅ | List of markdown collections | Inventory / target a collection by id |
-| `cograph.repository_readme(slug)` | 🔧 | `{content, source_path, content_truncated, …}` | One-shot "what is repo X about" |
-| `cograph.outline(slug? \| collection_id?)` | 🔧 | Token-cheap structure preview | Bootstrap context before any heavy search |
-| `cograph.retrieve(query, mode)` | 🔧 | Hybrid-search results envelope | Natural-language question; `mode=code\|wiki\|mixed` |
+| `cograph.repository_readme(slug)` | ✅ | `{content, source_path, content_truncated, …}` | One-shot "what is repo X about" |
+| `cograph.outline(slug? \| collection_id?)` | ✅ | Token-cheap structure preview | Bootstrap context before any heavy search |
+| `cograph.retrieve(query, mode)` | ✅ | Hybrid-search results envelope | Natural-language question; `mode=code\|wiki\|mixed` |
 | `cograph.search_code(query)` | ✅ | Symbol names + line ranges (no body) | Probable symbol name; symbol-exact lookup |
-| `cograph.read_node(node_id)` | 🔧 | Full node body + optional graph | Read a known code node fully |
+| `cograph.read_node(node_id)` | ✅ | Full node body + optional graph | Read a known code node fully |
 | `cograph.related(node_id)` | ✅ | Graph neighbours of a node | Trace callers/callees from a known node |
 | `cograph.collection_document(...)` | ✅ | Doc metadata + chunk list | Navigate a markdown collection |
 | `cograph.collection_search(query, ...)` | 🔧 | Excerpt envelope (md_chunk layer) | Search inside a collection |
 | `cograph.read_chunk(collection_id, chunk_id)` | 🔧 | Full chunk body | After `collection_search`, when truncated |
-| `cograph.read_file_range(slug, path, start, end)` | 🔧 | File range body | Read lines `[start, end]` of a file (≤ 1000 lines) |
+| `cograph.read_file_range(slug, path, start, end)` | ✅ | File range body | Read lines `[start, end]` of a file (≤ 1000 lines) |
 | ~~`cograph.search`~~ | 🚫 | — | Replaced by `cograph.retrieve(mode=…)` |
 | ~~`cograph.node`~~ | 🚫 | — | Renamed to `cograph.read_node` |
 
