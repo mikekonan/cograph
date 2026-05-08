@@ -32,7 +32,6 @@ from backend.app.core.deps import (
     get_db_session,
     require_admin_or_owner,
     require_csrf,
-    require_owner,
 )
 from backend.app.core.errors import ApiError, FieldError
 from backend.app.llm.completion import _uses_max_completion_tokens
@@ -258,7 +257,7 @@ async def upsert_assignment(
     role: str,
     payload: AssignmentRequest,
     session: AsyncSession = Depends(get_db_session),
-    owner: User = Depends(require_owner),
+    owner: User = Depends(require_admin_or_owner),
     _csrf: User = Depends(require_csrf),
 ) -> AssignmentView:
     del _csrf
@@ -304,7 +303,7 @@ async def upsert_assignment(
 async def clear_assignment(
     role: str,
     session: AsyncSession = Depends(get_db_session),
-    owner: User = Depends(require_owner),
+    owner: User = Depends(require_admin_or_owner),
     _csrf: User = Depends(require_csrf),
 ) -> Response:
     del _csrf
@@ -375,7 +374,7 @@ async def get_embedding_status(
 )
 async def trigger_reembed(
     session: AsyncSession = Depends(get_db_session),
-    owner: User = Depends(require_owner),
+    owner: User = Depends(require_admin_or_owner),
     _csrf: User = Depends(require_csrf),
 ) -> ReembedAcceptedResponse:
     del _csrf
@@ -423,7 +422,7 @@ async def test_assignment(
     payload: AssignmentTestRequest,
     request: Request,
     session: AsyncSession = Depends(get_db_session),
-    owner: User = Depends(require_owner),
+    owner: User = Depends(require_admin_or_owner),
     _csrf: User = Depends(require_csrf),
 ) -> AssignmentTestResponse:
     """Probe (secret + model) without saving — owner only.

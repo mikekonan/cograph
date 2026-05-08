@@ -28,7 +28,6 @@ from backend.app.core.deps import (
     get_db_session,
     require_admin_or_owner,
     require_csrf,
-    require_owner,
 )
 from backend.app.models.llm_secret import LLMSecret
 from backend.app.models.user import User
@@ -107,7 +106,7 @@ async def create_secret(
     payload: SecretUpsertRequest,
     session: AsyncSession = Depends(get_db_session),
     secret_service: AdminSecretService = Depends(get_secret_service),
-    owner: User = Depends(require_owner),
+    owner: User = Depends(require_admin_or_owner),
     _csrf: User = Depends(require_csrf),
 ) -> LLMSecretResponse:
     del _csrf
@@ -123,7 +122,7 @@ async def update_secret(
     payload: SecretUpsertRequest,
     session: AsyncSession = Depends(get_db_session),
     secret_service: AdminSecretService = Depends(get_secret_service),
-    owner: User = Depends(require_owner),
+    owner: User = Depends(require_admin_or_owner),
     _csrf: User = Depends(require_csrf),
 ) -> LLMSecretResponse:
     del _csrf
@@ -138,7 +137,7 @@ async def delete_secret(
     secret_id: UUID,
     session: AsyncSession = Depends(get_db_session),
     secret_service: AdminSecretService = Depends(get_secret_service),
-    owner: User = Depends(require_owner),
+    owner: User = Depends(require_admin_or_owner),
     _csrf: User = Depends(require_csrf),
 ) -> Response:
     del _csrf, owner
@@ -151,7 +150,7 @@ async def test_secret(
     secret_id: UUID,
     session: AsyncSession = Depends(get_db_session),
     secret_service: AdminSecretService = Depends(get_secret_service),
-    owner: User = Depends(require_owner),
+    owner: User = Depends(require_admin_or_owner),
     _csrf: User = Depends(require_csrf),
 ) -> SecretTestResponse:
     del _csrf, owner
