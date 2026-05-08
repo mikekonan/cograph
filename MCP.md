@@ -105,8 +105,8 @@ Twelve tools (target). Status flags mark migration progress.
 | `cograph.read_node(node_id)` | ✅ | Full node body + optional graph | Read a known code node fully |
 | `cograph.related(node_id)` | ✅ | Graph neighbours of a node | Trace callers/callees from a known node |
 | `cograph.collection_document(...)` | ✅ | Doc metadata + chunk list | Navigate a markdown collection |
-| `cograph.collection_search(query, ...)` | 🔧 | Excerpt envelope (md_chunk layer) | Search inside a collection |
-| `cograph.read_chunk(collection_id, chunk_id)` | 🔧 | Full chunk body | After `collection_search`, when truncated |
+| `cograph.collection_search(query, ...)` | ✅ | Excerpt envelope (md_chunk layer) | Search inside a collection |
+| `cograph.read_chunk(collection_id, chunk_id)` | ✅ | Full chunk body | After `collection_search`, when truncated |
 | `cograph.read_file_range(slug, path, start, end)` | ✅ | File range body | Read lines `[start, end]` of a file (≤ 1000 lines) |
 | ~~`cograph.search`~~ | 🚫 | — | Replaced by `cograph.retrieve(mode=…)` |
 | ~~`cograph.node`~~ | 🚫 | — | Renamed to `cograph.read_node` |
