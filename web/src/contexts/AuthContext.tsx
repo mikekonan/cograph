@@ -1,4 +1,5 @@
 import { apiFetch, apiJson } from "@/api/client";
+import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, createContext, useCallback, useEffect, useMemo, useState } from "react";
 
 export type UserRole = "owner" | "admin" | "user";
@@ -61,6 +62,7 @@ type AuthContextValue = {
 export const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
   const [status, setStatus] = useState<AuthStatus>("loading");
   const [user, setUserState] = useState<User | null>(null);
   const [config, setConfig] = useState<AuthConfig | null>(null);
@@ -113,11 +115,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const setUser = useCallback((u: User) => {
-    setUserState(u);
-    setStatus("authenticated");
-    setConfig((prev) => (prev ? { ...prev, needs_bootstrap: false } : prev));
-  }, []);
+  const setUser = useCallback(
+    (u: User) => {
+      setUserState(u);
+      setStatus("authenticated");
+      setConfig((prev) => (prev ? { ...prev, needs_bootstrap: false } : prev));
+      // Anonymous-time queries (e.g. /api/repos returning [] under public_read=false)
+      // become stale the moment we authenticate; force a refetch on next render so
+      // the UI reflects the now-authorized scope without requiring a manual reload.
+      queryClient.invalidateQueries();
+    },
+    [queryClient],
+  );
 
   const login = useCallback(
     async (email: string, password: string) => {
@@ -147,12 +156,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setUserState(null);
     setStatus("anonymous");
-  }, []);
+    queryClient.clear();
+  }, [queryClient]);
 
   const clear = useCallback(() => {
     setUserState(null);
     setStatus("anonymous");
-  }, []);
+    queryClient.clear();
+  }, [queryClient]);
 
   const needsBootstrap = config?.needs_bootstrap === true;
 
