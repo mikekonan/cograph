@@ -1,0 +1,362 @@
+# Cograph MCP eval question set v1
+#
+# Each question targets a category of agent behaviour we want to measure.
+# The question is asked verbatim. The agent (Claude) must answer using
+# only the Cograph MCP server — no filesystem grep, no web search.
+#
+# Fields:
+#   id                       Stable slug; used as the JSONL record id.
+#   category                 Bucket for category-level aggregation.
+#   question                 Verbatim user turn.
+#   expected_answer_keywords List of strings that should appear in the answer
+#                            (case-insensitive). Used for the deterministic
+#                            correctness scorer in score.py:
+#                              - all present  -> "correct"
+#                              - >=50% present -> "partial"
+#                              - <50% present -> "incorrect"
+#   expected_provenance      List of citation patterns (file_path/wiki_slug
+#                            substrings). Answer must mention at least one
+#                            for the cites_provenance check to pass.
+#   max_tool_calls_target    Soft target for H1; the harness records actual
+#                            count regardless and the comparator uses median.
+#   negative                 If true, the "correct" answer is a graceful
+#                            "I don't have enough information". Catches H5
+#                            (truncation) and H6 (silent fallback).
+#
+# Repos assumed indexed in the test instance:
+#   - github.com/mikekonan/cograph              (this repo)
+#   - github.com/samber/lo                      (small Go lib)
+#   - github.com/samber/mo                      (small Go lib)
+#   - github.com/mikekonan/go-oas3              (Go codegen)
+#
+# Plus one md_collection: "cograph-design-notes" (a small set of curated
+# md docs uploaded for the eval — see eval/README.md for setup).
+
+questions:
+  # --- Category: repo_overview (6 questions) ---
+  - id: repo-overview-cograph
+    category: repo_overview
+    question: "What is the cograph project about? Keep the answer to 3 sentences."
+    expected_answer_keywords: ["self-hosted", "git repos", "RAG", "MCP"]
+    expected_provenance: ["README.md", "wiki/overview"]
+    max_tool_calls_target: 1
+    negative: false
+
+  - id: repo-overview-samber-lo
+    category: repo_overview
+    question: "What does samber/lo do? One paragraph."
+    expected_answer_keywords: ["lodash", "Go", "generics", "utility"]
+    expected_provenance: ["README.md", "wiki/overview"]
+    max_tool_calls_target: 1
+    negative: false
+
+  - id: repo-overview-samber-mo
+    category: repo_overview
+    question: "What is samber/mo and how does it differ from samber/lo?"
+    expected_answer_keywords: ["monad", "Option", "Result", "Either"]
+    expected_provenance: ["README.md"]
+    max_tool_calls_target: 2
+    negative: false
+
+  - id: repo-overview-go-oas3
+    category: repo_overview
+    question: "What is mikekonan/go-oas3 used for?"
+    expected_answer_keywords: ["OpenAPI", "Go", "codegen"]
+    expected_provenance: ["README.md"]
+    max_tool_calls_target: 1
+    negative: false
+
+  - id: repo-overview-readme-fallback
+    category: repo_overview
+    question: "Get me the README for cograph verbatim — I want the content, not a summary."
+    expected_answer_keywords: ["Cograph"]
+    expected_provenance: ["README.md"]
+    max_tool_calls_target: 1
+    negative: false
+
+  - id: repo-overview-list-available
+    category: repo_overview
+    question: "Which repositories are indexed and readable?"
+    expected_answer_keywords: ["cograph", "samber/lo", "samber/mo", "go-oas3"]
+    expected_provenance: []
+    max_tool_calls_target: 1
+    negative: false
+
+  # --- Category: symbol_lookup (6 questions) ---
+  - id: symbol-mdjobtracker
+    category: symbol_lookup
+    question: "Where is the class MdJobTracker defined in cograph?"
+    expected_answer_keywords: ["md_rag/job_tracker", "class"]
+    expected_provenance: ["md_rag/job_tracker.py", "job_tracker.py:"]
+    max_tool_calls_target: 1
+    negative: false
+
+  - id: symbol-apply-repo-read-scope
+    category: symbol_lookup
+    question: "Where is apply_repository_read_scope defined and what does it do?"
+    expected_answer_keywords: ["repository_access", "read scope", "anonymous"]
+    expected_provenance: ["repository_access.py", "core/"]
+    max_tool_calls_target: 2
+    negative: false
+
+  - id: symbol-require-actor-csrf
+    category: symbol_lookup
+    question: "Find the require_actor_csrf dependency in cograph and explain when it accepts a PAT."
+    expected_answer_keywords: ["api:write", "PAT", "CSRF", "cookie"]
+    expected_provenance: ["deps.py", "core/"]
+    max_tool_calls_target: 2
+    negative: false
+
+  - id: symbol-secret-cipher
+    category: symbol_lookup
+    question: "Where is the SecretCipher class and what algorithm does it use?"
+    expected_answer_keywords: ["Fernet", "AES", "secret_service"]
+    expected_provenance: ["secret_service.py", "admin/"]
+    max_tool_calls_target: 1
+    negative: false
+
+  - id: symbol-samber-lo-map
+    category: symbol_lookup
+    question: "Find the Map function in samber/lo. What's its signature?"
+    expected_answer_keywords: ["Map", "func", "T", "R"]
+    expected_provenance: ["slice.go", "lo/"]
+    max_tool_calls_target: 1
+    negative: false
+
+  - id: symbol-nonexistent
+    category: symbol_lookup
+    question: "Find the QuantumFluxCapacitor class in cograph."
+    expected_answer_keywords: ["not found", "no such", "doesn't exist", "could not find"]
+    expected_provenance: []
+    max_tool_calls_target: 2
+    negative: true
+
+  # --- Category: feature_flow (6 questions) ---
+  - id: flow-auth-cograph
+    category: feature_flow
+    question: "How does authentication work in cograph? Walk me through the request flow for a logged-in user."
+    expected_answer_keywords: ["JWT", "cookie", "CSRF", "/api/auth/me"]
+    expected_provenance: ["AUTH.md", "auth/", "deps.py"]
+    max_tool_calls_target: 3
+    negative: false
+
+  - id: flow-md-upload
+    category: feature_flow
+    question: "Trace the markdown upload pipeline from the HTTP endpoint to the embed job."
+    expected_answer_keywords: ["md_collections", "documents/batch", "arq", "embed_md_collection"]
+    expected_provenance: ["md_collections.py", "pipeline/worker.py"]
+    max_tool_calls_target: 3
+    negative: false
+
+  - id: flow-rag-hybrid
+    category: feature_flow
+    question: "How does cograph fuse BM25 and vector results? Name the algorithm and the key parameter."
+    expected_answer_keywords: ["RRF", "Reciprocal Rank Fusion", "rrf_k"]
+    expected_provenance: ["RAG.md", "hybrid.py"]
+    max_tool_calls_target: 2
+    negative: false
+
+  - id: flow-mcp-pat
+    category: feature_flow
+    question: "What scopes does an MCP PAT need and where is the scope check enforced?"
+    expected_answer_keywords: ["mcp", "api:read", "INSUFFICIENT_SCOPE"]
+    expected_provenance: ["mcp/auth", "deps.py"]
+    max_tool_calls_target: 2
+    negative: false
+
+  - id: flow-stale-jobs
+    category: feature_flow
+    question: "How does cograph recover md_jobs that got stuck in the running state across a worker restart?"
+    expected_answer_keywords: ["worker_startup", "stale", "queued"]
+    expected_provenance: ["pipeline/worker.py"]
+    max_tool_calls_target: 2
+    negative: false
+
+  - id: flow-oidc
+    category: feature_flow
+    question: "How is the OIDC client_secret encrypted at rest in cograph?"
+    expected_answer_keywords: ["Fernet", "oidc_encryption_secret", "domain"]
+    expected_provenance: ["oidc_cipher.py", "AUTH.md"]
+    max_tool_calls_target: 2
+    negative: false
+
+  # --- Category: wiki_grounded (5 questions) ---
+  - id: wiki-retrieval-overview
+    category: wiki_grounded
+    question: "What does the cograph wiki say about retrieval layers?"
+    expected_answer_keywords: ["BM25", "vector", "RRF", "rerank"]
+    expected_provenance: ["wiki/", "RAG"]
+    max_tool_calls_target: 2
+    negative: false
+
+  - id: wiki-mcp-tools
+    category: wiki_grounded
+    question: "What MCP tools does the wiki document for cograph?"
+    expected_answer_keywords: ["cograph.retrieve", "cograph.repositories"]
+    expected_provenance: ["wiki/", "MCP"]
+    max_tool_calls_target: 2
+    negative: false
+
+  - id: wiki-storage
+    category: wiki_grounded
+    question: "What tables hold markdown collection data? Give me the names."
+    expected_answer_keywords: ["md_collections", "md_documents", "md_chunks"]
+    expected_provenance: ["STORAGE", "wiki/"]
+    max_tool_calls_target: 2
+    negative: false
+
+  - id: wiki-design-tokens
+    category: wiki_grounded
+    question: "What design tokens does the cograph FE use? Just the categories."
+    expected_answer_keywords: ["color", "radius", "font"]
+    expected_provenance: ["DESIGN-TOKENS"]
+    max_tool_calls_target: 2
+    negative: false
+
+  - id: wiki-states
+    category: wiki_grounded
+    question: "What canonical UI states does cograph define for fetched content?"
+    expected_answer_keywords: ["loading", "empty", "error", "ok"]
+    expected_provenance: ["STATES"]
+    max_tool_calls_target: 2
+    negative: false
+
+  # --- Category: file_range (4 questions) ---
+  - id: range-config
+    category: file_range
+    question: "Show me lines 200-260 of cograph backend/app/config.py."
+    expected_answer_keywords: ["Settings", "model_config", "auth"]
+    expected_provenance: ["config.py:200", "config.py:260"]
+    max_tool_calls_target: 1
+    negative: false
+
+  - id: range-worker
+    category: file_range
+    question: "Show me lines 380-410 of cograph backend/app/pipeline/worker.py."
+    expected_answer_keywords: ["arq", "function", "max_tries"]
+    expected_provenance: ["worker.py:380", "worker.py:410"]
+    max_tool_calls_target: 1
+    negative: false
+
+  - id: range-deps
+    category: file_range
+    question: "Show me lines 280-320 of cograph backend/app/core/deps.py."
+    expected_answer_keywords: ["Depends", "actor", "PAT"]
+    expected_provenance: ["deps.py:280"]
+    max_tool_calls_target: 1
+    negative: false
+
+  - id: range-out-of-bounds
+    category: file_range
+    question: "Show me lines 99000-99100 of cograph backend/app/config.py."
+    expected_answer_keywords: ["only has", "ends at", "out of range", "no such"]
+    expected_provenance: []
+    max_tool_calls_target: 1
+    negative: true
+
+  # --- Category: collection_navigation (4 questions) ---
+  - id: collection-list
+    category: collection_navigation
+    question: "What markdown collections are available?"
+    expected_answer_keywords: ["cograph-design-notes"]
+    expected_provenance: []
+    max_tool_calls_target: 1
+    negative: false
+
+  - id: collection-outline
+    category: collection_navigation
+    question: "What's in the cograph-design-notes collection? Give me the heading structure."
+    expected_answer_keywords: ["heading", "section"]
+    expected_provenance: []
+    max_tool_calls_target: 1
+    negative: false
+
+  - id: collection-search
+    category: collection_navigation
+    question: "Find chunks about 'authentication' in the cograph-design-notes collection."
+    expected_answer_keywords: ["auth"]
+    expected_provenance: []
+    max_tool_calls_target: 1
+    negative: false
+
+  - id: collection-read-chunk
+    category: collection_navigation
+    question: "After finding the most relevant chunk about authentication in cograph-design-notes, give me its full content."
+    expected_answer_keywords: ["auth"]
+    expected_provenance: []
+    max_tool_calls_target: 2
+    negative: false
+
+  # --- Category: negative (4 questions — H5/H6 guardrails) ---
+  - id: negative-unknown-repo
+    category: negative
+    question: "What is the architecture of repo gitlab.com/internal/private-thing-not-indexed?"
+    expected_answer_keywords: ["not found", "not indexed", "no such", "don't have", "cannot find"]
+    expected_provenance: []
+    max_tool_calls_target: 2
+    negative: true
+
+  - id: negative-symbol-typo
+    category: negative
+    question: "Where is the FactoryOfFactoryFactory class in samber/lo?"
+    expected_answer_keywords: ["not found", "no such", "doesn't exist", "could not find"]
+    expected_provenance: []
+    max_tool_calls_target: 2
+    negative: true
+
+  - id: negative-internet-question
+    category: negative
+    question: "What is the GDP of Belarus in 2024?"
+    expected_answer_keywords: ["outside", "not indexed", "can't help", "not in cograph", "out of scope"]
+    expected_provenance: []
+    max_tool_calls_target: 1
+    negative: true
+
+  - id: negative-empty-collection-search
+    category: negative
+    question: "Find chunks about 'kubernetes operators' in the cograph-design-notes collection."
+    expected_answer_keywords: ["no", "nothing", "not found", "0 results"]
+    expected_provenance: []
+    max_tool_calls_target: 1
+    negative: true
+
+  # --- Category: composite (5 questions — multi-tool chains) ---
+  - id: composite-symbol-then-read
+    category: composite
+    question: "Find the MdJobTracker class in cograph and show me its full implementation."
+    expected_answer_keywords: ["class MdJobTracker", "create", "update_progress"]
+    expected_provenance: ["job_tracker.py"]
+    max_tool_calls_target: 2
+    negative: false
+
+  - id: composite-search-then-explain
+    category: composite
+    question: "Find where cograph handles the 'public_read' setting and explain its effect."
+    expected_answer_keywords: ["public_read", "anonymous", "auth"]
+    expected_provenance: ["AUTH", "config.py", "repository_access.py"]
+    max_tool_calls_target: 3
+    negative: false
+
+  - id: composite-callgraph
+    category: composite
+    question: "Who calls MdJobTracker.update_progress in cograph?"
+    expected_answer_keywords: ["pipeline", "embed", "upload"]
+    expected_provenance: ["pipeline/", "md_collections.py"]
+    max_tool_calls_target: 3
+    negative: false
+
+  - id: composite-trace-error
+    category: composite
+    question: "If a user gets BOOTSTRAP_TOKEN_INVALID, where is that error raised?"
+    expected_answer_keywords: ["bootstrap", "token", "auth"]
+    expected_provenance: ["auth/", "bootstrap"]
+    max_tool_calls_target: 3
+    negative: false
+
+  - id: composite-config-explain
+    category: composite
+    question: "What's the default value of rrf_k in cograph and where is it used?"
+    expected_answer_keywords: ["60", "RRF", "rrf_k"]
+    expected_provenance: ["config.py", "hybrid.py", "RAG"]
+    max_tool_calls_target: 2
+    negative: false
