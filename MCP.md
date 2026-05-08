@@ -155,7 +155,7 @@ question routed through `cograph.retrieve` typically takes 3-4.
 
 - `backend/app/rag/snippet.py` — `make_snippet` + `extract_query_terms`
   (the single excerpt builder used by every search-style tool).
-- `backend/app/mcp/tools/` — one file per tool (`retrieve.py`, `node.py`,
+- `backend/app/mcp/tools/` — one file per tool (`retrieve.py`, `read_node.py`,
   `repositories.py`, …). Tool descriptions follow the 3-line template:
   L1 summary, L2 "Use when…", L3 "Do NOT use…".
 - `backend/app/rag/hybrid.py` — fan-out vector + lexical + symbol → RRF
