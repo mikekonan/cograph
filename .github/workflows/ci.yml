@@ -275,10 +275,12 @@ jobs:
                   "cograph.collection_document",
                   "cograph.collection_search",
                   "cograph.retrieve",
-                  "cograph.node",
-                  "cograph.search",
+                  "cograph.read_node",
                   "cograph.search_code",
                   "cograph.related",
+                  "cograph.repository_readme",
+                  "cograph.read_file_range",
+                  "cograph.outline",
               }
               assert tool_names == expected, f"unexpected MCP tools via packaged web tier: {tool_names}"
 
