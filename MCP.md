@@ -30,30 +30,37 @@ Every search-style tool returns the same top-level shape:
 {
   "results": [ /* ResultEnvelope[] */ ],
   "total_tokens_estimate": 2840,
-  "mode": "code",                    // or "wiki" / "mixed"; absent for non-retrieve tools
-  "query_terms": ["auth", "middleware"]
+  "mode": "code"                     // or "wiki" / "mixed"; null for non-retrieve tools
 }
 ```
 
-Each `ResultEnvelope`:
+Each result:
 
 ```jsonc
 {
-  "id": "uuid",
-  "layer": "code | ast_summary | repo_doc | md_chunk",
+  "layer": "code | ast | ast_summary | repo_doc",
+  "score": 0.81,
   "snippet": "≤ snippet_chars characters",
   "content_truncated": true,
-  "citation": {
+  "provenance": {
+    "node_id": "uuid-or-null",
+    "qualified_name": "module.symbol-or-null",
     "file_path": "src/auth/middleware.py",
     "start_line": 42,
     "end_line": 58,
-    "wiki_slug": null,
-    "node_id": "...",
-    "document_id": "...",
-    "chunk_id": "..."
+    "document_id": "uuid-or-null",
+    "heading_path": ["Errors"],
+    "first_seen_commit": "sha-or-null",
+    "last_changed_commit": "sha-or-null",
+    "last_changed_at": "iso-8601-or-null"
   },
-  "scores": { "vector": 0.81, "bm25": 0.42, "rerank": null },
-  "repository_slug": "github.com/owner/name"
+  "metadata": {
+    "vector_score": 0.81,
+    "bm25_score": 0.42,
+    "rerank_score": null,
+    "candidate_from": ["vector", "lexical"]
+  },
+  "related_repo_doc_chunks": [ /* LinkedRepoDocumentChunk[] */ ]
 }
 ```
 
@@ -66,13 +73,16 @@ Field semantics:
 - **`content_truncated`** — `true` iff the original content was longer than
   the returned snippet. Agents that need full text follow up with
   `cograph.read_node` (code) or `cograph.read_chunk` (markdown).
-- **`citation`** — anchored back to the source so the agent can quote
-  provenance. At least one of `file_path`/`wiki_slug` is non-null per
-  layer; line numbers are 1-indexed and inclusive.
-- **`scores`** — present iff the caller passed `with_scores=true`. Useful
-  for debugging retrieval, noisy for an LLM otherwise.
-- **`repository_slug`** — compound `host/owner/name`, matches the form used
-  by `cograph.repositories`.
+- **`provenance`** — anchors the result to its source so the agent can
+  quote it. For code hits: `node_id` + `file_path` + line range. For
+  repo-doc hits: `document_id` + `file_path` + `heading_path`. Line
+  numbers are 1-indexed and inclusive.
+- **`metadata`** — retrieval scores per signal. `*_score` fields are
+  populated only when the caller passed `with_scores=true`. `candidate_from`
+  is always present and lists which retrievers nominated the hit.
+- **`related_repo_doc_chunks`** — for code hits, the markdown chunks that
+  reference this code symbol (heading-anchored, snippet-only). Empty for
+  non-code layers.
 
 ## Token-budget contract
 
