@@ -137,42 +137,37 @@ jobs:
             context: ./web
             dockerfile: Dockerfile
             suffix: cograph-web
+    env:
+      HARBOR_REGISTRY: harbor.pgw.dev
     steps:
       - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
 
-      # Push gated by `vars.PGW_REGISTRY`. The ambient `docker-config`
-      # secret on `[prod]` runners only carries pull creds for
-      # `harbor.pgw.dev/ops/...`; pushing into `ai/` needs a robot
-      # account, so the secrets below are required when push is on.
-      - name: Log in to pgw registry
-        if: ${{ vars.PGW_REGISTRY != '' }}
+      - name: Log in to Harbor
         uses: docker/login-action@v3
         with:
-          registry: ${{ vars.PGW_REGISTRY }}
-          username: ${{ secrets.PGW_REGISTRY_USERNAME }}
-          password: ${{ secrets.PGW_REGISTRY_PASSWORD }}
+          registry: ${{ env.HARBOR_REGISTRY }}
+          username: ${{ secrets.HARBOR_ROBOT_USER }}
+          password: ${{ secrets.HARBOR_ROBOT_TOKEN }}
 
       - name: Compute tags
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: |
-            ${{ vars.PGW_REGISTRY != '' && format('{0}/ai/{1}', vars.PGW_REGISTRY, matrix.image.suffix) || format('local/{0}', matrix.image.suffix) }}
+          images: ${{ env.HARBOR_REGISTRY }}/ai/${{ matrix.image.suffix }}
           tags: |
             type=ref,event=branch
             type=ref,event=tag
             type=sha,format=short,prefix=
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build${{ vars.PGW_REGISTRY != '' && ' and push' || '' }}
+      - name: Build and push
         uses: docker/build-push-action@v5
         with:
           context: ${{ matrix.image.context }}
           file: ${{ matrix.image.context }}/${{ matrix.image.dockerfile }}
-          push: ${{ vars.PGW_REGISTRY != '' }}
-          load: ${{ vars.PGW_REGISTRY == '' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=pgw-${{ matrix.image.name }}
