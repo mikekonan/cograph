@@ -42,7 +42,11 @@ from backend.app.rag.hybrid import HybridRetriever
 from backend.app.rag.lexical import LexicalRetriever, SymbolLookup
 from backend.app.rag.retriever import RetrievedChunk
 from backend.app.rag.service import retrieve_composite
-from backend.app.rag.snippet import DEFAULT_SNIPPET_CHARS
+from backend.app.rag.snippet import (
+    DEFAULT_SNIPPET_CHARS,
+    extract_query_terms,
+    make_snippet,
+)
 from backend.app.wiki import WikiQueryService
 
 
@@ -417,6 +421,7 @@ async def collection_search_payload(
     collection_id: UUID,
     query: str,
     top_k: int,
+    snippet_chars: int = DEFAULT_SNIPPET_CHARS,
 ) -> object:
     async with services.session_manager.session() as session:
         try:
@@ -443,25 +448,76 @@ async def collection_search_payload(
             top_k=top_k,
             stores={"md_collections"},
         )
-        return {
-            "collection_id": collection.id,
-            "collection_name": collection.name,
-            "query": query,
-            "results": [
+        terms = extract_query_terms(query)
+        results: list[dict[str, object]] = []
+        for chunk in chunks:
+            snippet, truncated = make_snippet(
+                chunk.content, terms, chars=snippet_chars
+            )
+            results.append(
                 {
                     "chunk_id": chunk.chunk_id,
                     "document_id": chunk.metadata.get("document_id"),
                     "source_key": chunk.metadata.get("source_key", ""),
                     "title": chunk.metadata.get("title"),
                     "heading_path": chunk.metadata.get("heading_path", []),
-                    "content": chunk.content,
+                    "snippet": snippet,
+                    "content_truncated": truncated,
                     "score": chunk.score,
                     "vector_rank": chunk.metadata.get("vector_rank"),
                     "lexical_rank": chunk.metadata.get("lexical_rank"),
                     "rerank_score": chunk.metadata.get("rerank_score"),
                 }
-                for chunk in chunks
-            ],
+            )
+        total_tokens_estimate = sum(
+            len(str(r.get("snippet") or "")) for r in results
+        ) // 4
+        return {
+            "collection_id": collection.id,
+            "collection_name": collection.name,
+            "query": query,
+            "results": results,
+            "total_tokens_estimate": total_tokens_estimate,
+        }
+
+
+async def read_chunk_payload(
+    *,
+    services: MCPServices,
+    current_user: User | None,
+    collection_id: UUID,
+    chunk_id: UUID,
+) -> object:
+    async with services.session_manager.session() as session:
+        try:
+            collection = await get_readable_md_collection(
+                session=session,
+                collection_id=collection_id,
+                current_user=current_user,
+            )
+        except ApiError as exc:
+            raise _mcp_error(exc) from exc
+        chunk = await session.scalar(
+            select(MdChunk)
+            .join(MdDocument, MdDocument.id == MdChunk.document_id)
+            .where(
+                MdChunk.id == chunk_id,
+                MdDocument.collection_id == collection.id,
+            )
+        )
+        if chunk is None:
+            raise ValueError("NOT_FOUND: Chunk not found")
+        document = await session.get(MdDocument, chunk.document_id)
+        return {
+            "collection_id": collection.id,
+            "collection_name": collection.name,
+            "chunk_id": chunk.id,
+            "document_id": chunk.document_id,
+            "chunk_index": chunk.chunk_index,
+            "heading_path": chunk.heading_path,
+            "content": chunk.content,
+            "source_key": document.source_key if document is not None else None,
+            "title": document.title if document is not None else None,
         }
 
 
