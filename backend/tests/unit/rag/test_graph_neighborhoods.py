@@ -105,28 +105,3 @@ async def test_expand_for_nodes_missing_node():
         node_ids=[uuid4()],
     )
     assert batch.neighborhoods == []
-
-
-@pytest.mark.anyio
-async def test_expand_for_search_results():
-    node_id = uuid4()
-    detail = FakeGraphNodeDetail(
-        id=node_id,
-        name="main.Run",
-        node_type="function",
-        file_path="main.go",
-        start_line=10,
-        end_line=20,
-        callees=[FakeGraphRelatedNode(uuid4(), "db.Connect", CodeNodeType.FUNCTION, "db.go", 30, 40)],
-    )
-    queries = FakeGraphQueries(details={node_id: detail})
-    service = GraphNeighborhoodService(queries=queries)
-
-    result = await service.expand_for_search_results(
-        session=None,  # type: ignore[arg-type]
-        repository_id=node_id,
-        code_result_node_ids=[node_id],
-    )
-    assert str(node_id) in result
-    assert result[str(node_id)].name == "main.Run"
-    assert len(result[str(node_id)].callees) == 1

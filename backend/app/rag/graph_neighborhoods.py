@@ -70,25 +70,6 @@ class GraphNeighborhoodService:
             )
         return GraphNeighborhoodBatch(neighborhoods=neighborhoods)
 
-    async def expand_for_search_results(
-        self,
-        session: AsyncSession,
-        *,
-        repository_id: UUID,
-        code_result_node_ids: list[UUID],
-    ) -> dict[str, GraphNeighborhood]:
-        """Return a mapping from node_id string to neighborhood.
-
-        This is designed to be merged into blended search response metadata.
-        """
-        batch = await self.expand_for_nodes(
-            session=session,
-            repository_id=repository_id,
-            node_ids=code_result_node_ids,
-        )
-        return {n.node_id: n for n in batch.neighborhoods}
-
-
 def _related_to_dict(node: GraphRelatedNode | None) -> dict[str, object] | None:
     if node is None:
         return None
