@@ -273,24 +273,26 @@ async def test_delete_user_returns_204_and_disables(client, db_session):
 
 
 # ---------------------------------------------------------------------------
-# Owner protection
+# Last-admin protection
 # ---------------------------------------------------------------------------
 
 
-async def test_owner_disable_via_scim_is_rejected_and_audited(client, db_session):
+async def test_last_admin_disable_via_scim_is_rejected_and_audited(client, db_session):
+    """SCIM cannot disable the only remaining active admin/owner."""
     provider = await _make_provider(db_session)
     _, token = await _make_scim_client(db_session, provider=provider)
-    owner = await _make_user(
+    # Single admin/owner — disabling them would leave the instance unreachable.
+    only_admin = await _make_user(
         db_session, email="owner@example.com", role=UserRole.OWNER
     )
-    owner_id = owner.id
+    only_admin_id = only_admin.id
 
     body = {
         "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
         "Operations": [{"op": "replace", "path": "active", "value": False}],
     }
     response = await client.patch(
-        f"/scim/v2/Users/{owner_id}", json=body, headers=_bearer(token)
+        f"/scim/v2/Users/{only_admin_id}", json=body, headers=_bearer(token)
     )
     assert response.status_code == 403
     body = response.json()
@@ -298,14 +300,14 @@ async def test_owner_disable_via_scim_is_rejected_and_audited(client, db_session
     assert body["scimType"] == "mutability"
 
     db_session.expire_all()
-    refreshed = await db_session.get(User, owner_id)
+    refreshed = await db_session.get(User, only_admin_id)
     assert refreshed is not None
     assert refreshed.is_active is True
 
     rows = (
         await db_session.execute(
             select(AuditEvent).where(
-                AuditEvent.event_type == "scim_owner_disable_blocked"
+                AuditEvent.event_type == "scim_last_admin_disable_blocked"
             )
         )
     ).scalars().all()
@@ -474,7 +476,8 @@ async def test_admin_list_scim_clients_works(client, db_session, settings):
     assert len(response.json()["clients"]) == 1
 
 
-async def test_admin_cannot_create_scim_client(client, db_session, settings):
+async def test_admin_can_create_scim_client(client, db_session, settings):
+    """Admin and owner share one tier — admins can create SCIM clients."""
     provider = await _make_provider(db_session)
     provider_id = provider.id
     await _login_as(client, db_session, settings, role=UserRole.ADMIN)
@@ -483,7 +486,7 @@ async def test_admin_cannot_create_scim_client(client, db_session, settings):
         "/api/admin/scim-clients",
         json={"provider_id": str(provider_id), "name": "x"},
     )
-    assert response.status_code == 403
+    assert response.status_code == 201
 
 
 async def test_owner_creates_and_rotates_scim_client(client, db_session, settings):

@@ -122,33 +122,13 @@ async def get_current_user_optional(
 async def require_admin_or_owner(
     current_user: User = Depends(require_current_user),
 ) -> User:
-    """Phase 30.1 gate — admin endpoints unprivileged for owner.
-
-    Owner ⊃ admin: anything an admin can do, the owner can do too.
-    Endpoints that need *only* the owner use `require_owner`.
-    """
+    """Admin/owner gate. OWNER is a label on the bootstrap user; the
+    role grants no privilege over ADMIN — both pass this gate."""
     if current_user.role not in (UserRole.OWNER, UserRole.ADMIN):
         raise ApiError(403, "FORBIDDEN", "Administrator access required")
     return current_user
 
 
-async def require_owner(
-    current_user: User = Depends(require_current_user),
-) -> User:
-    """Phase 30.1 gate — owner-only enterprise surfaces.
-
-    Used for role changes, identity-provider mgmt, git-host mgmt,
-    LLM runtime mgmt, transfer-owner. The set of exclusive owner
-    capabilities lives in the owner-only route policy.
-    """
-    if current_user.role is not UserRole.OWNER:
-        raise ApiError(403, "FORBIDDEN_OWNER_ONLY", "Owner access required")
-    return current_user
-
-
-# Back-compat alias — existing endpoints depending on `require_admin` keep
-# working with the new "owner OR admin" semantics. New code should use
-# `require_admin_or_owner` explicitly for clarity.
 require_admin = require_admin_or_owner
 
 

@@ -30,7 +30,6 @@ from backend.app.core.deps import (
     get_settings_dep,
     require_admin_or_owner,
     require_csrf,
-    require_owner,
 )
 from backend.app.core.errors import ApiError
 from backend.app.git.credentials import GitCredentialCipher, redact_token
@@ -309,7 +308,7 @@ async def list_git_hosts(
 async def create_git_host(
     payload: CreateGitHostRequest,
     session: AsyncSession = Depends(get_db_session),
-    owner: User = Depends(require_owner),
+    owner: User = Depends(require_admin_or_owner),
     _csrf: User = Depends(require_csrf),
 ) -> GitHostView:
     del _csrf
@@ -356,7 +355,7 @@ async def update_git_host(
     host_id: UUID,
     payload: UpdateGitHostRequest,
     session: AsyncSession = Depends(get_db_session),
-    owner: User = Depends(require_owner),
+    owner: User = Depends(require_admin_or_owner),
     _csrf: User = Depends(require_csrf),
 ) -> GitHostView:
     del _csrf
@@ -409,7 +408,7 @@ async def update_git_host(
 async def delete_git_host(
     host_id: UUID,
     session: AsyncSession = Depends(get_db_session),
-    owner: User = Depends(require_owner),
+    owner: User = Depends(require_admin_or_owner),
     _csrf: User = Depends(require_csrf),
 ) -> Response:
     del _csrf
@@ -477,7 +476,7 @@ async def create_credential(
     payload: CreateCredentialRequest,
     session: AsyncSession = Depends(get_db_session),
     settings: Settings = Depends(get_settings_dep),
-    owner: User = Depends(require_owner),
+    owner: User = Depends(require_admin_or_owner),
     _csrf: User = Depends(require_csrf),
 ) -> CredentialView:
     del _csrf
@@ -556,7 +555,7 @@ async def update_credential(
     payload: UpdateCredentialRequest,
     session: AsyncSession = Depends(get_db_session),
     settings: Settings = Depends(get_settings_dep),
-    owner: User = Depends(require_owner),
+    owner: User = Depends(require_admin_or_owner),
     _csrf: User = Depends(require_csrf),
 ) -> CredentialView:
     del _csrf
@@ -656,7 +655,7 @@ async def delete_credential(
     host_id: UUID,
     credential_id: UUID,
     session: AsyncSession = Depends(get_db_session),
-    owner: User = Depends(require_owner),
+    owner: User = Depends(require_admin_or_owner),
     _csrf: User = Depends(require_csrf),
 ) -> Response:
     del _csrf
@@ -693,7 +692,7 @@ async def test_credential(
     payload: TestCredentialRequest,
     session: AsyncSession = Depends(get_db_session),
     settings: Settings = Depends(get_settings_dep),
-    owner: User = Depends(require_owner),
+    owner: User = Depends(require_admin_or_owner),
     _csrf: User = Depends(require_csrf),
 ) -> CredentialTestResult:
     del _csrf

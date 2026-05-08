@@ -25,7 +25,6 @@ from backend.app.core.deps import (
     get_settings_dep,
     require_admin_or_owner,
     require_csrf,
-    require_owner,
 )
 from backend.app.core.errors import ApiError
 from backend.app.models.identity_provider import IdentityProvider
@@ -197,7 +196,7 @@ async def create_identity_provider(
     payload: CreateIdentityProviderRequest,
     session: AsyncSession = Depends(get_db_session),
     settings: Settings = Depends(get_settings_dep),
-    owner: User = Depends(require_owner),
+    owner: User = Depends(require_admin_or_owner),
     _csrf: User = Depends(require_csrf),
 ) -> IdentityProviderView:
     del _csrf
@@ -253,7 +252,7 @@ async def update_identity_provider(
     payload: UpdateIdentityProviderRequest,
     session: AsyncSession = Depends(get_db_session),
     settings: Settings = Depends(get_settings_dep),
-    owner: User = Depends(require_owner),
+    owner: User = Depends(require_admin_or_owner),
     _csrf: User = Depends(require_csrf),
 ) -> IdentityProviderView:
     del _csrf
@@ -313,7 +312,7 @@ async def update_identity_provider(
 async def delete_identity_provider(
     provider_id: UUID,
     session: AsyncSession = Depends(get_db_session),
-    owner: User = Depends(require_owner),
+    owner: User = Depends(require_admin_or_owner),
     _csrf: User = Depends(require_csrf),
 ) -> Response:
     del _csrf
@@ -366,7 +365,7 @@ async def test_identity_provider(
     provider_id: UUID,
     session: AsyncSession = Depends(get_db_session),
     settings: Settings = Depends(get_settings_dep),
-    owner: User = Depends(require_owner),
+    owner: User = Depends(require_admin_or_owner),
     _csrf: User = Depends(require_csrf),
 ) -> IdentityProviderTestResponse:
     """Probe the IdP discovery + JWKS endpoints with the configured client.

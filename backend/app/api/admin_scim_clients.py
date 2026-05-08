@@ -27,7 +27,6 @@ from backend.app.core.deps import (
     PAT_PREFIX_DISPLAY_CHARS,
     get_db_session,
     require_admin_or_owner,
-    require_owner,
 )
 from backend.app.core.errors import ApiError
 from backend.app.models.identity_provider import IdentityProvider
@@ -151,7 +150,7 @@ async def list_scim_clients(
 async def create_scim_client(
     body: CreateSCIMClientRequest,
     session: AsyncSession = Depends(get_db_session),
-    actor: User = Depends(require_owner),
+    actor: User = Depends(require_admin_or_owner),
 ) -> SCIMClientCreated:
     provider = await session.get(IdentityProvider, body.provider_id)
     if provider is None:
@@ -189,7 +188,7 @@ async def create_scim_client(
 async def revoke_scim_client(
     client_id: UUID,
     session: AsyncSession = Depends(get_db_session),
-    actor: User = Depends(require_owner),
+    actor: User = Depends(require_admin_or_owner),
 ) -> None:
     row = await session.get(SCIMClient, client_id)
     if row is None or row.revoked_at is not None:
@@ -217,7 +216,7 @@ async def revoke_scim_client(
 async def rotate_scim_client(
     client_id: UUID,
     session: AsyncSession = Depends(get_db_session),
-    actor: User = Depends(require_owner),
+    actor: User = Depends(require_admin_or_owner),
 ) -> SCIMClientCreated:
     old = await session.get(SCIMClient, client_id)
     if old is None or old.revoked_at is not None:

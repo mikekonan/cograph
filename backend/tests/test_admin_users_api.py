@@ -107,8 +107,8 @@ async def test_create_user_succeeds(client, db_session, settings):
     assert created.password_hash != "another-pass-1"
 
 
-async def test_create_admin_requires_owner(client, db_session, settings):
-    """Only the owner can create new admins; admins can only create users."""
+async def test_admin_can_create_admin(client, db_session, settings):
+    """Admin and owner share one privilege tier — admins can create admins."""
     plain_admin = await _make_user(
         db_session,
         email="admin@example.com",
@@ -126,12 +126,12 @@ async def test_create_admin_requires_owner(client, db_session, settings):
         },
     )
 
-    assert response.status_code == 403
-    assert response.json()["error"]["code"] == "FORBIDDEN_OWNER_ONLY"
+    assert response.status_code == 201
+    assert response.json()["role"] == "admin"
 
 
 async def test_create_owner_role_forbidden(client, db_session, settings):
-    """role=owner via POST is rejected; transfer-owner is the only path."""
+    """role=owner via POST is rejected; OWNER is a bootstrap-only label."""
     owner = await _make_user(
         db_session,
         email="owner@example.com",
@@ -149,7 +149,8 @@ async def test_create_owner_role_forbidden(client, db_session, settings):
         },
     )
 
-    assert response.status_code == 403
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "OWNER_LABEL_LOCKED"
 
 
 async def test_create_user_rejects_duplicate_email(client, db_session, settings):
@@ -241,8 +242,8 @@ async def test_patch_owner_can_change_role(client, db_session, settings):
     assert body["name"] == "Promoted"
 
 
-async def test_patch_role_change_requires_owner(client, db_session, settings):
-    """Plain admin cannot change another user's role — owner-only."""
+async def test_admin_can_change_role(client, db_session, settings):
+    """Admin and owner share one privilege tier — both can change roles."""
     plain_admin = await _make_user(
         db_session,
         email="admin@example.com",
@@ -257,8 +258,8 @@ async def test_patch_role_change_requires_owner(client, db_session, settings):
         json={"role": "admin"},
     )
 
-    assert response.status_code == 403
-    assert response.json()["error"]["code"] == "FORBIDDEN_OWNER_ONLY"
+    assert response.status_code == 200
+    assert response.json()["role"] == "admin"
 
 
 async def test_patch_user_resets_password(client, db_session, settings):
@@ -283,11 +284,17 @@ async def test_patch_user_resets_password(client, db_session, settings):
 
 
 async def test_patch_owner_role_change_forbidden(client, db_session, settings):
-    """Owner cannot demote themselves via PATCH; transfer-owner is the only path."""
+    """OWNER is a bootstrap-only label — transitions out of OWNER are rejected."""
     owner = await _make_user(
         db_session,
         email="owner@example.com",
         role=UserRole.OWNER,
+    )
+    # Second admin so the rejection isn't masked by last-admin protection.
+    await _make_user(
+        db_session,
+        email="other-admin@example.com",
+        role=UserRole.ADMIN,
     )
     await _authenticate(client, settings, owner)
 
@@ -298,11 +305,11 @@ async def test_patch_owner_role_change_forbidden(client, db_session, settings):
     )
 
     assert response.status_code == 409
-    assert response.json()["error"]["code"] == "OWNER_PROTECTED"
+    assert response.json()["error"]["code"] == "OWNER_LABEL_LOCKED"
 
 
 async def test_patch_promote_to_owner_forbidden(client, db_session, settings):
-    """Owner cannot promote someone to owner via PATCH — transfer-owner is the only path."""
+    """OWNER label cannot be assigned via PATCH — bootstrap-only."""
     owner = await _make_user(
         db_session,
         email="owner@example.com",
@@ -318,7 +325,34 @@ async def test_patch_promote_to_owner_forbidden(client, db_session, settings):
     )
 
     assert response.status_code == 409
-    assert response.json()["error"]["code"] == "OWNER_PROTECTED"
+    assert response.json()["error"]["code"] == "OWNER_LABEL_LOCKED"
+
+
+async def test_patch_self_demote_blocked_when_last_admin(client, db_session, settings):
+    """Self-demote is rejected when the actor is the only active admin/owner."""
+    solo_admin = await _make_user(
+        db_session,
+        email="solo-admin@example.com",
+        role=UserRole.ADMIN,
+    )
+    # Inactive admin should NOT count as remaining.
+    inactive = await _make_user(
+        db_session,
+        email="inactive-admin@example.com",
+        role=UserRole.ADMIN,
+    )
+    inactive.is_active = False
+    await db_session.commit()
+    await _authenticate(client, settings, solo_admin)
+
+    response = await client.patch(
+        f"/api/admin/users/{solo_admin.id}",
+        headers=_csrf_headers(),
+        json={"role": "user"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "LAST_ADMIN_PROTECTED"
 
 
 async def test_disable_user_succeeds(client, db_session, settings):
@@ -342,7 +376,8 @@ async def test_disable_user_succeeds(client, db_session, settings):
     assert member.deactivated_reason == "off-boarded"
 
 
-async def test_disable_owner_blocked(client, db_session, settings):
+async def test_disable_owner_succeeds_when_other_admin_remains(client, db_session, settings):
+    """Owner has no extra protection — disabling is allowed if another admin/owner remains."""
     owner = await _make_user(
         db_session,
         email="owner@example.com",
@@ -361,10 +396,9 @@ async def test_disable_owner_blocked(client, db_session, settings):
         json={},
     )
 
-    assert response.status_code == 409
-    assert response.json()["error"]["code"] == "OWNER_PROTECTED"
+    assert response.status_code == 204
     await db_session.refresh(owner)
-    assert owner.is_active is True
+    assert owner.is_active is False
 
 
 async def test_enable_user(client, db_session, settings):
@@ -407,7 +441,8 @@ async def test_delete_user_succeeds(client, db_session, settings):
     assert deleted is None
 
 
-async def test_delete_owner_forbidden(client, db_session, settings):
+async def test_delete_owner_succeeds_when_other_admin_remains(client, db_session, settings):
+    """Owner has no extra protection — deletion is allowed if another admin/owner remains."""
     owner = await _make_user(
         db_session,
         email="owner@example.com",
@@ -425,8 +460,9 @@ async def test_delete_owner_forbidden(client, db_session, settings):
         headers=_csrf_headers(),
     )
 
-    assert response.status_code == 409
-    assert response.json()["error"]["code"] == "OWNER_PROTECTED"
+    assert response.status_code == 204
+    deleted = await db_session.scalar(select(User).where(User.id == owner.id))
+    assert deleted is None
 
 
 async def test_delete_self_forbidden(client, db_session, settings):
@@ -476,7 +512,8 @@ async def test_delete_user_not_found(client, db_session, settings):
     assert response.status_code == 404
 
 
-async def test_transfer_owner_swaps_roles(client, db_session, settings):
+async def test_transfer_owner_endpoint_removed(client, db_session, settings):
+    """The transfer-owner endpoint is gone with the OWNER privilege merge."""
     owner = await _make_user(
         db_session,
         email="owner@example.com",
@@ -495,67 +532,4 @@ async def test_transfer_owner_swaps_roles(client, db_session, settings):
         json={"confirm_email": "target@example.com"},
     )
 
-    assert response.status_code == 200
-    body = response.json()
-    assert body["new_owner_id"] == str(target.id)
-    assert body["previous_owner_id"] == str(owner.id)
-
-    await db_session.refresh(owner)
-    await db_session.refresh(target)
-    assert owner.role is UserRole.ADMIN
-    assert target.role is UserRole.OWNER
-
-    # Audit row landed.
-    from backend.app.models.audit_event import AuditEvent
-    audit_rows = (
-        await db_session.scalars(
-            select(AuditEvent).where(AuditEvent.event_type == "transfer_owner")
-        )
-    ).all()
-    assert len(audit_rows) == 1
-
-
-async def test_transfer_owner_requires_owner(client, db_session, settings):
-    plain_admin = await _make_user(
-        db_session,
-        email="admin@example.com",
-        role=UserRole.ADMIN,
-    )
-    target = await _make_user(
-        db_session,
-        email="target@example.com",
-        role=UserRole.ADMIN,
-    )
-    await _authenticate(client, settings, plain_admin)
-
-    response = await client.post(
-        f"/api/admin/users/{target.id}/transfer-owner",
-        headers=_csrf_headers(),
-        json={"confirm_email": "target@example.com"},
-    )
-
-    assert response.status_code == 403
-    assert response.json()["error"]["code"] == "FORBIDDEN_OWNER_ONLY"
-
-
-async def test_transfer_owner_email_mismatch(client, db_session, settings):
-    owner = await _make_user(
-        db_session,
-        email="owner@example.com",
-        role=UserRole.OWNER,
-    )
-    target = await _make_user(
-        db_session,
-        email="target@example.com",
-        role=UserRole.ADMIN,
-    )
-    await _authenticate(client, settings, owner)
-
-    response = await client.post(
-        f"/api/admin/users/{target.id}/transfer-owner",
-        headers=_csrf_headers(),
-        json={"confirm_email": "wrong@example.com"},
-    )
-
-    assert response.status_code == 409
-    assert response.json()["error"]["code"] == "OWNER_TRANSFER_TARGET_INVALID"
+    assert response.status_code == 404

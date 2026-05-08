@@ -12,10 +12,10 @@ one `BEGIN…COMMIT`:
 Cookie sessions die at the next request — Layer-1 enforcement reads
 `is_active` per call (no per-process cache).
 
-Owner protection: SCIM never disables the owner. The handler raises
-`SCIMOwnerProtectedError`, which the router translates to a 403 SCIM
-error AND records an `applied_at` row in `scim_events` with
-`status='rejected'`.
+Last-admin protection: SCIM never disables the final active user with
+admin/owner role. The handler raises `SCIMLastAdminProtectedError`,
+which the router translates to a 403 SCIM error AND records an
+`applied_at` row in `scim_events` with `status='rejected'`.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import delete, func, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.audit.events import AuditEventRecord, write_audit
@@ -33,9 +33,11 @@ from backend.app.models.refresh_token_family import RefreshTokenFamily
 from backend.app.models.scim_client import SCIMClient
 from backend.app.models.user import User
 
+_ADMIN_ROLES = (UserRole.OWNER, UserRole.ADMIN)
 
-class SCIMOwnerProtectedError(Exception):
-    """SCIM tried to disable an owner — rejected, audited as critical."""
+
+class SCIMLastAdminProtectedError(Exception):
+    """SCIM tried to disable the last admin/owner — rejected, audited critical."""
 
 
 async def disable_user_cascade(
@@ -47,21 +49,31 @@ async def disable_user_cascade(
 ) -> None:
     """Atomic deprovisioning. Caller commits the surrounding transaction."""
 
-    if target.role is UserRole.OWNER:
-        await write_audit(
-            session,
-            AuditEventRecord(
-                actor_user_id=None,
-                target_user_id=target.id,
-                event_type="scim_owner_disable_blocked",
-                severity="critical",
-                metadata={
-                    "client_id": str(actor_client.id),
-                    "external_id": external_id,
-                },
-            ),
+    if target.role in _ADMIN_ROLES:
+        remaining = await session.scalar(
+            select(func.count())
+            .select_from(User)
+            .where(
+                User.id != target.id,
+                User.role.in_(_ADMIN_ROLES),
+                User.is_active.is_(True),
+            )
         )
-        raise SCIMOwnerProtectedError()
+        if (remaining or 0) == 0:
+            await write_audit(
+                session,
+                AuditEventRecord(
+                    actor_user_id=None,
+                    target_user_id=target.id,
+                    event_type="scim_last_admin_disable_blocked",
+                    severity="critical",
+                    metadata={
+                        "client_id": str(actor_client.id),
+                        "external_id": external_id,
+                    },
+                ),
+            )
+            raise SCIMLastAdminProtectedError()
 
     if not target.is_active:
         # Idempotent no-op: caller still records the SCIM event (no_op)
