@@ -1,9 +1,11 @@
 """Composite retrieval response builder for Phase 7e."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import TypeAlias
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -18,6 +20,13 @@ from backend.app.models.repo_document import RepoDocument, RepoDocumentChunk
 from backend.app.models.repo_document_chunk_mention import RepoDocumentChunkMention
 from backend.app.rag.pivot import GraphPivot, PivotNode, PivotRelatedNode
 from backend.app.rag.retriever import RetrievedChunk
+from backend.app.rag.snippet import (
+    DEFAULT_SNIPPET_CHARS,
+    extract_query_terms,
+    make_snippet,
+)
+
+ExcerptFn: TypeAlias = Callable[[str | None], tuple[str, bool]]
 
 
 class RetrievalLayer(StrEnum):
@@ -67,6 +76,7 @@ class RetrievalResult(BaseModel):
     layer: RetrievalLayer
     score: float | None = None
     snippet: str
+    content_truncated: bool = False
     provenance: RetrievalProvenance
     metadata: RetrievalMetadata
     related_repo_doc_chunks: list[LinkedRepoDocumentChunk] = Field(default_factory=list)
@@ -100,6 +110,8 @@ class RetrievalGraphNode(BaseModel):
 class RetrievalResponse(BaseModel):
     results: list[RetrievalResult]
     nodes: dict[str, RetrievalGraphNode] = Field(default_factory=dict)
+    total_tokens_estimate: int = 0
+    mode: str | None = None
 
 
 @dataclass(slots=True, kw_only=True)
@@ -132,7 +144,15 @@ class ContextBuilder:
         include_chunks: bool,
         include_graph: bool,
         include_scores: bool,
+        query: str | None = None,
+        snippet_chars: int = DEFAULT_SNIPPET_CHARS,
+        mode: str | None = None,
     ) -> RetrievalResponse:
+        query_terms = extract_query_terms(query) if query else []
+
+        def _excerpt(text: str | None) -> tuple[str, bool]:
+            return make_snippet(text, query_terms, chars=snippet_chars)
+
         code_hits = [chunk for chunk in chunks if chunk.store == "code"]
         repo_doc_hits = [chunk for chunk in chunks if chunk.store == "repo_docs"]
 
@@ -146,7 +166,11 @@ class ContextBuilder:
             node_ids=code_node_ids,
         )
         linked_docs_by_node = (
-            await self._load_linked_repo_doc_chunks(session, code_node_ids)
+            await self._load_linked_repo_doc_chunks(
+                session,
+                code_node_ids,
+                excerpt=_excerpt,
+            )
             if include_chunks
             else {}
         )
@@ -168,22 +192,28 @@ class ContextBuilder:
                     continue
                 related_docs = linked_docs_by_node.get(node.id, [])
                 if RetrievalLayer.CODE in requested_layers:
+                    snippet, truncated = _excerpt(node.content)
                     results.append(
                         RetrievalResult(
                             layer=RetrievalLayer.CODE,
                             score=chunk.score if include_scores else None,
-                            snippet=_snippet(node.content),
+                            snippet=snippet,
+                            content_truncated=truncated,
                             provenance=_code_provenance(node),
                             metadata=_chunk_metadata(chunk, include_scores=include_scores),
                             related_repo_doc_chunks=related_docs,
                         )
                     )
                 if RetrievalLayer.AST in requested_layers:
+                    snippet, truncated = _excerpt(
+                        node.signature or node.qualified_name or node.name
+                    )
                     results.append(
                         RetrievalResult(
                             layer=RetrievalLayer.AST,
                             score=chunk.score if include_scores else None,
-                            snippet=_snippet(node.signature or node.qualified_name or node.name),
+                            snippet=snippet,
+                            content_truncated=truncated,
                             provenance=_code_provenance(node),
                             metadata=_chunk_metadata(
                                 chunk,
@@ -195,11 +225,13 @@ class ContextBuilder:
                     )
                 summary = summaries_by_id.get(node.id)
                 if summary and RetrievalLayer.AST_SUMMARY in requested_layers:
+                    snippet, truncated = _excerpt(summary)
                     results.append(
                         RetrievalResult(
                             layer=RetrievalLayer.AST_SUMMARY,
                             score=chunk.score if include_scores else None,
-                            snippet=_snippet(summary),
+                            snippet=snippet,
+                            content_truncated=truncated,
                             provenance=_code_provenance(node),
                             metadata=_chunk_metadata(chunk, include_scores=include_scores),
                             related_repo_doc_chunks=related_docs,
@@ -211,11 +243,13 @@ class ContextBuilder:
                 repo_doc_chunk = repo_doc_chunks_by_id.get(chunk.chunk_id)
                 if repo_doc_chunk is None:
                     continue
+                snippet, truncated = _excerpt(repo_doc_chunk.content)
                 results.append(
                     RetrievalResult(
                         layer=RetrievalLayer.REPO_DOC,
                         score=chunk.score if include_scores else None,
-                        snippet=_snippet(repo_doc_chunk.content),
+                        snippet=snippet,
+                        content_truncated=truncated,
                         provenance=RetrievalProvenance(
                             document_id=repo_doc_chunk.document_id,
                             file_path=repo_doc_chunk.file_path,
@@ -244,6 +278,8 @@ class ContextBuilder:
                 )
                 for node_id, node in graph_nodes.items()
             },
+            total_tokens_estimate=sum(len(r.snippet) for r in results) // 4,
+            mode=mode,
         )
 
     async def _load_code_nodes(
@@ -296,9 +332,12 @@ class ContextBuilder:
         self,
         session: AsyncSession,
         node_ids: list[UUID],
+        *,
+        excerpt: ExcerptFn | None = None,
     ) -> dict[UUID, list[LinkedRepoDocumentChunk]]:
         if not node_ids:
             return {}
+        snippet_for = excerpt or (lambda text: (_snippet(text), False))
 
         rows = (
             await session.execute(
@@ -328,6 +367,7 @@ class ContextBuilder:
             bucket = grouped.setdefault(code_node_id, [])
             if len(bucket) >= self.related_chunk_limit:
                 continue
+            snippet, _ = snippet_for(content)
             bucket.append(
                 LinkedRepoDocumentChunk(
                     chunk_id=chunk_id,
@@ -335,7 +375,7 @@ class ContextBuilder:
                     file_path=file_path,
                     title=title,
                     heading_path=list(heading_path or []),
-                    snippet=_snippet(content),
+                    snippet=snippet,
                 )
             )
         return grouped

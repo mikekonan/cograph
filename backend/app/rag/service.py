@@ -11,6 +11,7 @@ from backend.app.models.enums import RepositoryStatus
 from backend.app.models.repository import Repository
 from backend.app.rag.context_builder import ContextBuilder, RetrievalLayer, RetrievalResponse
 from backend.app.rag.hybrid import HybridRetriever
+from backend.app.rag.snippet import DEFAULT_SNIPPET_CHARS
 
 
 async def retrieve_composite(
@@ -29,6 +30,8 @@ async def retrieve_composite(
     embed_provider: EmbedProvider | None,
     retriever: HybridRetriever,
     context_builder: ContextBuilder,
+    snippet_chars: int = DEFAULT_SNIPPET_CHARS,
+    mode: str | None = None,
 ) -> RetrievalResponse:
     validate_retrieval_scope(
         repository_id=repository_id,
@@ -86,6 +89,9 @@ async def retrieve_composite(
         include_chunks=include_chunks,
         include_graph=include_graph,
         include_scores=include_scores,
+        query=query,
+        snippet_chars=snippet_chars,
+        mode=mode,
     )
 
 

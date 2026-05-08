@@ -5,10 +5,10 @@ is available via ``cograph.read_node`` / ``cograph.read_chunk``. The snippet
 is centred on the first query-term match and falls back to a head-anchored
 window for vector-only hits with no lexical overlap. Word-boundary safe.
 
-This module replaces the older ad-hoc helpers (``context_builder._snippet``
-and ``blended_search._best_snippet``) with a single contract: every
-search-style tool uses the same excerpt/truncation logic so the agent can
-reason uniformly about when to follow up for full text.
+This module replaces the older ad-hoc ``context_builder._snippet`` helper
+with a single contract: every search-style tool uses the same
+excerpt/truncation logic so the agent can reason uniformly about when to
+follow up for full text.
 """
 
 from __future__ import annotations

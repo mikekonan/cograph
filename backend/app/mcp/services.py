@@ -32,7 +32,6 @@ from backend.app.models.enums import RepositoryStatus
 from backend.app.models.md_collection import MdChunk, MdCollection, MdDocument
 from backend.app.models.repository import Repository
 from backend.app.models.user import User
-from backend.app.rag.blended_search import BlendedSearchResponse, BlendedSearchService
 from backend.app.rag.context_builder import (
     ContextBuilder,
     RetrievalLayer,
@@ -43,6 +42,7 @@ from backend.app.rag.hybrid import HybridRetriever
 from backend.app.rag.lexical import LexicalRetriever, SymbolLookup
 from backend.app.rag.retriever import RetrievedChunk
 from backend.app.rag.service import retrieve_composite
+from backend.app.rag.snippet import DEFAULT_SNIPPET_CHARS
 from backend.app.wiki import WikiQueryService
 
 
@@ -110,6 +110,8 @@ async def retrieve_payload(
     include_graph: bool,
     include_scores: bool,
     current_user: User | None,
+    snippet_chars: int = DEFAULT_SNIPPET_CHARS,
+    mode: str | None = None,
 ) -> RetrievalResponse:
     async with services.session_manager.session() as session:
         embed_provider = services.embed_provider
@@ -134,6 +136,8 @@ async def retrieve_payload(
             embed_provider=embed_provider,
             retriever=services.retriever,
             context_builder=services.context_builder,
+            snippet_chars=snippet_chars,
+            mode=mode,
         )
 
 
@@ -217,34 +221,6 @@ async def search_code_payload(
             include_chunks=False,
             include_graph=False,
             include_scores=True,
-        )
-
-
-async def search_payload(
-    *,
-    services: MCPServices,
-    repository_id: UUID,
-    repo_slug_path: str,
-    query: str,
-    top_k: int,
-) -> BlendedSearchResponse:
-    async with services.session_manager.session() as session:
-        await require_ready_repository(
-            session=session,
-            repository_id=repository_id,
-        )
-        search_service = BlendedSearchService(
-            lexical=services.lexical,
-            symbol=services.symbol,
-            rrf_k=services.settings.retrieval.rrf_k,
-            candidate_cap=services.settings.retrieval.candidate_cap,
-        )
-        return await search_service.search(
-            session,
-            repository_id=repository_id,
-            repo_slug_path=repo_slug_path,
-            query=query,
-            top_k=top_k,
         )
 
 
