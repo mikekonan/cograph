@@ -156,8 +156,8 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ${{ env.HARBOR_REGISTRY }}
-          username: ${{ env.HARBOR_USERNAME }}
-          password: ${{ env.HARBOR_PASSWORD }}
+          username: ${{ env.HARBOR_ROBOT_USER }}
+          password: ${{ env.HARBOR_ROBOT_TOKEN }}
 
       - name: Compute tags
         id: meta
