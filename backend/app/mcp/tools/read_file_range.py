@@ -22,9 +22,10 @@ from backend.app.models.source_file import SourceFile
 
 _READ_FILE_RANGE_DESCRIPTION = (
     "Read a 1-indexed line range of a source file by repo slug + path.\n"
-    "Use when: you have a `file_path` (typically from a `citation` returned by "
-    "cograph.retrieve / cograph.search_code / cograph.read_node) and need a few "
-    "dozen lines of surrounding context that a node-bounded read won't capture.\n"
+    "Use when: you have a `file_path` (typically from `provenance` on a "
+    "cograph.retrieve / cograph.search_code / cograph.read_node result) and "
+    "need a few dozen lines of surrounding context that a node-bounded read "
+    "won't capture.\n"
     "Do NOT use to dump whole files (the range is capped at 1000 lines) or to "
     "search by content (use cograph.retrieve)."
 )
