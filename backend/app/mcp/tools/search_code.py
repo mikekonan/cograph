@@ -28,9 +28,13 @@ def register(server: FastMCP, services: MCPServices) -> None:
     @server.tool(
         name="cograph.search_code",
         description=(
-            "Lexical and fuzzy symbol search over repository code nodes. The "
-            "`repository` argument is the compound slug 'host/owner/name', "
-            "e.g. 'github.com/mikekonan/cograph'."
+            "Lexical + fuzzy symbol search over a repository's code nodes. "
+            "Returns names + line ranges (no body) so the agent can pick the "
+            "right node, then read it with cograph.read_node.\n"
+            "Use when: agent has a probable symbol name (class, function, "
+            "qualified path) and wants a symbol-exact lookup.\n"
+            "Do NOT use for natural-language questions (use cograph.retrieve "
+            "with mode=code) or to read a node fully (use cograph.read_node)."
         ),
     )
     async def search_code(
