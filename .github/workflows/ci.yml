@@ -274,6 +274,7 @@ jobs:
                   "cograph.collections",
                   "cograph.collection_document",
                   "cograph.collection_search",
+                  "cograph.read_chunk",
                   "cograph.retrieve",
                   "cograph.read_node",
                   "cograph.search_code",
