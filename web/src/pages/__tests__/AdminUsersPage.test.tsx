@@ -11,7 +11,7 @@ const ownerUser: AdminUser = {
   id: "user-admin-0001",
   email: "owner@example.com",
   name: "First Boss",
-  role: "admin",
+  role: "owner",
   is_owner: true,
   is_active: true,
   auth_source: "password",
@@ -134,28 +134,31 @@ describe("AdminUsersPage", () => {
     expect(screen.getByText("admin2@example.com")).toBeInTheDocument();
     expect(screen.getByText("member@example.com")).toBeInTheDocument();
 
+    // Owner row carries both the role badge and a separate "Owner" chip.
     const ownerRow = rowFor("owner@example.com");
-    expect(within(ownerRow).getByText(/^owner$/i)).toBeInTheDocument();
+    expect(within(ownerRow).getAllByText(/^owner$/i).length).toBeGreaterThan(0);
 
     const memberRow = rowFor("member@example.com");
     expect(within(memberRow).queryByText(/^owner$/i)).toBeNull();
   });
 
-  it("hides the Delete button on the owner row but keeps it on regular rows", async () => {
+  it("shows the Delete button on the owner row when another admin remains", async () => {
+    // OWNER no longer has extra protection — only the last admin/owner is gated.
+    // Authenticate as admin2 so the owner row isn't suppressed by self-row guard.
+    authState.user = secondAdmin;
     renderPage();
     await screen.findByText("owner@example.com");
 
-    expect(screen.queryByRole("button", { name: /Delete owner@example.com/i })).toBeNull();
-    expect(screen.getByRole("button", { name: /Delete admin2@example.com/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Delete owner@example.com/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Delete member@example.com/i })).toBeInTheDocument();
   });
 
-  it("hides the Delete button on the current-user row when current user is not the owner", async () => {
+  it("hides the Delete button on the current-user row regardless of role", async () => {
     authState.user = secondAdmin;
     renderPage();
     await screen.findByText("admin2@example.com");
 
-    expect(screen.queryByRole("button", { name: /Delete owner@example.com/i })).toBeNull();
+    // Owner row is still deletable (other admin remains); only the actor's row is hidden.
     expect(screen.queryByRole("button", { name: /Delete admin2@example.com/i })).toBeNull();
     expect(screen.getByRole("button", { name: /Delete member@example.com/i })).toBeInTheDocument();
   });
