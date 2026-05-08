@@ -146,6 +146,10 @@ async def node_payload(
     services: MCPServices,
     repository_id: UUID,
     node_id: UUID,
+    with_graph: bool = False,
+    with_summary: bool = False,
+    with_linked_docs: bool = False,
+    snippet_chars: int = DEFAULT_SNIPPET_CHARS,
 ) -> RetrievalResponse:
     async with services.session_manager.session() as session:
         await require_ready_repository(session=session, repository_id=repository_id)
@@ -170,18 +174,18 @@ async def node_payload(
                 "end_line": node.end_line,
             },
         )
+        requested_layers: set[RetrievalLayer] = {RetrievalLayer.CODE, RetrievalLayer.AST}
+        if with_summary:
+            requested_layers.add(RetrievalLayer.AST_SUMMARY)
         return await services.context_builder.build(
             session,
             chunks=[chunk],
-            requested_layers={
-                RetrievalLayer.CODE,
-                RetrievalLayer.AST,
-                RetrievalLayer.AST_SUMMARY,
-            },
+            requested_layers=requested_layers,
             repository_id=repository_id,
-            include_chunks=True,
-            include_graph=True,
+            include_chunks=with_linked_docs,
+            include_graph=with_graph,
             include_scores=False,
+            snippet_chars=snippet_chars,
         )
 
 
