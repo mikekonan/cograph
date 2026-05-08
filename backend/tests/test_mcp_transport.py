@@ -225,6 +225,7 @@ async def _call_node_tool(
     node_id: UUID,
     *,
     bearer_token: str | None = None,
+    with_summary: bool = True,
 ) -> dict[str, object]:
     headers = {"Authorization": f"Bearer {bearer_token}"} if bearer_token else None
     async with httpx.AsyncClient(headers=headers, timeout=30, follow_redirects=True) as http_client:
@@ -236,10 +237,11 @@ async def _call_node_tool(
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
                 result = await session.call_tool(
-                    "cograph.node",
+                    "cograph.read_node",
                     {
                         "repository": repository_slug,
                         "node_id": str(node_id),
+                        "with_summary": with_summary,
                     },
                 )
     return json.loads(result.content[0].text)
