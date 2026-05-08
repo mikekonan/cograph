@@ -321,5 +321,10 @@ async def test_retrieve_returns_empty_for_repo_not_ready(app, client, db_session
         app.dependency_overrides.pop(get_hybrid_retriever, None)
 
     assert response.status_code == 200
-    assert response.json() == {"results": [], "nodes": {}}
+    assert response.json() == {
+        "results": [],
+        "nodes": {},
+        "total_tokens_estimate": 0,
+        "mode": None,
+    }
     assert retriever.calls == []
