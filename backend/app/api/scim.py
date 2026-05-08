@@ -41,7 +41,7 @@ from backend.app.models.scim_event import SCIMEvent
 from backend.app.models.user import User
 from backend.app.models.user_identity import UserIdentity
 from backend.app.scim.cascade import (
-    SCIMOwnerProtectedError,
+    SCIMLastAdminProtectedError,
     disable_user_cascade,
     enable_user,
 )
@@ -589,7 +589,7 @@ async def _apply_mutation(
                 external_id=external_id,
                 session=session,
             )
-        except SCIMOwnerProtectedError:
+        except SCIMLastAdminProtectedError:
             await _record_event(
                 session,
                 client=client,
@@ -598,13 +598,13 @@ async def _apply_mutation(
                 target_user_id=user.id,
                 payload_hash=payload_hash,
                 status="rejected",
-                error_code="OWNER_PROTECTED",
+                error_code="LAST_ADMIN_PROTECTED",
             )
             await session.commit()
             raise _scim_http(
                 403,
                 "mutability",
-                "Owner cannot be disabled via SCIM",
+                "Cannot disable the last administrator via SCIM",
             ) from None
         changed = True
     elif new_active is True and not user.is_active:

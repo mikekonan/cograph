@@ -78,7 +78,8 @@ async def test_owner_assigns_role_and_lists(client, db_session, settings):
 
 
 @pytest.mark.anyio
-async def test_admin_can_list_but_not_mutate(client, db_session, settings):
+async def test_admin_can_list_and_mutate(client, db_session, settings):
+    """Admin and owner share one tier — admins can edit LLM runtime assignments."""
     await _login_as(client, db_session, settings, role=UserRole.ADMIN)
     secret = await _secret(db_session, settings, name="s")
 
@@ -86,8 +87,7 @@ async def test_admin_can_list_but_not_mutate(client, db_session, settings):
         "/api/admin/llm-runtime/completion_writer",
         json={"secret_id": str(secret.id), "model_name": "gpt-5"},
     )
-    assert response.status_code == 403
-    assert response.json()["error"]["code"] == "FORBIDDEN_OWNER_ONLY"
+    assert response.status_code == 200
 
     listing = await client.get("/api/admin/llm-runtime")
     assert listing.status_code == 200

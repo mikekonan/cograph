@@ -1,15 +1,14 @@
-"""Admin user-management endpoints (Phase 30.1).
+"""Admin user-management endpoints.
 
 CRUD over the `users` table for administrators. Mounted under
 `/api/admin/users` alongside the LLM-provider endpoints in
 `backend/app/api/admin.py`.
 
-Role model (Phase 30.1):
-- `owner` is a singleton role enforced by `uq_users_single_owner`.
-- Only the owner can promote/demote roles or transfer ownership.
-- Admin-or-owner can list/create/disable/enable users.
-- Owner cannot be disabled or deleted; transfer-ownership is the only
-  way to move the owner bit.
+Role model: OWNER and ADMIN share the same privilege tier. OWNER is a
+label set at instance bootstrap and is not transferable through the
+API — role transitions to or from OWNER are rejected. Disabling or
+deleting the last user with admin/owner role is rejected to keep the
+instance reachable; SCIM enforces the same invariant separately.
 """
 
 from __future__ import annotations
@@ -19,7 +18,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Response, status
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,11 +28,28 @@ from backend.app.core.deps import (
     get_db_session,
     require_admin_or_owner,
     require_csrf,
-    require_owner,
 )
 from backend.app.core.errors import ApiError
 from backend.app.models.enums import UserRole
 from backend.app.models.user import User
+
+_ADMIN_ROLES = (UserRole.OWNER, UserRole.ADMIN)
+
+
+async def _would_leave_no_admins(session: AsyncSession, user: User) -> bool:
+    """True iff disabling/demoting `user` would leave zero active admin/owner."""
+    if user.role not in _ADMIN_ROLES:
+        return False
+    remaining = await session.scalar(
+        select(func.count())
+        .select_from(User)
+        .where(
+            User.id != user.id,
+            User.role.in_(_ADMIN_ROLES),
+            User.is_active.is_(True),
+        )
+    )
+    return (remaining or 0) == 0
 
 router = APIRouter(prefix="/admin/users", tags=["admin", "users"])
 
@@ -67,9 +83,9 @@ class CreateUserRequest(BaseModel):
 class UpdateUserRequest(BaseModel):
     """Patch shape — every field optional, server applies what's set.
 
-    `password` triggers a credential reset; `role` flips owner/admin/user.
-    Role transitions to or from `owner` are forbidden — use the dedicated
-    transfer-owner endpoint instead.
+    `password` triggers a credential reset; `role` flips between admin
+    and user. Transitions to or from `owner` are rejected (owner is a
+    label set only at instance bootstrap).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -83,17 +99,6 @@ class DisableUserRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     reason: str | None = Field(default=None, max_length=128)
-
-
-class TransferOwnerRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    confirm_email: EmailStr
-
-
-class TransferOwnerResponse(BaseModel):
-    previous_owner_id: UUID
-    new_owner_id: UUID
 
 
 def _to_response(user: User) -> AdminUserResponse:
@@ -138,15 +143,9 @@ async def create_user(
 
     if payload.role is UserRole.OWNER:
         raise ApiError(
-            403,
-            "FORBIDDEN_OWNER_ONLY",
-            "Cannot create users with owner role; use transfer-owner instead.",
-        )
-    if payload.role is UserRole.ADMIN and current_admin.role is not UserRole.OWNER:
-        raise ApiError(
-            403,
-            "FORBIDDEN_OWNER_ONLY",
-            "Only the owner can promote a user to administrator.",
+            409,
+            "OWNER_LABEL_LOCKED",
+            "Owner is set only at instance bootstrap; cannot be assigned via API.",
         )
 
     try:
@@ -202,33 +201,24 @@ async def update_user(
     role_change = payload.role is not None and payload.role is not user.role
 
     if role_change:
-        # Role-changing requires owner; admins cannot promote / demote.
-        if current_admin.role is not UserRole.OWNER:
-            raise ApiError(
-                403,
-                "FORBIDDEN_OWNER_ONLY",
-                "Only the owner can change a user's role.",
-            )
-        # Transitions to or from `owner` are forbidden via PATCH.
+        # Owner label is bootstrap-only; transitions to/from owner are rejected.
         if user.role is UserRole.OWNER or payload.role is UserRole.OWNER:
             raise ApiError(
                 409,
-                "OWNER_PROTECTED",
-                "Use POST /admin/users/{id}/transfer-owner to move ownership.",
+                "OWNER_LABEL_LOCKED",
+                "Owner role is set at instance bootstrap and cannot be changed via API.",
             )
-
-    if (
-        user.id == current_admin.id
-        and payload.role is not None
-        and current_admin.role is UserRole.ADMIN
-        and payload.role is not UserRole.ADMIN
-    ):
-        # Admins cannot self-demote; owner self-changes are blocked above.
-        raise ApiError(
-            409,
-            "SELF_DEMOTE",
-            "You cannot demote yourself; ask the owner.",
-        )
+        # Demoting yourself out of admin is allowed only if another admin remains.
+        if (
+            user.id == current_admin.id
+            and payload.role is UserRole.USER
+            and await _would_leave_no_admins(session, user)
+        ):
+            raise ApiError(
+                409,
+                "LAST_ADMIN_PROTECTED",
+                "Cannot demote the last administrator; promote another admin first.",
+            )
 
     if payload.password is not None:
         try:
@@ -280,22 +270,26 @@ async def disable_user(
     if user is None:
         raise ApiError(404, "NOT_FOUND", "User not found")
 
-    if user.role is UserRole.OWNER:
+    if user.id == current_admin.id:
+        raise ApiError(
+            409, "SELF_DISABLE", "You cannot disable your own account."
+        )
+
+    if await _would_leave_no_admins(session, user):
         await write_audit(
             session,
             AuditEventRecord(
                 actor_user_id=current_admin.id,
                 target_user_id=user.id,
-                event_type="owner_disable_blocked",
+                event_type="last_admin_disable_blocked",
                 severity="critical",
             ),
         )
         await session.commit()
-        raise ApiError(409, "OWNER_PROTECTED", "The owner cannot be disabled.")
-
-    if user.id == current_admin.id:
         raise ApiError(
-            409, "SELF_DISABLE", "You cannot disable your own account."
+            409,
+            "LAST_ADMIN_PROTECTED",
+            "Cannot disable the last administrator.",
         )
 
     if not user.is_active:
@@ -361,18 +355,18 @@ async def delete_user(
     if user is None:
         raise ApiError(404, "NOT_FOUND", "User not found")
 
-    if user.role is UserRole.OWNER:
-        raise ApiError(
-            409,
-            "OWNER_PROTECTED",
-            "The owner cannot be deleted.",
-        )
-
     if user.id == current_admin.id:
         raise ApiError(
             409,
             "SELF_DELETE",
             "You cannot delete your own account; ask another admin.",
+        )
+
+    if await _would_leave_no_admins(session, user):
+        raise ApiError(
+            409,
+            "LAST_ADMIN_PROTECTED",
+            "Cannot delete the last administrator.",
         )
 
     await write_audit(
@@ -387,96 +381,3 @@ async def delete_user(
     await session.delete(user)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@router.post(
-    "/{user_id}/transfer-owner",
-    response_model=TransferOwnerResponse,
-)
-async def transfer_owner(
-    user_id: UUID,
-    payload: TransferOwnerRequest,
-    session: AsyncSession = Depends(get_db_session),
-    current_owner: User = Depends(require_owner),
-    _csrf: User = Depends(require_csrf),
-) -> TransferOwnerResponse:
-    """Atomically swap the owner bit to another existing admin/user.
-
-    The two rows are locked `FOR UPDATE`; the previous owner is demoted
-    to `admin` and the target is promoted to `owner` in the same
-    transaction. `uq_users_single_owner` guarantees at most one owner
-    even if two transfers race.
-    """
-    del _csrf
-
-    if user_id == current_owner.id:
-        raise ApiError(
-            409,
-            "OWNER_TRANSFER_TARGET_INVALID",
-            "Target user is already the owner.",
-        )
-
-    target = await session.scalar(
-        select(User).where(User.id == user_id).with_for_update()
-    )
-    if target is None:
-        raise ApiError(404, "NOT_FOUND", "User not found")
-
-    if str(payload.confirm_email).lower() != target.email.lower():
-        raise ApiError(
-            409,
-            "OWNER_TRANSFER_TARGET_INVALID",
-            "confirm_email does not match the target user's email.",
-        )
-
-    if not target.is_active:
-        raise ApiError(
-            409,
-            "OWNER_TRANSFER_TARGET_INVALID",
-            "Cannot transfer ownership to a disabled user.",
-        )
-
-    # Re-fetch the current owner under FOR UPDATE in the same transaction.
-    owner_row = await session.scalar(
-        select(User).where(User.id == current_owner.id).with_for_update()
-    )
-    if owner_row is None or owner_row.role is not UserRole.OWNER:
-        raise ApiError(
-            409,
-            "OWNER_TRANSFER_RACE",
-            "Owner row changed during transfer; retry.",
-        )
-
-    previous_owner_id = owner_row.id
-    owner_row.role = UserRole.ADMIN
-    # Flush so the partial unique sees one fewer owner before we promote.
-    await session.flush()
-    target.role = UserRole.OWNER
-    await session.flush()
-
-    # Verify exactly one owner exists post-commit.
-    owner_count = await session.scalar(
-        select(User.id).where(User.role == UserRole.OWNER)
-    )
-    if owner_count is None:
-        await session.rollback()
-        raise ApiError(
-            500,
-            "OWNER_TRANSFER_RACE",
-            "Owner transfer left zero owners; retry.",
-        )
-
-    await write_audit(
-        session,
-        AuditEventRecord(
-            actor_user_id=previous_owner_id,
-            target_user_id=target.id,
-            event_type="transfer_owner",
-            metadata={"previous_owner_id": str(previous_owner_id)},
-        ),
-    )
-    await session.commit()
-    return TransferOwnerResponse(
-        previous_owner_id=previous_owner_id,
-        new_owner_id=target.id,
-    )
