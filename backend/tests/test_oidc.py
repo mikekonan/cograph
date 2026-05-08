@@ -545,7 +545,8 @@ async def test_login_returns_410_when_disabled(client, db_session):
 # ---------------------------------------------------------------------------
 
 
-async def test_admin_create_provider_owner_only(client, db_session, settings):
+async def test_admin_can_create_provider(client, db_session, settings):
+    """Admin and owner share one tier — admins can create identity providers."""
     user = await _make_user(db_session, email="admin@example.com", role=UserRole.ADMIN)
     await _authenticate(client, settings, user)
 
@@ -560,8 +561,7 @@ async def test_admin_create_provider_owner_only(client, db_session, settings):
         },
         headers=_csrf_headers(),
     )
-    assert response.status_code == 403
-    assert response.json()["error"]["code"] == "FORBIDDEN_OWNER_ONLY"
+    assert response.status_code == 201
 
 
 async def test_admin_create_provider_owner_persists_and_hides_secret(
