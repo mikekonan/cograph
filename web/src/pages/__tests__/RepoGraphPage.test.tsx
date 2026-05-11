@@ -275,12 +275,8 @@ describe("RepoGraphPage", () => {
       renderGraphPageWithSearch(`?node=${STALE_UUID}&qn=pkg.Removed`);
 
       // The stale-citation panel calls out the removed symbol by name.
-      // Wider timeout: slower CI runners can take >1s through the
-      // UUID-404 → by-qn-404 fallback chain before the panel renders.
       expect(
-        await screen.findByText(/no longer exists at the indexed commit/i, undefined, {
-          timeout: 5000,
-        }),
+        await screen.findByText(/no longer exists at the indexed commit/i),
       ).toBeInTheDocument();
       expect(screen.getByText("pkg.Removed")).toBeInTheDocument();
     });
@@ -303,9 +299,7 @@ describe("RepoGraphPage", () => {
       renderGraphPageWithSearch(`?node=${STALE_UUID}`);
 
       expect(
-        await screen.findByText(/no longer exists at the indexed commit/i, undefined, {
-          timeout: 5000,
-        }),
+        await screen.findByText(/no longer exists at the indexed commit/i),
       ).toBeInTheDocument();
       // Without `?qn=`, the by-qn endpoint must not be called.
       expect(byQnSpy).not.toHaveBeenCalled();
