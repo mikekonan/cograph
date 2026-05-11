@@ -69,8 +69,9 @@ app.kubernetes.io/instance: {{ .Release.Name }}
   value: {{ .Values.app.gitCheckoutsRoot | quote }}
 - name: COGRAPH_AUTH__SECURE_COOKIES
   value: {{ ternary "true" "false" .Values.app.auth.secureCookies | quote }}
+{{- if .Values.app.embedding.enabled }}
 - name: COGRAPH_EMBEDDING__ENABLED
-  value: {{ ternary "true" "false" .Values.app.embedding.enabled | quote }}
+  value: "true"
 - name: COGRAPH_EMBEDDING__API_URL
   value: {{ .Values.app.embedding.apiUrl | quote }}
 - name: COGRAPH_EMBEDDING__MODEL
@@ -79,11 +80,14 @@ app.kubernetes.io/instance: {{ .Release.Name }}
   value: {{ .Values.app.embedding.dimensions | quote }}
 - name: COGRAPH_EMBEDDING__BATCH_SIZE
   value: {{ .Values.app.embedding.batchSize | quote }}
+{{- end }}
+{{- if .Values.app.completion.enabled }}
 - name: COGRAPH_COMPLETION__ENABLED
-  value: {{ ternary "true" "false" .Values.app.completion.enabled | quote }}
+  value: "true"
 - name: COGRAPH_COMPLETION__API_URL
   value: {{ .Values.app.completion.apiUrl | quote }}
 - name: COGRAPH_COMPLETION__MODEL
   value: {{ .Values.app.completion.model | quote }}
+{{- end }}
 {{- end -}}
 
