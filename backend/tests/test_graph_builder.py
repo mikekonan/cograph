@@ -689,3 +689,71 @@ func currency() string {
     assert symbol_node.node_type is CodeNodeType.FUNCTION
     assert symbol_node.parent_id == module_node.id
     assert module_node.source_file_id == symbol_node.source_file_id
+
+
+async def test_rebuild_relationships_scoped_survives_id_set_larger_than_chunk_size(
+    db_session, monkeypatch
+):
+    """Regression: when the touched-id set exceeds the configured IN_CHUNK_SIZE,
+    rebuild_relationships_scoped must still complete and rebuild every
+    caller/callee link correctly. Models the production crash on a fresh
+    sync of a large monorepo where the IN-list blew the asyncpg 32767
+    placeholder cap (the underlying cause; here we shrink the cap to 3
+    so the chunking is exercised against a small fixture).
+    """
+    from backend.app.graph import _chunking, builder as builder_module
+
+    monkeypatch.setattr(_chunking, "IN_CHUNK_SIZE", 3)
+    monkeypatch.setattr(builder_module, "chunked", _chunking.chunked)
+
+    repository = Repository(
+        host="example.com",
+        git_url="git@github.com:mikekonan/cograph.git",
+        name="cograph",
+        owner="mikekonan",
+        branch="main",
+        status=RepositoryStatus.PENDING,
+        sync_schedule=SyncSchedule.MANUAL,
+    )
+    db_session.add(repository)
+    await db_session.flush()
+
+    # 10 leaf helpers + 1 hub function that calls every helper → 11 nodes
+    # and 10 CALLS edges. With IN_CHUNK_SIZE=3, the touched set (11 ids)
+    # forces 4 chunks for each IN-list scan inside the resolver.
+    helper_defs = "\n".join(f"def helper_{i}() -> int:\n    return {i}\n" for i in range(10))
+    hub_def = (
+        "def hub() -> int:\n"
+        + "    return (\n"
+        + " + ".join(f"helper_{i}()" for i in range(10))
+        + "\n    )\n"
+    )
+    source_text = f"{helper_defs}\n{hub_def}"
+
+    extracted = GraphExtractor().extract(
+        GraphParser().parse_source(file_path="mod.py", source_text=source_text)
+    )
+    result = await GraphBuilder().persist_graph(
+        session=db_session,
+        repository_id=repository.id,
+        extracted_graph=extracted,
+    )
+    await db_session.commit()
+
+    assert result.resolved_calls == 10
+
+    persisted_nodes = {
+        node.qualified_name: node
+        for node in (
+            await db_session.scalars(
+                select(CodeNode).where(CodeNode.repository_id == repository.id)
+            )
+        ).all()
+    }
+    hub_node = persisted_nodes["mod.hub"]
+    helper_ids = {str(persisted_nodes[f"mod.helper_{i}"].id) for i in range(10)}
+    # Every helper id must appear in the hub's callees array — if a
+    # chunk got dropped, this set would be short.
+    assert set(hub_node.callees) == helper_ids
+    for i in range(10):
+        assert persisted_nodes[f"mod.helper_{i}"].callers == [str(hub_node.id)]
