@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { sanitizeMermaidSvg } from "../MermaidDiagram";
+import { MermaidSvgParseError, sanitizeMermaidSvg } from "../MermaidDiagram";
 
 describe("sanitizeMermaidSvg", () => {
   it("preserves a vanilla mermaid-style SVG with HTML labels", () => {
@@ -64,6 +64,48 @@ describe("sanitizeMermaidSvg", () => {
       '<svg xmlns="http://www.w3.org/2000/svg"><a href="https://example.com/docs"><rect width="10" height="10"/></a></svg>';
     const cleaned = sanitizeMermaidSvg(svg);
     expect(cleaned).toContain("https://example.com/docs");
+  });
+
+  it("throws on a Firefox-style root parsererror instead of leaking it into the DOM", () => {
+    // Firefox places <parsererror> as the documentElement when strict XML
+    // parsing fails. We must not serialize that back into the page.
+    const broken =
+      '<parsererror xmlns="http://www.mozilla.org/newlayout/xml/parsererror.xml">XML Parsing Error: mismatched tag</parsererror>';
+    expect(() => sanitizeMermaidSvg(broken)).toThrowError(MermaidSvgParseError);
+  });
+
+  it("throws on a Chrome-style nested parsererror inside a partial <svg> root", () => {
+    // Chrome/WebKit keep <svg> as the documentElement and insert
+    // <parsererror> as a child when strict XML parsing fails. Before
+    // this fix, only the root-level check fired, so the partial SVG
+    // (plus the visible red parsererror block) got handed straight to
+    // dangerouslySetInnerHTML. Reproduces what every kyc-wiki page
+    // showed users: 26/27 mermaid diagrams rendering an XML error box.
+    const broken = [
+      '<svg xmlns="http://www.w3.org/2000/svg">',
+      '<parsererror xmlns="http://www.w3.org/1999/xhtml">',
+      "  <h3>This page contains the following errors:</h3>",
+      '  <div class="error">error on line 1 at column 200: Opening and ending tag mismatch: br line 1 and p</div>',
+      "</parsererror>",
+      "<g></g>",
+      "</svg>",
+    ].join("");
+    expect(() => sanitizeMermaidSvg(broken)).toThrowError(MermaidSvgParseError);
+  });
+
+  it("throws on real mermaid output that contains an unclosed <br> inside <foreignObject>", () => {
+    // The actual failure mode in prod: Mermaid emits HTML-style void <br>
+    // inside foreignObject. Strict image/svg+xml parsing rejects it as
+    // "Opening and ending tag mismatch". Guard against regressing the
+    // sanitizer back to silently passing the broken parse through.
+    const broken = [
+      '<svg xmlns="http://www.w3.org/2000/svg">',
+      '<foreignObject><span class="nodeLabel">',
+      "first line<br>second line",
+      "</span></foreignObject>",
+      "</svg>",
+    ].join("");
+    expect(() => sanitizeMermaidSvg(broken)).toThrowError(MermaidSvgParseError);
   });
 
   it("kills the canonical Mermaid HTML-label XSS payload from the finding", () => {
