@@ -31,8 +31,14 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 git clone --bare "$PWD" "$WORK_DIR/cograph.git" >/dev/null 2>&1
 cd "$WORK_DIR/cograph.git"
 
-# 1. Drop the pgw-ci workflow file from every commit it ever touched.
-git filter-repo --invert-paths --path .github/workflows/pgw-ci.yml --force >/dev/null
+# 1. Drop pgw-internal files from every commit they ever touched:
+#    - .github/workflows/pgw-ci.yml — internal CI workflow
+#    - scripts/sync_to_github.sh — this script itself (pgw-only tooling)
+git filter-repo \
+  --invert-paths \
+  --path .github/workflows/pgw-ci.yml \
+  --path scripts/sync_to_github.sh \
+  --force >/dev/null
 
 # 2. Rewrite commit messages: drop "ci(pgw):" prefix, replace "pgw staging"
 #    references with generic CI phrasing.
