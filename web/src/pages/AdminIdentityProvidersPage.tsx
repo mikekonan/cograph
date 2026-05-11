@@ -521,8 +521,8 @@ function ProviderEditor({
               }
             />
             <span>
-              Auto-link to existing local accounts on verified email (clears the local
-              password — SSO becomes the only sign-in)
+              Auto-link to existing local accounts on verified email (clears the local password —
+              SSO becomes the only sign-in)
             </span>
           </label>
           <label className="flex items-center gap-2 text-sm">
