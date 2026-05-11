@@ -7,6 +7,8 @@ import {
   type ReasoningEffort,
 } from "@/api/llmRuntime";
 import type { LLMSecret } from "@/api/types";
+import { SecretDialog } from "@/components/admin/SecretDialog";
+import { EmptyState } from "@/components/shared/EmptyState";
 import { Skeleton } from "@/components/shared/Skeleton";
 import { StateBoundary } from "@/components/shared/StateBoundary";
 import { Button } from "@/components/ui/Button";
@@ -26,9 +28,21 @@ import {
   useTriggerReembed,
   useUpsertLlmRuntimeAssignment,
 } from "@/hooks/useLlmRuntime";
-import { useAdminSecrets } from "@/hooks/useSecrets";
+import { useAdminSecrets, useDeleteAdminSecret, useTestAdminSecret } from "@/hooks/useSecrets";
 import { cn } from "@/lib/utils";
-import { AlertTriangle, Bot, Check, Loader2, PlugZap, Trash2 } from "lucide-react";
+import {
+  AlertTriangle,
+  Bot,
+  Check,
+  KeyRound,
+  Loader2,
+  Pencil,
+  Plug,
+  PlugZap,
+  Plus,
+  ShieldAlert,
+  Trash2,
+} from "lucide-react";
 import { useId, useState } from "react";
 
 const ROLE_LABEL: Record<LLMRole, string> = {
@@ -53,6 +67,11 @@ const MODEL_SUGGESTIONS: Record<LLMRole, readonly string[]> = {
   completion_reasoning: ["gpt-5.5-thinking", "gpt-5.4-thinking", "o4-mini", "o3"],
 };
 
+/**
+ * AdminLLMRuntimePage — `/admin/llm-runtime`. One tab covers both
+ * per-role model assignments (top) and the reusable API secrets they consume
+ * (bottom). Single source for everything LLM-related.
+ */
 export default function AdminLLMRuntimePage() {
   const assignmentsQuery = useLlmRuntimeAssignments();
   const secretsQuery = useAdminSecrets();
@@ -65,15 +84,15 @@ export default function AdminLLMRuntimePage() {
   const secrets = secretsQuery.data ?? [];
 
   return (
-    <section className="flex flex-col gap-4">
+    <section className="flex flex-col gap-6">
       <header className="flex items-start justify-between gap-3">
         <div>
           <h2 className="flex items-center gap-2 text-lg font-semibold tracking-tight">
             <Bot className="h-5 w-5" aria-hidden="true" /> LLM runtime
           </h2>
-          <p className="text-sm text-[color:var(--color-fg-muted)]">
-            Pick a secret and a model name per role. One secret can power multiple roles. Owner
-            only.
+          <p className="max-w-3xl text-sm text-[color:var(--color-fg-muted)]">
+            Pick a secret and a model name per role. One secret can power multiple roles. Manage
+            secrets in the section below.
           </p>
         </div>
       </header>
@@ -95,10 +114,15 @@ export default function AdminLLMRuntimePage() {
               ? "error"
               : "ok"
         }
-        loadingFallback={<Skeleton className="h-64 w-full" />}
+        loadingFallback={
+          <div className="flex flex-col gap-3">
+            <Skeleton className="h-64 w-full" />
+            <Skeleton className="h-40 w-full" />
+          </div>
+        }
         error={assignmentsQuery.error instanceof Error ? assignmentsQuery.error : null}
       >
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-3">
           {LLM_ROLES.map((role) => (
             <RolePanel
               key={role}
@@ -112,8 +136,174 @@ export default function AdminLLMRuntimePage() {
             />
           ))}
         </div>
+
+        <SecretsSection secrets={secrets} loading={secretsQuery.isPending} />
       </StateBoundary>
     </section>
+  );
+}
+
+function SecretsSection({
+  secrets,
+  loading,
+}: {
+  secrets: LLMSecret[];
+  loading: boolean;
+}) {
+  return (
+    <section className="flex flex-col gap-3 border-t border-[color:var(--color-border-subtle)] pt-6">
+      <header className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="flex items-center gap-2 text-base font-semibold tracking-tight">
+            <KeyRound className="h-4 w-4" aria-hidden="true" /> API secrets
+          </h3>
+          <p className="max-w-3xl text-sm text-[color:var(--color-fg-muted)]">
+            Reusable credentials. Assign each one to one or more LLM roles above.
+          </p>
+        </div>
+        <SecretDialog>
+          <Button>
+            <Plus className="h-4 w-4" aria-hidden="true" /> Add secret
+          </Button>
+        </SecretDialog>
+      </header>
+
+      {loading ? (
+        <Skeleton className="h-40 w-full" />
+      ) : secrets.length === 0 ? (
+        <EmptyState
+          icon={KeyRound}
+          title="No secrets configured"
+          description="Add an OpenAI-compatible base URL and key, then bind it to one or more LLM roles."
+        />
+      ) : (
+        <ul className="grid gap-3 md:grid-cols-2">
+          {secrets.map((secret) => (
+            <li key={secret.id}>
+              <SecretCard secret={secret} />
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function SecretCard({ secret }: { secret: LLMSecret }) {
+  const remove = useDeleteAdminSecret();
+  const test = useTestAdminSecret();
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [testMessage, setTestMessage] = useState<string | null>(null);
+  const [testFailed, setTestFailed] = useState(false);
+
+  async function handleDelete() {
+    try {
+      await remove.mutateAsync(secret.id);
+      setConfirmDelete(false);
+    } catch (error) {
+      if (error instanceof ApiError) {
+        setTestMessage(error.message);
+        setTestFailed(true);
+        setConfirmDelete(false);
+      }
+    }
+  }
+
+  async function handleTest() {
+    setTestMessage(null);
+    setTestFailed(false);
+    try {
+      const result = await test.mutateAsync(secret.id);
+      setTestMessage(result.message);
+      setTestFailed(!result.success);
+    } catch (error) {
+      if (error instanceof ApiError) {
+        setTestMessage(error.message);
+      } else {
+        setTestMessage("Connection test failed.");
+      }
+      setTestFailed(true);
+    }
+  }
+
+  return (
+    <article
+      className={cn(
+        "flex h-full flex-col gap-3 rounded-[var(--radius-md)] border p-4",
+        "border-[color:var(--color-border-subtle)] bg-[color:var(--color-bg-surface)]",
+      )}
+    >
+      <header className="flex items-start justify-between gap-3">
+        <div>
+          <h4 className="font-mono text-sm font-semibold text-[color:var(--color-fg)]">
+            {secret.name}
+          </h4>
+          <p className="text-xs text-[color:var(--color-fg-muted)] break-all">{secret.api_url}</p>
+        </div>
+        <span
+          className={cn(
+            "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-2xs font-medium",
+            secret.has_api_key
+              ? "bg-[color:var(--color-bg-success-subtle)] text-[color:var(--color-fg-success)]"
+              : "bg-[color:var(--color-bg-warning-subtle)] text-[color:var(--color-fg-warning)]",
+          )}
+        >
+          {secret.has_api_key ? (
+            <>
+              <Check className="h-3 w-3" aria-hidden="true" /> key set
+            </>
+          ) : (
+            <>
+              <ShieldAlert className="h-3 w-3" aria-hidden="true" /> no key
+            </>
+          )}
+        </span>
+      </header>
+
+      {testMessage ? (
+        <output
+          className={cn(
+            "block rounded-[var(--radius)] border px-2 py-1 text-xs",
+            testFailed
+              ? "border-[color:var(--color-danger)]/40 bg-[color:var(--color-danger)]/10 text-[color:var(--color-danger)]"
+              : "border-[color:var(--color-success)]/40 bg-[color:var(--color-success)]/10 text-[color:var(--color-success)]",
+          )}
+        >
+          {testMessage}
+        </output>
+      ) : null}
+
+      <footer className="mt-auto flex flex-wrap items-center gap-2">
+        <SecretDialog secret={secret}>
+          <Button variant="ghost" size="sm">
+            <Pencil className="h-3.5 w-3.5" aria-hidden="true" /> Edit
+          </Button>
+        </SecretDialog>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleTest}
+          disabled={test.isPending || !secret.has_api_key}
+        >
+          <Plug className="h-3.5 w-3.5" aria-hidden="true" />
+          {test.isPending ? "Testing…" : "Test"}
+        </Button>
+        {confirmDelete ? (
+          <>
+            <Button variant="danger" size="sm" onClick={handleDelete} disabled={remove.isPending}>
+              {remove.isPending ? "Deleting…" : "Confirm delete"}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>
+              Cancel
+            </Button>
+          </>
+        ) : (
+          <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(true)}>
+            <Trash2 className="h-3.5 w-3.5" aria-hidden="true" /> Delete
+          </Button>
+        )}
+      </footer>
+    </article>
   );
 }
 
@@ -223,7 +413,7 @@ function RolePanel({ role, assignment, secrets, onSave, onClear, busy, error }: 
             <SelectContent>
               {usableSecrets.length === 0 ? (
                 <div className="px-3 py-2 text-xs text-[color:var(--color-fg-muted)]">
-                  No secrets with an API key. Add one on the Secrets tab.
+                  No secrets with an API key. Add one in the section below.
                 </div>
               ) : (
                 usableSecrets.map((s) => (
