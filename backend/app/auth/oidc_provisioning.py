@@ -3,9 +3,16 @@
 Provisioning policy:
 
 1. Existing `(provider_id, sub)` identity -> that user.
-2. Email collision with a local user -> refuse with `OIDC_LINK_REQUIRED`.
-   *Never auto-link.* The user must sign in with the existing credential
-   and start a `link/{slug}/start` flow from their authenticated session.
+2. Email collision with a local user -> by default, refuse with
+   `OIDC_LINK_REQUIRED` so the user has to sign in with the existing
+   credential and start a `link/{slug}/start` flow from their
+   authenticated session.
+   If the provider has `auto_link_on_verified_email=true` AND the IdP
+   asserts `email_verified=true` AND the email domain matches
+   `domain_allowlist` (when set), the existing local user is auto-
+   linked. As part of the link the local password is cleared
+   (`password_hash=None`, `auth_source='oidc'`) so the account becomes
+   SSO-only — this is the "SSO supersedes password" migration path.
 3. Auto-provision a new user iff the provider opts in:
    - `auto_provision=true`
    - `email_verified=true` in the ID token
@@ -70,12 +77,19 @@ async def find_or_create_user(
         existing_identity.last_login_at = datetime.now(UTC)
         return user
 
-    # 2. Email collision — refuse to auto-link.
+    # 2. Email collision — either auto-link (opt-in) or refuse.
     if claims.email:
         existing_user = await session.scalar(
             select(User).where(User.email == claims.email)
         )
         if existing_user is not None:
+            if _can_auto_link(provider=provider, claims=claims):
+                return await _auto_link_existing_user(
+                    session,
+                    user=existing_user,
+                    provider=provider,
+                    claims=claims,
+                )
             raise ApiError(
                 409,
                 "OIDC_LINK_REQUIRED",
@@ -145,6 +159,86 @@ async def find_or_create_user(
                 "provider_id": str(provider.id),
                 "subject": claims.sub,
                 "role": role.value,
+            },
+        ),
+    )
+    return user
+
+
+def _can_auto_link(
+    *,
+    provider: IdentityProvider,
+    claims: IdTokenClaims,
+) -> bool:
+    """Decide whether a colliding email may be auto-linked to the local user.
+
+    All three gates must hold:
+      - provider opted in (`auto_link_on_verified_email=true`),
+      - IdP asserts the email is verified,
+      - email domain matches `domain_allowlist` (when set).
+
+    The allowlist check is intentionally duplicated from the
+    auto-provision branch so a misconfigured provider can never pull a
+    foreign-domain account in through the link path.
+    """
+    if not provider.auto_link_on_verified_email:
+        return False
+    if not claims.email or not claims.email_verified:
+        return False
+    if provider.domain_allowlist:
+        domain = _email_domain(claims.email)
+        allowed = {d.lower() for d in provider.domain_allowlist}
+        if domain is None or domain not in allowed:
+            return False
+    return True
+
+
+async def _auto_link_existing_user(
+    session: AsyncSession,
+    *,
+    user: User,
+    provider: IdentityProvider,
+    claims: IdTokenClaims,
+) -> User:
+    """Attach the IdP identity to `user`, then close the password path.
+
+    Clearing `password_hash` and switching `auth_source` to `oidc` makes
+    the account SSO-only — the bootstrap/legacy password no longer
+    authenticates. This is the migration path for "we just turned SSO
+    on for this tenant; existing local accounts should keep working
+    via Okta and only Okta."
+    """
+    if not user.is_active:
+        raise ApiError(
+            403,
+            "ACCOUNT_DISABLED",
+            "Account is disabled. Contact an administrator.",
+        )
+
+    user.password_hash = None
+    user.auth_source = "oidc"
+
+    identity = UserIdentity(
+        user_id=user.id,
+        provider_id=provider.id,
+        subject=claims.sub,
+        email_at_link=claims.email,
+        last_login_at=datetime.now(UTC),
+    )
+    session.add(identity)
+    await session.flush()
+
+    await write_audit(
+        session,
+        AuditEventRecord(
+            actor_user_id=None,
+            target_user_id=user.id,
+            event_type="user_identity_auto_linked",
+            metadata={
+                "provider_slug": provider.slug,
+                "provider_id": str(provider.id),
+                "subject": claims.sub,
+                "password_cleared": True,
             },
         ),
     )

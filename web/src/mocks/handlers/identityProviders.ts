@@ -54,6 +54,7 @@ export const identityProvidersHandlers = [
       groups_claim: body.groups_claim ?? null,
       domain_allowlist: body.domain_allowlist ?? null,
       auto_provision: body.auto_provision ?? true,
+      auto_link_on_verified_email: body.auto_link_on_verified_email ?? false,
       admin_groups: body.admin_groups ?? null,
       admin_group_mode: body.admin_group_mode ?? "ignore",
       created_at: nowIso(),

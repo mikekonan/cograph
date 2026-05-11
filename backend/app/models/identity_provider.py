@@ -59,6 +59,11 @@ class IdentityProvider(CreatedAtMixin, Base):
         nullable=True,
     )
     auto_provision: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    auto_link_on_verified_email: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
     admin_group_mode: Mapped[str] = mapped_column(
         String(24),
         nullable=False,
