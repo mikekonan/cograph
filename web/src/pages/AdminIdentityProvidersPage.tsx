@@ -38,8 +38,8 @@ import { Check, Pencil, Plug, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { useId, useMemo, useState } from "react";
 
 /**
- * AdminIdentityProvidersPage — `/admin/identity-providers`. Owner-only CRUD
- * over OIDC providers (clients, groups, scopes, default role).
+ * AdminIdentityProvidersPage — `/admin/identity-providers`. Admin-or-owner
+ * CRUD over OIDC providers (clients, groups, scopes, auto-provisioning).
  *
  * Soft-deletion is `enabled=false`. Hard delete is refused if any user has
  * a linked identity (backend returns IDP_IN_USE 409).
@@ -148,6 +148,10 @@ function ProviderRow({
     }
   }
 
+  const allowlist = provider.domain_allowlist ?? [];
+  const adminGroups = provider.admin_groups ?? [];
+  const testOk = result?.issuer_ok && result?.jwks_ok;
+
   return (
     <li
       className={cn(
@@ -172,12 +176,20 @@ function ProviderRow({
               </span>
             )}
           </div>
-          <p className="font-mono text-xs text-[color:var(--color-fg-muted)]">{provider.issuer}</p>
+          <p className="font-mono text-xs text-[color:var(--color-fg-muted)]">
+            {provider.issuer_url}
+          </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={handleTest} disabled={test.isPending}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleTest}
+            disabled={test.isPending}
+            aria-label={`Test ${provider.display_name}`}
+          >
             <Plug className="h-4 w-4" />
-            Test
+            {test.isPending ? "Testing…" : "Test"}
           </Button>
           <Button variant="ghost" size="sm" onClick={onEdit}>
             <Pencil className="h-4 w-4" />
@@ -191,19 +203,31 @@ function ProviderRow({
       </div>
 
       <dl className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-3">
-        <Field label="Default role">{provider.default_role}</Field>
+        <Field label="Auto-provision">{provider.auto_provision ? "yes" : "no"}</Field>
         <Field label="Admin group mode">{provider.admin_group_mode}</Field>
+        <Field label="Admin groups">
+          {adminGroups.length === 0 ? (
+            <span className="text-[color:var(--color-fg-muted)]">none</span>
+          ) : (
+            adminGroups.join(", ")
+          )}
+        </Field>
         <Field label="Domain allowlist">
-          {provider.domain_allowlist.length === 0 ? (
+          {allowlist.length === 0 ? (
             <span className="text-[color:var(--color-fg-muted)]">any</span>
           ) : (
-            provider.domain_allowlist.join(", ")
+            allowlist.join(", ")
           )}
         </Field>
         <Field label="Scopes">{provider.scopes.join(" ")}</Field>
+        <Field label="Groups claim">
+          {provider.groups_claim ?? (
+            <span className="text-[color:var(--color-fg-muted)]">default</span>
+          )}
+        </Field>
         <Field label="Response mode">{provider.response_mode}</Field>
         <Field label="Client secret">
-          {provider.client_secret_configured ? (
+          {provider.has_client_secret ? (
             <span className="inline-flex items-center gap-1 text-[color:var(--color-success)]">
               <Check className="h-3.5 w-3.5" />
               configured
@@ -215,10 +239,10 @@ function ProviderRow({
       </dl>
 
       {(result || error) && (
-        <div
+        <output
           className={cn(
-            "rounded-[var(--radius)] border px-3 py-2 text-xs",
-            error
+            "block rounded-[var(--radius)] border px-3 py-2 text-xs",
+            error || (result && !testOk)
               ? "border-[color:var(--color-danger)]/40 bg-[color:var(--color-danger)]/10 text-[color:var(--color-danger)]"
               : "border-[color:var(--color-success)]/40 bg-[color:var(--color-success)]/10 text-[color:var(--color-fg)]",
           )}
@@ -228,14 +252,29 @@ function ProviderRow({
           ) : result ? (
             <>
               <p className="font-medium">
-                {result.ok ? "Discovery succeeded" : "Discovery failed"}
+                {testOk
+                  ? "Discovery + JWKS reached the provider successfully."
+                  : "Test failed — see details below."}
               </p>
-              <p className="mt-1 text-[color:var(--color-fg-muted)]">
-                {result.jwks_keys} JWKS key(s) · {result.message ?? result.authorization_endpoint}
-              </p>
+              <ul className="mt-1 flex flex-col gap-0.5 text-[color:var(--color-fg-muted)]">
+                <li>
+                  Issuer: {result.issuer_ok ? "ok" : "failed"} ({result.issuer_url})
+                </li>
+                <li>
+                  JWKS:{" "}
+                  {result.jwks_ok
+                    ? `ok (${result.jwks_keys} key${result.jwks_keys === 1 ? "" : "s"})`
+                    : "failed"}
+                </li>
+                {result.authorization_endpoint && (
+                  <li>Authorization endpoint: {result.authorization_endpoint}</li>
+                )}
+                {result.token_endpoint && <li>Token endpoint: {result.token_endpoint}</li>}
+                {result.error && <li>Error: {result.error}</li>}
+              </ul>
             </>
           ) : null}
-        </div>
+        </output>
       )}
     </li>
   );
@@ -252,6 +291,22 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+type EditorForm = {
+  slug: string;
+  display_name: string;
+  issuer_url: string;
+  client_id: string;
+  client_secret: string;
+  scopes: string;
+  response_mode: ResponseMode;
+  groups_claim: string;
+  domain_allowlist: string;
+  auto_provision: boolean;
+  admin_groups: string;
+  admin_group_mode: AdminGroupMode;
+  enabled: boolean;
+};
+
 function ProviderEditor({
   mode,
   provider,
@@ -263,50 +318,46 @@ function ProviderEditor({
 }) {
   const create = useCreateIdentityProvider();
   const update = useUpdateIdentityProvider();
-  const [form, setForm] = useState<{
-    slug: string;
-    display_name: string;
-    issuer: string;
-    client_id: string;
-    client_secret: string;
-    scopes: string;
-    response_mode: ResponseMode;
-    domain_allowlist: string;
-    default_role: "user" | "admin";
-    admin_group: string;
-    admin_group_mode: AdminGroupMode;
-    enabled: boolean;
-  }>({
+  const [form, setForm] = useState<EditorForm>({
     slug: provider?.slug ?? "",
     display_name: provider?.display_name ?? "",
-    issuer: provider?.issuer ?? "",
+    issuer_url: provider?.issuer_url ?? "",
     client_id: provider?.client_id ?? "",
     client_secret: "",
     scopes: provider?.scopes.join(" ") ?? "openid profile email",
-    response_mode: provider?.response_mode ?? "code",
-    domain_allowlist: provider?.domain_allowlist.join(", ") ?? "",
-    default_role: provider?.default_role ?? "user",
-    admin_group: provider?.admin_group ?? "",
+    response_mode: provider?.response_mode ?? "query",
+    groups_claim: provider?.groups_claim ?? "",
+    domain_allowlist: (provider?.domain_allowlist ?? []).join(", "),
+    auto_provision: provider?.auto_provision ?? true,
+    admin_groups: (provider?.admin_groups ?? []).join(", "),
     admin_group_mode: provider?.admin_group_mode ?? "ignore",
     enabled: provider?.enabled ?? true,
   });
   const [error, setError] = useState<string | null>(null);
 
+  function splitList(value: string): string[] {
+    return value
+      .split(/[,\s]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+
   function buildPayload(): IdentityProviderCreate {
+    const domains = splitList(form.domain_allowlist);
+    const groups = splitList(form.admin_groups);
     return {
       slug: form.slug.trim(),
       display_name: form.display_name.trim(),
-      issuer: form.issuer.trim(),
+      kind: "oidc",
+      issuer_url: form.issuer_url.trim(),
       client_id: form.client_id.trim(),
-      client_secret: form.client_secret,
+      client_secret: form.client_secret || undefined,
       scopes: form.scopes.split(/\s+/).filter(Boolean),
       response_mode: form.response_mode,
-      domain_allowlist: form.domain_allowlist
-        .split(/[,\s]+/)
-        .map((s) => s.trim())
-        .filter(Boolean),
-      default_role: form.default_role,
-      admin_group: form.admin_group.trim() || null,
+      groups_claim: form.groups_claim.trim() || null,
+      domain_allowlist: domains.length > 0 ? domains : null,
+      auto_provision: form.auto_provision,
+      admin_groups: groups.length > 0 ? groups : null,
       admin_group_mode: form.admin_group_mode,
       enabled: form.enabled,
     };
@@ -318,9 +369,10 @@ function ProviderEditor({
       if (mode === "create") {
         await create.mutateAsync(buildPayload());
       } else if (provider) {
-        const { client_secret, ...rest } = buildPayload();
-        const payload: IdentityProviderUpdate =
-          client_secret === "" ? rest : { ...rest, client_secret };
+        // Strip `slug` (immutable) and `kind` (fixed) — backend uses extra=forbid.
+        // Omit empty `client_secret` so the stored value is preserved.
+        const { slug: _slug, kind: _kind, client_secret, ...rest } = buildPayload();
+        const payload: IdentityProviderUpdate = client_secret ? { ...rest, client_secret } : rest;
         await update.mutateAsync({ id: provider.id, input: payload });
       }
       onClose();
@@ -366,9 +418,9 @@ function ProviderEditor({
             placeholder="Okta"
           />
           <LabeledInput
-            label="Issuer"
-            value={form.issuer}
-            onChange={(v) => setForm((f) => ({ ...f, issuer: v }))}
+            label="Issuer URL"
+            value={form.issuer_url}
+            onChange={(v) => setForm((f) => ({ ...f, issuer_url: v }))}
             placeholder="https://example.okta.com"
             className="sm:col-span-2"
           />
@@ -391,29 +443,18 @@ function ProviderEditor({
             className="sm:col-span-2"
           />
           <LabeledInput
-            label="Domain allowlist (comma-separated)"
+            label="Domain allowlist (comma-separated, blank = any)"
             value={form.domain_allowlist}
             onChange={(v) => setForm((f) => ({ ...f, domain_allowlist: v }))}
             placeholder="example.com, partner.com"
             className="sm:col-span-2"
           />
-          <div className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium text-[color:var(--color-fg-muted)]">
-              Default role
-            </span>
-            <Select
-              value={form.default_role}
-              onValueChange={(v) => setForm((f) => ({ ...f, default_role: v as "user" | "admin" }))}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="user">user</SelectItem>
-                <SelectItem value="admin">admin</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          <LabeledInput
+            label="Groups claim (optional)"
+            value={form.groups_claim}
+            onChange={(v) => setForm((f) => ({ ...f, groups_claim: v }))}
+            placeholder="groups"
+          />
           <div className="flex flex-col gap-1.5">
             <span className="text-xs font-medium text-[color:var(--color-fg-muted)]">
               Response mode
@@ -426,15 +467,15 @@ function ProviderEditor({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="code">code (query)</SelectItem>
-                <SelectItem value="form_post">form_post (POST)</SelectItem>
+                <SelectItem value="query">query</SelectItem>
+                <SelectItem value="form_post">form_post</SelectItem>
               </SelectContent>
             </Select>
           </div>
           <LabeledInput
-            label="Admin group claim value"
-            value={form.admin_group}
-            onChange={(v) => setForm((f) => ({ ...f, admin_group: v }))}
+            label="Admin groups (comma-separated, blank = none)"
+            value={form.admin_groups}
+            onChange={(v) => setForm((f) => ({ ...f, admin_groups: v }))}
             placeholder="cograph-admins"
           />
           <div className="flex flex-col gap-1.5">
@@ -457,7 +498,15 @@ function ProviderEditor({
               </SelectContent>
             </Select>
           </div>
-          <label className="col-span-full flex items-center gap-2 text-sm">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={form.auto_provision}
+              onChange={(e) => setForm((f) => ({ ...f, auto_provision: e.target.checked }))}
+            />
+            <span>Auto-provision unknown users on first successful login</span>
+          </label>
+          <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"
               checked={form.enabled}
