@@ -315,12 +315,19 @@ def _strip_json_fences(text: str) -> str:
 
 
 # GPT-5.x and o-series reasoning models reject `max_tokens`; everything older
-# still expects the legacy field. Mirrors the gate in `llm/completion.py`.
+# still expects the legacy field. Same families also lock `temperature` to
+# the default (1) and reject any explicit value. Mirrors the gates in
+# `llm/completion.py`.
 _MAX_COMPLETION_TOKENS_MODEL_RE = re.compile(r"^(gpt-[5-9]|o[1-9])", re.IGNORECASE)
+_LOCKED_TEMPERATURE_MODEL_RE = re.compile(r"^(gpt-[5-9]|o[1-9])", re.IGNORECASE)
 
 
 def _uses_max_completion_tokens(model: str) -> bool:
     return bool(_MAX_COMPLETION_TOKENS_MODEL_RE.match(model or ""))
+
+
+def _supports_temperature(model: str) -> bool:
+    return not _LOCKED_TEMPERATURE_MODEL_RE.match(model or "")
 
 
 class OpenAICompatibleStructuredProvider:
@@ -398,8 +405,9 @@ class OpenAICompatibleStructuredProvider:
                 {"role": "system", "content": system},
                 {"role": "user", "content": self._join_blocks(blocks)},
             ],
-            "temperature": temperature,
         }
+        if _supports_temperature(self._model):
+            request_kwargs["temperature"] = temperature
         if _uses_max_completion_tokens(self._model):
             request_kwargs["max_completion_tokens"] = max_tokens
         else:
@@ -593,8 +601,9 @@ class OpenAICompatibleStructuredProvider:
             request_kwargs: dict[str, Any] = {
                 "model": self._model,
                 "messages": messages,
-                "temperature": temperature,
             }
+            if _supports_temperature(self._model):
+                request_kwargs["temperature"] = temperature
             if budget_exceeded:
                 # Drop tools entirely so the next response is plain text.
                 pass
