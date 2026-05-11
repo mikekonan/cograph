@@ -7,12 +7,15 @@ Provisioning policy:
    `OIDC_LINK_REQUIRED` so the user has to sign in with the existing
    credential and start a `link/{slug}/start` flow from their
    authenticated session.
-   If the provider has `auto_link_on_verified_email=true` AND the IdP
-   asserts `email_verified=true` AND the email domain matches
-   `domain_allowlist` (when set), the existing local user is auto-
-   linked. As part of the link the local password is cleared
-   (`password_hash=None`, `auth_source='oidc'`) so the account becomes
-   SSO-only — this is the "SSO supersedes password" migration path.
+   If the provider has `auto_link_on_verified_email=true` AND the
+   email's trustworthiness is established by *either* of:
+     - the IdP asserting `email_verified=true`, *or*
+     - the provider having a non-empty `domain_allowlist` that the
+       email's domain matches (the admin pre-trusts that domain),
+   then the existing local user is auto-linked. As part of the link the
+   local password is cleared (`password_hash=None`, `auth_source='oidc'`)
+   so the account becomes SSO-only — this is the "SSO supersedes
+   password" migration path.
 3. Auto-provision a new user iff the provider opts in:
    - `auto_provision=true`
    - `email_verified=true` in the ID token
@@ -172,25 +175,45 @@ def _can_auto_link(
 ) -> bool:
     """Decide whether a colliding email may be auto-linked to the local user.
 
-    All three gates must hold:
-      - provider opted in (`auto_link_on_verified_email=true`),
-      - IdP asserts the email is verified,
-      - email domain matches `domain_allowlist` (when set).
+    Two gates must hold; the third (verification of the email) accepts
+    either of two signals:
 
-    The allowlist check is intentionally duplicated from the
-    auto-provision branch so a misconfigured provider can never pull a
-    foreign-domain account in through the link path.
+      1. Provider opted in (`auto_link_on_verified_email=true`).
+      2. Claims carry an email at all (we look up the local user by it).
+      3. Email is trusted, by EITHER:
+         - the IdP asserting `email_verified=true`, OR
+         - the provider having a non-empty `domain_allowlist` that the
+           email's domain matches.
+
+    Rationale for accepting `domain_allowlist` as a substitute for
+    `email_verified`: when an admin has explicitly pinned the set of
+    domains they trust for this provider, the allowlist match itself is
+    a stronger signal than the IdP's self-asserted `email_verified` flag
+    (which many IdPs — Okta in particular — omit by default). This
+    matches real-world deployments where Okta does not ship the claim
+    without custom authorization-server config.
+
+    When the provider has NO domain allowlist (wide-open / multi-tenant
+    case), we still require `email_verified=true` because there is no
+    other admin-supplied trust anchor.
+
+    Note: the auto-provision branch in `find_or_create_user` continues
+    to require `email_verified=true` unconditionally — creating a brand
+    new account is a stronger action than linking to an existing one
+    whose owner already proved control via the local password.
     """
     if not provider.auto_link_on_verified_email:
         return False
-    if not claims.email or not claims.email_verified:
+    if not claims.email:
         return False
-    if provider.domain_allowlist:
+
+    allowlist = {d.lower() for d in (provider.domain_allowlist or [])}
+    if allowlist:
         domain = _email_domain(claims.email)
-        allowed = {d.lower() for d in provider.domain_allowlist}
-        if domain is None or domain not in allowed:
-            return False
-    return True
+        return domain is not None and domain in allowlist
+
+    # No allowlist → fall back to requiring the IdP-asserted flag.
+    return bool(claims.email_verified)
 
 
 async def _auto_link_existing_user(
