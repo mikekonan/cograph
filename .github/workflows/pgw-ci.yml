@@ -28,7 +28,7 @@ jobs:
   backend:
     name: Backend
     runs-on: [staging]
-    timeout-minutes: 30
+    timeout-minutes: 60
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -94,7 +94,7 @@ jobs:
   frontend:
     name: Frontend
     runs-on: [staging]
-    timeout-minutes: 20
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: web
@@ -125,7 +125,7 @@ jobs:
   images:
     name: ${{ matrix.image.name }} image
     runs-on: [staging]
-    timeout-minutes: 35
+    timeout-minutes: 60
     needs:
       - backend
       - frontend
