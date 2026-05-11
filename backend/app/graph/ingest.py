@@ -13,6 +13,7 @@ from uuid import UUID
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.graph._chunking import chunked
 from backend.app.graph.builder import GraphBuilder
 from backend.app.graph.extractor import ExtractedGraph, GraphExtractor
 from backend.app.graph.go_variants import (
@@ -445,27 +446,32 @@ class GraphIngestService:
         )
         if not doomed_ids:
             return set()
-        peers = set(
-            (
-                await session.scalars(
-                    select(CodeEdge.target_node_id).where(
-                        CodeEdge.repository_id == repository_id,
-                        CodeEdge.source_node_id.in_(doomed_ids),
-                        CodeEdge.target_node_id.is_not(None),
+        peers: set[UUID | None] = set()
+        # Chunked to keep the IN-list under the asyncpg 32767-placeholder
+        # cap. `doomed_ids` is per-file (small) today, but the helper is
+        # defensive against generated files with very large node counts.
+        for batch in chunked(doomed_ids):
+            peers.update(
+                (
+                    await session.scalars(
+                        select(CodeEdge.target_node_id).where(
+                            CodeEdge.repository_id == repository_id,
+                            CodeEdge.source_node_id.in_(batch),
+                            CodeEdge.target_node_id.is_not(None),
+                        )
                     )
-                )
-            ).all()
-        )
-        peers.update(
-            (
-                await session.scalars(
-                    select(CodeEdge.source_node_id).where(
-                        CodeEdge.repository_id == repository_id,
-                        CodeEdge.target_node_id.in_(doomed_ids),
+                ).all()
+            )
+            peers.update(
+                (
+                    await session.scalars(
+                        select(CodeEdge.source_node_id).where(
+                            CodeEdge.repository_id == repository_id,
+                            CodeEdge.target_node_id.in_(batch),
+                        )
                     )
-                )
-            ).all()
-        )
+                ).all()
+            )
         peers.discard(None)
         # Peers themselves must survive the delete — drop anyone in the doomed set.
         peers.difference_update(doomed_ids)

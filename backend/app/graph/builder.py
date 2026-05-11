@@ -5,9 +5,10 @@ from collections import defaultdict
 from dataclasses import dataclass, replace
 from uuid import UUID
 
-from sqlalchemy import delete, or_ as sa_or_, select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.graph._chunking import chunked
 from backend.app.graph.extractor import ExtractedEdge, ExtractedGraph, ExtractedNode, GraphEdgeType, GraphNodeType
 from backend.app.graph.temporal import NodeTemporalMetadata
 from backend.app.models.code_edge import CodeEdge
@@ -222,20 +223,25 @@ class GraphBuilder:
         # callers/callees.
         peers_from_deleted_outbound: set[UUID] = set()
         if preserved_node_ids:
-            old_target_ids = list(
-                (
-                    await session.scalars(
-                        select(CodeEdge.target_node_id).where(
-                            CodeEdge.source_node_id.in_(preserved_node_ids),
-                            CodeEdge.target_node_id.is_not(None),
+            # Chunked to dodge the asyncpg 32767-placeholder cap on large repos
+            # where `preserved_node_ids` can exceed it on a full re-resolve.
+            old_target_ids: list[UUID | None] = []
+            for batch in chunked(preserved_node_ids):
+                old_target_ids.extend(
+                    (
+                        await session.scalars(
+                            select(CodeEdge.target_node_id).where(
+                                CodeEdge.source_node_id.in_(batch),
+                                CodeEdge.target_node_id.is_not(None),
+                            )
                         )
-                    )
-                ).all()
-            )
+                    ).all()
+                )
             peers_from_deleted_outbound = {tid for tid in old_target_ids if tid is not None}
-            await session.execute(
-                delete(CodeEdge).where(CodeEdge.source_node_id.in_(preserved_node_ids))
-            )
+            for batch in chunked(preserved_node_ids):
+                await session.execute(
+                    delete(CodeEdge).where(CodeEdge.source_node_id.in_(batch))
+                )
 
         repository_nodes = list(
             (
@@ -342,18 +348,22 @@ class GraphBuilder:
         await session.flush()
 
         if source_nodes_to_refresh_unresolved:
-            remaining_unresolved = list(
-                (
-                    await session.scalars(
-                        select(CodeEdge).where(
-                            CodeEdge.repository_id == repository_id,
-                            CodeEdge.source_node_id.in_(source_nodes_to_refresh_unresolved),
-                            CodeEdge.edge_type == GraphEdgeType.CALLS.value,
-                            CodeEdge.target_node_id.is_(None),
+            # Chunked to keep the IN-list under the asyncpg 32767-placeholder
+            # cap on full re-resolves of large monorepos.
+            remaining_unresolved: list[CodeEdge] = []
+            for batch in chunked(source_nodes_to_refresh_unresolved):
+                remaining_unresolved.extend(
+                    (
+                        await session.scalars(
+                            select(CodeEdge).where(
+                                CodeEdge.repository_id == repository_id,
+                                CodeEdge.source_node_id.in_(batch),
+                                CodeEdge.edge_type == GraphEdgeType.CALLS.value,
+                                CodeEdge.target_node_id.is_(None),
+                            )
                         )
-                    )
-                ).all()
-            )
+                    ).all()
+                )
             unresolved_by_source_id: dict[UUID, list[str]] = defaultdict(list)
             for edge in remaining_unresolved:
                 unresolved_by_source_id[edge.source_node_id].append(edge.target_qualified_name)
@@ -449,16 +459,18 @@ class GraphBuilder:
         """
         if not touched_ids:
             return
-        repository_nodes = list(
-            (
-                await session.scalars(
-                    select(CodeNode).where(
-                        CodeNode.repository_id == repository_id,
-                        CodeNode.id.in_(touched_ids),
+        repository_nodes: list[CodeNode] = []
+        for batch in chunked(touched_ids):
+            repository_nodes.extend(
+                (
+                    await session.scalars(
+                        select(CodeNode).where(
+                            CodeNode.repository_id == repository_id,
+                            CodeNode.id.in_(batch),
+                        )
                     )
-                )
-            ).all()
-        )
+                ).all()
+            )
         await self._rebuild_back_compat_arrays(
             session=session,
             repository_id=repository_id,
@@ -553,27 +565,57 @@ class GraphBuilder:
             node.callees = []
 
         if touched_ids is None:
-            call_edges_query = select(CodeEdge).where(
-                CodeEdge.repository_id == repository_id,
-                CodeEdge.edge_type == GraphEdgeType.CALLS.value,
-                CodeEdge.target_node_id.is_not(None),
+            call_edges = list(
+                (
+                    await session.scalars(
+                        select(CodeEdge).where(
+                            CodeEdge.repository_id == repository_id,
+                            CodeEdge.edge_type == GraphEdgeType.CALLS.value,
+                            CodeEdge.target_node_id.is_not(None),
+                        )
+                    )
+                ).all()
             )
         else:
             # Query only edges touching the affected id set. Peers outside that
-            # set keep their arrays intact, so we avoid O(repo) UPDATEs.
+            # set keep their arrays intact, so we avoid O(repo) UPDATEs. Chunked
+            # to stay under the asyncpg 32767-placeholder cap: a fresh sync of
+            # a large monorepo touches >32k node ids and would otherwise crash
+            # the resolver pass with `the number of query arguments cannot
+            # exceed 32767`. Run the source-side and target-side IN-lists as
+            # separate chunked sweeps and dedupe by edge.id (Postgres expands
+            # IN-OR into one statement, so a combined-OR rewrite wouldn't fit
+            # either even after chunking one side).
             if not touched_ids:
                 return
-            call_edges_query = select(CodeEdge).where(
+            edges_by_id: dict[UUID, CodeEdge] = {}
+            base_filter = (
                 CodeEdge.repository_id == repository_id,
                 CodeEdge.edge_type == GraphEdgeType.CALLS.value,
                 CodeEdge.target_node_id.is_not(None),
-                sa_or_(
-                    CodeEdge.source_node_id.in_(touched_ids),
-                    CodeEdge.target_node_id.in_(touched_ids),
-                ),
             )
-
-        call_edges = list((await session.scalars(call_edges_query)).all())
+            for batch in chunked(touched_ids):
+                rows = (
+                    await session.scalars(
+                        select(CodeEdge).where(
+                            *base_filter,
+                            CodeEdge.source_node_id.in_(batch),
+                        )
+                    )
+                ).all()
+                for edge in rows:
+                    edges_by_id[edge.id] = edge
+                rows = (
+                    await session.scalars(
+                        select(CodeEdge).where(
+                            *base_filter,
+                            CodeEdge.target_node_id.in_(batch),
+                        )
+                    )
+                ).all()
+                for edge in rows:
+                    edges_by_id[edge.id] = edge
+            call_edges = list(edges_by_id.values())
         touched_set = touched_ids if touched_ids is not None else None
         for edge in call_edges:
             source_node = node_by_id.get(edge.source_node_id)
