@@ -61,7 +61,10 @@ def _pick_free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def _wait_for_port(host: str, port: int, *, timeout: float = 10.0) -> None:
+def _wait_for_port(host: str, port: int, *, timeout: float = 30.0) -> None:
+    # 30s, not 10s: these tests boot a real uvicorn subprocess with the full
+    # FastAPI app (backend.app.main), which on a busy shared CI runner can
+    # take 15–25s for cold imports alone (slowest-20 reports confirm).
     deadline = time.time() + timeout
     while time.time() < deadline:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
