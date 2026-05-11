@@ -28,6 +28,7 @@ export type IdentityProvider = {
   groups_claim: string | null;
   domain_allowlist: string[] | null;
   auto_provision: boolean;
+  auto_link_on_verified_email: boolean;
   admin_groups: string[] | null;
   admin_group_mode: AdminGroupMode;
   created_at: string;
@@ -46,6 +47,7 @@ export type IdentityProviderCreate = {
   groups_claim?: string | null;
   domain_allowlist?: string[] | null;
   auto_provision?: boolean;
+  auto_link_on_verified_email?: boolean;
   admin_groups?: string[] | null;
   admin_group_mode?: AdminGroupMode;
   enabled?: boolean;

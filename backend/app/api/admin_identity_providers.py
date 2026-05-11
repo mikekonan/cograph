@@ -51,6 +51,7 @@ class IdentityProviderView(BaseModel):
     groups_claim: str | None
     domain_allowlist: list[str] | None
     auto_provision: bool
+    auto_link_on_verified_email: bool
     admin_group_mode: str
     admin_groups: list[str] | None
     enabled: bool
@@ -86,6 +87,7 @@ class CreateIdentityProviderRequest(BaseModel):
     groups_claim: str | None = Field(default=None, max_length=128)
     domain_allowlist: list[str] | None = None
     auto_provision: bool = True
+    auto_link_on_verified_email: bool = False
     admin_group_mode: str = "ignore"
     admin_groups: list[str] | None = None
     enabled: bool = True
@@ -128,6 +130,7 @@ class UpdateIdentityProviderRequest(BaseModel):
     groups_claim: str | None = Field(default=None, max_length=128)
     domain_allowlist: list[str] | None = None
     auto_provision: bool | None = None
+    auto_link_on_verified_email: bool | None = None
     admin_group_mode: str | None = None
     admin_groups: list[str] | None = None
     enabled: bool | None = None
@@ -165,6 +168,7 @@ def _to_view(provider: IdentityProvider) -> IdentityProviderView:
         groups_claim=provider.groups_claim,
         domain_allowlist=list(provider.domain_allowlist or []) or None,
         auto_provision=provider.auto_provision,
+        auto_link_on_verified_email=provider.auto_link_on_verified_email,
         admin_group_mode=provider.admin_group_mode,
         admin_groups=list(provider.admin_groups or []) or None,
         enabled=provider.enabled,
@@ -218,6 +222,7 @@ async def create_identity_provider(
         groups_claim=payload.groups_claim,
         domain_allowlist=payload.domain_allowlist,
         auto_provision=payload.auto_provision,
+        auto_link_on_verified_email=payload.auto_link_on_verified_email,
         admin_group_mode=payload.admin_group_mode,
         admin_groups=payload.admin_groups,
         enabled=payload.enabled,
@@ -272,6 +277,7 @@ async def update_identity_provider(
         "groups_claim",
         "domain_allowlist",
         "auto_provision",
+        "auto_link_on_verified_email",
         "admin_group_mode",
         "admin_groups",
         "enabled",

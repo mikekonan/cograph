@@ -15,6 +15,7 @@ export const seedIdentityProviders: IdentityProvider[] = [
     groups_claim: null,
     domain_allowlist: ["example.com"],
     auto_provision: true,
+    auto_link_on_verified_email: false,
     admin_groups: ["cograph-admins"],
     admin_group_mode: "owner_approval",
     created_at: "2026-04-15T08:00:00Z",
