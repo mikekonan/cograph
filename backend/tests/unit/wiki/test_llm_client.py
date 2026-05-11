@@ -13,6 +13,7 @@ from backend.app.wiki.llm_client import (
     CacheBlock,
     OpenAICompatibleStructuredProvider,
     _strip_json_fences,
+    _supports_temperature,
     _uses_max_completion_tokens,
 )
 from backend.app.wiki.schemas import RepoOverview
@@ -37,6 +38,16 @@ def test_uses_max_completion_tokens_matches_gpt5_and_o_series() -> None:
     assert _uses_max_completion_tokens("o3-mini")
     assert not _uses_max_completion_tokens("gpt-4o-mini")
     assert not _uses_max_completion_tokens("llama3:70b")
+
+
+def test_supports_temperature_excludes_reasoning_families() -> None:
+    # OpenAI reasoning families lock `temperature` to the default; the
+    # provider must omit the field instead of sending an explicit value.
+    assert not _supports_temperature("gpt-5.4-mini")
+    assert not _supports_temperature("gpt-5.5")
+    assert not _supports_temperature("o3-mini")
+    assert _supports_temperature("gpt-4o-mini")
+    assert _supports_temperature("llama3:70b")
 
 
 @pytest.mark.asyncio

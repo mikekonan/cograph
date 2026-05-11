@@ -232,7 +232,9 @@ async def test_tools_payload_shape_in_first_request() -> None:
     body = capture[0]
     assert body["model"] == "gpt-5.4-mini"
     assert body["tool_choice"] == "auto"
-    assert body["temperature"] == 0.0
+    # gpt-5.x reasoning models lock `temperature` to the default — the
+    # provider must omit the field entirely rather than send 0.0 and 400.
+    assert "temperature" not in body
     # gpt-5.x → max_completion_tokens, not max_tokens.
     assert "max_completion_tokens" in body
     assert "max_tokens" not in body

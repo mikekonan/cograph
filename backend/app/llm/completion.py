@@ -14,9 +14,18 @@ from typing import Protocol, runtime_checkable
 # llama3 on Ollama, etc.) still expects the legacy `max_tokens`.
 _MAX_COMPLETION_TOKENS_MODEL_RE = re.compile(r"^(gpt-[5-9]|o[1-9])", re.IGNORECASE)
 
+# Same families also lock `temperature` to the default (1) — sending any
+# other value yields `Unsupported value: 'temperature' does not support …`.
+# Filter the parameter out for those models instead of trying to coerce.
+_LOCKED_TEMPERATURE_MODEL_RE = re.compile(r"^(gpt-[5-9]|o[1-9])", re.IGNORECASE)
+
 
 def _uses_max_completion_tokens(model: str) -> bool:
     return bool(_MAX_COMPLETION_TOKENS_MODEL_RE.match(model or ""))
+
+
+def _supports_temperature(model: str) -> bool:
+    return not _LOCKED_TEMPERATURE_MODEL_RE.match(model or "")
 
 
 class CompletionProviderError(RuntimeError):
@@ -97,8 +106,9 @@ class OpenAICompletionProvider:
         request_kwargs: dict[str, object] = {
             "model": self._model,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": self._temperature,
         }
+        if _supports_temperature(self._model):
+            request_kwargs["temperature"] = self._temperature
         if _uses_max_completion_tokens(self._model):
             request_kwargs["max_completion_tokens"] = self._max_tokens
         else:
