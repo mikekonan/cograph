@@ -34,7 +34,7 @@ export const oidcHandlers = [
     }
     const url = new URL(request.url);
     const returnTo = url.searchParams.get("return_to") ?? "/";
-    const target = new URL(`${result.idp.issuer}/oauth2/v1/authorize`);
+    const target = new URL(`${result.idp.issuer_url}/oauth2/v1/authorize`);
     target.searchParams.set("client_id", result.idp.client_id);
     target.searchParams.set("response_type", "code");
     target.searchParams.set("scope", result.idp.scopes.join(" "));
@@ -57,7 +57,7 @@ export const oidcHandlers = [
     }
     const url = new URL(request.url);
     const returnTo = url.searchParams.get("return_to") ?? "/account/identities";
-    const target = new URL(`${result.idp.issuer}/oauth2/v1/authorize`);
+    const target = new URL(`${result.idp.issuer_url}/oauth2/v1/authorize`);
     target.searchParams.set("client_id", result.idp.client_id);
     target.searchParams.set("response_type", "code");
     target.searchParams.set("redirect_uri", `${url.origin}/api/auth/oidc/${slug}/callback`);

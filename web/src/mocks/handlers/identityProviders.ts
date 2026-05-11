@@ -46,16 +46,16 @@ export const identityProvidersHandlers = [
       display_name: body.display_name,
       kind: "oidc",
       enabled: body.enabled ?? true,
-      issuer: body.issuer,
+      issuer_url: body.issuer_url,
       client_id: body.client_id,
-      client_secret_configured: body.client_secret.length > 0,
+      has_client_secret: !!body.client_secret && body.client_secret.length > 0,
       scopes: body.scopes ?? ["openid", "profile", "email"],
-      response_mode: body.response_mode ?? "code",
-      domain_allowlist: body.domain_allowlist ?? [],
-      default_role: body.default_role ?? "user",
-      admin_group: body.admin_group ?? null,
+      response_mode: body.response_mode ?? "query",
+      groups_claim: body.groups_claim ?? null,
+      domain_allowlist: body.domain_allowlist ?? null,
+      auto_provision: body.auto_provision ?? true,
+      admin_groups: body.admin_groups ?? null,
       admin_group_mode: body.admin_group_mode ?? "ignore",
-      claim_mappings: body.claim_mappings ?? { email: "email", name: "name" },
       created_at: nowIso(),
       updated_at: nowIso(),
     };
@@ -85,10 +85,10 @@ export const identityProvidersHandlers = [
       ...current,
       ...update,
       kind: "oidc",
-      client_secret_configured:
+      has_client_secret:
         update.client_secret !== undefined && update.client_secret.length > 0
           ? true
-          : current.client_secret_configured,
+          : current.has_client_secret,
       updated_at: nowIso(),
     };
     mockDb.identityProviders[idx] = next;
@@ -129,13 +129,13 @@ export const identityProvidersHandlers = [
       });
     }
     const result: IdentityProviderTestResult = {
-      ok: true,
-      issuer: idp.issuer,
-      authorization_endpoint: `${idp.issuer}/oauth2/v1/authorize`,
-      token_endpoint: `${idp.issuer}/oauth2/v1/token`,
-      jwks_uri: `${idp.issuer}/oauth2/v1/keys`,
+      issuer_ok: true,
+      jwks_ok: true,
+      issuer_url: idp.issuer_url,
+      authorization_endpoint: `${idp.issuer_url}/oauth2/v1/authorize`,
+      token_endpoint: `${idp.issuer_url}/oauth2/v1/token`,
       jwks_keys: 2,
-      message: null,
+      error: null,
     };
     return HttpResponse.json(result);
   }),
