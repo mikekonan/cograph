@@ -27,7 +27,7 @@ concurrency:
 jobs:
   backend:
     name: Backend
-    runs-on: [prod]
+    runs-on: [staging]
     timeout-minutes: 25
     services:
       postgres:
@@ -89,7 +89,7 @@ jobs:
 
   frontend:
     name: Frontend
-    runs-on: [prod]
+    runs-on: [staging]
     timeout-minutes: 20
     defaults:
       run:
@@ -120,7 +120,7 @@ jobs:
 
   images:
     name: ${{ matrix.image.name }} image
-    runs-on: [prod]
+    runs-on: [staging]
     timeout-minutes: 35
     needs:
       - backend
