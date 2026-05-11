@@ -42,6 +42,14 @@ backend:
     limits:
       cpu: "1"
       memory: 1Gi
+  # Override the Deployment strategy. Empty -> k8s default (RollingUpdate
+  # with 25%/25% surge/unavailable). Useful values for single-replica
+  # CPU-tight clusters:
+  #   strategy:
+  #     type: Recreate
+  # which trades a brief downtime during upgrade for not requiring 2x the
+  # pod's resource requests to schedule the surge replica.
+  strategy: {}
 
 worker:
   # Single-pod deploy mode: render the arq worker as a container in the
@@ -58,6 +66,8 @@ worker:
     limits:
       cpu: "1"
       memory: 1Gi
+  # Only applied when runAsSidecar=false (standalone Deployment).
+  strategy: {}
 
 web:
   replicaCount: 1
@@ -71,6 +81,7 @@ web:
     limits:
       cpu: 500m
       memory: 256Mi
+  strategy: {}
 
 ingress:
   enabled: false
