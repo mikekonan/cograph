@@ -121,7 +121,7 @@ export const router = createBrowserRouter([
       { path: "admin/scim", element: <Navigate to="/admin?tab=scim" replace /> },
       { path: "admin/git-hosts", element: <Navigate to="/admin?tab=git-hosts" replace /> },
       { path: "admin/llm-runtime", element: <Navigate to="/admin?tab=llm-runtime" replace /> },
-      { path: "admin/secrets", element: <Navigate to="/admin?tab=secrets" replace /> },
+      { path: "admin/secrets", element: <Navigate to="/admin?tab=llm-runtime" replace /> },
       {
         path: "account/tokens",
         element: (
