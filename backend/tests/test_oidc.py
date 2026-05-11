@@ -434,7 +434,9 @@ async def test_auto_link_disabled_still_refuses_collision(db_session):
     assert fresh.auth_source == "password"
 
 
-async def test_auto_link_requires_email_verified(db_session):
+async def test_auto_link_requires_email_verified_without_allowlist(db_session):
+    # No domain_allowlist on the provider → the IdP-asserted email_verified
+    # flag is still required. This is the wide-open / multi-tenant case.
     await _make_user(db_session, email="dup@example.com")
     provider = _make_provider(auto_link_on_verified_email=True)
     db_session.add(provider)
@@ -444,6 +446,40 @@ async def test_auto_link_requires_email_verified(db_session):
     with pytest.raises(ApiError) as exc:
         await find_or_create_user(db_session, provider=provider, claims=claims)
     assert exc.value.code == "OIDC_LINK_REQUIRED"
+
+
+async def test_auto_link_trusts_domain_allowlist_without_email_verified(db_session):
+    # Admin pinned domain_allowlist → the allowlist match itself is the trust
+    # signal; the IdP's email_verified flag is not required. Mirrors the prod
+    # Okta deployment where Okta omits email_verified by default.
+    from sqlalchemy import select
+
+    local = await _make_user(db_session, email="user@allowed.com")
+    provider = _make_provider(
+        auto_link_on_verified_email=True,
+        domain_allowlist=["allowed.com"],
+    )
+    db_session.add(provider)
+    await db_session.commit()
+    await db_session.refresh(provider)
+
+    claims = _make_claims(email="user@allowed.com", email_verified=False)
+    resolved = await find_or_create_user(db_session, provider=provider, claims=claims)
+    await db_session.commit()
+
+    assert resolved.id == local.id
+    fresh = await db_session.get(User, local.id)
+    assert fresh is not None
+    assert fresh.password_hash is None
+    assert fresh.auth_source == "oidc"
+    identity = await db_session.scalar(
+        select(UserIdentity).where(
+            UserIdentity.user_id == local.id,
+            UserIdentity.provider_id == provider.id,
+        )
+    )
+    assert identity is not None
+    assert identity.subject == "okta-sub-1"
 
 
 async def test_auto_link_enforces_domain_allowlist(db_session):
