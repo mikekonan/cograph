@@ -389,6 +389,92 @@ async def test_owner_delegated_does_not_promote_without_intersection(db_session)
     assert user.role is UserRole.USER
 
 
+async def test_auto_link_attaches_existing_user_and_clears_password(db_session):
+    from sqlalchemy import select
+
+    local = await _make_user(db_session, email="bootstrap@example.com")
+    assert local.password_hash is not None
+    provider = _make_provider(auto_link_on_verified_email=True)
+    db_session.add(provider)
+    await db_session.commit()
+    await db_session.refresh(provider)
+
+    claims = _make_claims(email="bootstrap@example.com")
+    resolved = await find_or_create_user(db_session, provider=provider, claims=claims)
+    await db_session.commit()
+
+    assert resolved.id == local.id
+    fresh = await db_session.get(User, local.id)
+    assert fresh is not None
+    assert fresh.password_hash is None
+    assert fresh.auth_source == "oidc"
+    identity = await db_session.scalar(
+        select(UserIdentity).where(
+            UserIdentity.user_id == local.id,
+            UserIdentity.provider_id == provider.id,
+        )
+    )
+    assert identity is not None
+    assert identity.subject == "okta-sub-1"
+
+
+async def test_auto_link_disabled_still_refuses_collision(db_session):
+    local = await _make_user(db_session, email="dup@example.com")
+    provider = _make_provider(auto_link_on_verified_email=False)
+    db_session.add(provider)
+    await db_session.commit()
+
+    claims = _make_claims(email="dup@example.com")
+    with pytest.raises(ApiError) as exc:
+        await find_or_create_user(db_session, provider=provider, claims=claims)
+    assert exc.value.code == "OIDC_LINK_REQUIRED"
+    fresh = await db_session.get(User, local.id)
+    assert fresh is not None
+    assert fresh.password_hash is not None
+    assert fresh.auth_source == "password"
+
+
+async def test_auto_link_requires_email_verified(db_session):
+    await _make_user(db_session, email="dup@example.com")
+    provider = _make_provider(auto_link_on_verified_email=True)
+    db_session.add(provider)
+    await db_session.commit()
+
+    claims = _make_claims(email="dup@example.com", email_verified=False)
+    with pytest.raises(ApiError) as exc:
+        await find_or_create_user(db_session, provider=provider, claims=claims)
+    assert exc.value.code == "OIDC_LINK_REQUIRED"
+
+
+async def test_auto_link_enforces_domain_allowlist(db_session):
+    await _make_user(db_session, email="alien@blocked.com")
+    provider = _make_provider(
+        auto_link_on_verified_email=True,
+        domain_allowlist=["allowed.com"],
+    )
+    db_session.add(provider)
+    await db_session.commit()
+
+    claims = _make_claims(email="alien@blocked.com")
+    with pytest.raises(ApiError) as exc:
+        await find_or_create_user(db_session, provider=provider, claims=claims)
+    assert exc.value.code == "OIDC_LINK_REQUIRED"
+
+
+async def test_auto_link_refuses_disabled_user(db_session):
+    local = await _make_user(db_session, email="dup@example.com")
+    local.is_active = False
+    await db_session.commit()
+    provider = _make_provider(auto_link_on_verified_email=True)
+    db_session.add(provider)
+    await db_session.commit()
+
+    claims = _make_claims(email="dup@example.com")
+    with pytest.raises(ApiError) as exc:
+        await find_or_create_user(db_session, provider=provider, claims=claims)
+    assert exc.value.code == "ACCOUNT_DISABLED"
+
+
 async def test_link_existing_user_attaches_identity(db_session):
     provider = _make_provider()
     db_session.add(provider)

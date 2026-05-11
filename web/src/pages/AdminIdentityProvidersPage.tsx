@@ -204,6 +204,9 @@ function ProviderRow({
 
       <dl className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-3">
         <Field label="Auto-provision">{provider.auto_provision ? "yes" : "no"}</Field>
+        <Field label="Auto-link existing">
+          {provider.auto_link_on_verified_email ? "yes" : "no"}
+        </Field>
         <Field label="Admin group mode">{provider.admin_group_mode}</Field>
         <Field label="Admin groups">
           {adminGroups.length === 0 ? (
@@ -302,6 +305,7 @@ type EditorForm = {
   groups_claim: string;
   domain_allowlist: string;
   auto_provision: boolean;
+  auto_link_on_verified_email: boolean;
   admin_groups: string;
   admin_group_mode: AdminGroupMode;
   enabled: boolean;
@@ -329,6 +333,7 @@ function ProviderEditor({
     groups_claim: provider?.groups_claim ?? "",
     domain_allowlist: (provider?.domain_allowlist ?? []).join(", "),
     auto_provision: provider?.auto_provision ?? true,
+    auto_link_on_verified_email: provider?.auto_link_on_verified_email ?? false,
     admin_groups: (provider?.admin_groups ?? []).join(", "),
     admin_group_mode: provider?.admin_group_mode ?? "ignore",
     enabled: provider?.enabled ?? true,
@@ -357,6 +362,7 @@ function ProviderEditor({
       groups_claim: form.groups_claim.trim() || null,
       domain_allowlist: domains.length > 0 ? domains : null,
       auto_provision: form.auto_provision,
+      auto_link_on_verified_email: form.auto_link_on_verified_email,
       admin_groups: groups.length > 0 ? groups : null,
       admin_group_mode: form.admin_group_mode,
       enabled: form.enabled,
@@ -505,6 +511,19 @@ function ProviderEditor({
               onChange={(e) => setForm((f) => ({ ...f, auto_provision: e.target.checked }))}
             />
             <span>Auto-provision unknown users on first successful login</span>
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={form.auto_link_on_verified_email}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, auto_link_on_verified_email: e.target.checked }))
+              }
+            />
+            <span>
+              Auto-link to existing local accounts on verified email (clears the local
+              password — SSO becomes the only sign-in)
+            </span>
           </label>
           <label className="flex items-center gap-2 text-sm">
             <input
