@@ -19,12 +19,40 @@ import { useEffect, useRef, useState } from "react";
 // need to remove: any attribute whose name starts with `on` (event
 // handlers), any `<script>` element, and any `javascript:` URL value
 // on `href`/`xlink:href`.
+
+// Signals a strict-XML parser error so the caller can render the friendly
+// error panel instead of injecting the parsererror block into the DOM.
+export class MermaidSvgParseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MermaidSvgParseError";
+  }
+}
+
 export function sanitizeMermaidSvg(svg: string): string {
   if (typeof DOMParser === "undefined") return svg;
   const parser = new DOMParser();
   const doc = parser.parseFromString(svg, "image/svg+xml");
   const root = doc.documentElement;
-  if (!root || root.nodeName === "parsererror") return "";
+  if (!root) {
+    throw new MermaidSvgParseError("Diagram SVG parsed to empty document");
+  }
+  // In strict XML mode, browsers report parse failures differently:
+  // Firefox makes <parsererror> the documentElement; Chrome and WebKit
+  // insert a <parsererror> child *inside* a still-named-svg root
+  // (Mermaid emits HTML-style void <br> tags inside foreignObject, which
+  // strict XML rejects with "Opening and ending tag mismatch"). Checking
+  // only the root nodeName missed Chrome's variant, so the broken
+  // partial-SVG plus the visible red parsererror block were getting
+  // serialized straight back into dangerouslySetInnerHTML. Probe the
+  // whole subtree before trusting the parse.
+  const parseErrorNode =
+    root.nodeName === "parsererror" ? root : (root.getElementsByTagName("parsererror")[0] ?? null);
+  if (parseErrorNode) {
+    throw new MermaidSvgParseError(
+      parseErrorNode.textContent?.trim() || "Diagram SVG failed to parse",
+    );
+  }
 
   const queue: Element[] = [root];
   while (queue.length > 0) {
