@@ -11,7 +11,7 @@ import { apiJson } from "@/api/client";
 
 export type AdminGroupMode = "ignore" | "owner_approval" | "owner_delegated";
 
-export type ResponseMode = "code" | "form_post";
+export type ResponseMode = "query" | "form_post";
 
 export type IdentityProvider = {
   id: string;
@@ -19,18 +19,17 @@ export type IdentityProvider = {
   display_name: string;
   kind: "oidc";
   enabled: boolean;
-  issuer: string;
+  issuer_url: string;
   client_id: string;
   /** True iff a client_secret is stored. The plaintext is never returned. */
-  client_secret_configured: boolean;
+  has_client_secret: boolean;
   scopes: string[];
   response_mode: ResponseMode;
-  domain_allowlist: string[];
-  default_role: "user" | "admin";
-  admin_group: string | null;
+  groups_claim: string | null;
+  domain_allowlist: string[] | null;
+  auto_provision: boolean;
+  admin_groups: string[] | null;
   admin_group_mode: AdminGroupMode;
-  /** Mapping of IdP claim → local user attribute (e.g. {"email": "email"}). */
-  claim_mappings: Record<string, string>;
   created_at: string;
   updated_at: string;
 };
@@ -38,29 +37,30 @@ export type IdentityProvider = {
 export type IdentityProviderCreate = {
   slug: string;
   display_name: string;
-  issuer: string;
+  kind?: "oidc";
+  issuer_url: string;
   client_id: string;
-  client_secret: string;
+  client_secret?: string;
   scopes?: string[];
   response_mode?: ResponseMode;
-  domain_allowlist?: string[];
-  default_role?: "user" | "admin";
-  admin_group?: string | null;
+  groups_claim?: string | null;
+  domain_allowlist?: string[] | null;
+  auto_provision?: boolean;
+  admin_groups?: string[] | null;
   admin_group_mode?: AdminGroupMode;
-  claim_mappings?: Record<string, string>;
   enabled?: boolean;
 };
 
 export type IdentityProviderUpdate = Partial<IdentityProviderCreate>;
 
 export type IdentityProviderTestResult = {
-  ok: boolean;
-  issuer: string | null;
+  issuer_ok: boolean;
+  jwks_ok: boolean;
+  issuer_url: string;
   authorization_endpoint: string | null;
   token_endpoint: string | null;
-  jwks_uri: string | null;
   jwks_keys: number;
-  message: string | null;
+  error: string | null;
 };
 
 export async function listIdentityProviders(): Promise<IdentityProvider[]> {
