@@ -14,9 +14,9 @@ export default defineConfig({
     setupFiles: ["./src/test/setup.ts"],
     globals: true,
     exclude: [...configDefaults.exclude, "e2e/**"],
-    // Slower CI runners (notably the pgw `staging` pool) routinely take
-    // 5–8s through Router + React Query + MSW boot for setup-heavy tests.
-    // Bump per-test timeout above the default 5s.
+    // Shared CI runners routinely take 5–8s through Router + React Query
+    // + MSW boot for setup-heavy tests. Bump per-test timeout above the
+    // default 5s.
     testTimeout: 15000,
     hookTimeout: 15000,
   },
