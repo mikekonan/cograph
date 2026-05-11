@@ -3,22 +3,12 @@ import AdminGitHostsPage from "@/pages/AdminGitHostsPage";
 import AdminIdentityProvidersPage from "@/pages/AdminIdentityProvidersPage";
 import AdminLLMRuntimePage from "@/pages/AdminLLMRuntimePage";
 import AdminScimClientsPage from "@/pages/AdminScimClientsPage";
-import AdminSecretsPage from "@/pages/AdminSecretsPage";
 import AdminUsersPage from "@/pages/AdminUsersPage";
-import {
-  Bot,
-  Globe,
-  KeyRound,
-  type LucideIcon,
-  Plug,
-  Settings2,
-  ShieldCheck,
-  Users,
-} from "lucide-react";
-import { type ComponentType, useMemo } from "react";
+import { Bot, Globe, type LucideIcon, Plug, Settings2, ShieldCheck, Users } from "lucide-react";
+import { type ComponentType, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router";
 
-type TabId = "secrets" | "llm-runtime" | "users" | "identity-providers" | "scim" | "git-hosts";
+type TabId = "llm-runtime" | "users" | "identity-providers" | "scim" | "git-hosts";
 
 interface TabSpec {
   id: TabId;
@@ -28,7 +18,6 @@ interface TabSpec {
 }
 
 const TABS: TabSpec[] = [
-  { id: "secrets", label: "Secrets", icon: KeyRound, Component: AdminSecretsPage },
   { id: "llm-runtime", label: "LLM runtime", icon: Bot, Component: AdminLLMRuntimePage },
   { id: "users", label: "Users", icon: Users, Component: AdminUsersPage },
   {
@@ -41,7 +30,7 @@ const TABS: TabSpec[] = [
   { id: "git-hosts", label: "Git hosts", icon: Globe, Component: AdminGitHostsPage },
 ];
 
-const DEFAULT_TAB: TabId = "secrets";
+const DEFAULT_TAB: TabId = "llm-runtime";
 
 function isTabId(value: string | null): value is TabId {
   return TABS.some((t) => t.id === value);
@@ -58,9 +47,18 @@ export default function AdminPage() {
   const requested = searchParams.get("tab");
   const activeId: TabId = isTabId(requested) ? requested : DEFAULT_TAB;
   const ActiveComponent = useMemo(
-    () => TABS.find((t) => t.id === activeId)?.Component ?? AdminSecretsPage,
+    () => TABS.find((t) => t.id === activeId)?.Component ?? AdminLLMRuntimePage,
     [activeId],
   );
+
+  // Old `?tab=secrets` bookmarks land on the LLM runtime tab — secrets moved there.
+  useEffect(() => {
+    if (requested === "secrets") {
+      const next = new URLSearchParams(searchParams);
+      next.set("tab", "llm-runtime");
+      setSearchParams(next, { replace: true });
+    }
+  }, [requested, searchParams, setSearchParams]);
 
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-5 py-8">
