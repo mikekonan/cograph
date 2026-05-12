@@ -126,6 +126,7 @@ class RepoSyncOrchestrator:
             trigger=trigger_batch,
             label=label,
             repository_id=repository_id,
+            run_id=sync_run.id,
             status=SyncJobStatus.QUEUED,
         )
         session.add(sync_batch)
@@ -335,6 +336,83 @@ class RepoSyncOrchestrator:
             .order_by(RepoSyncRun.created_at.desc())
             .limit(1)
         )
+
+    async def cancel_run(
+        self,
+        *,
+        session: AsyncSession,
+        run_id: UUID,
+        actor_user_id: UUID | None,
+        reason: str = "Cancelled by admin.",
+    ) -> RepoSyncRun:
+        """Force-cancel a QUEUED or RUNNING ``repo_sync_runs`` row.
+
+        Idempotent: a no-op when the row is already terminal. ARQ abort
+        is best-effort (cooperative); the DB cascade + audit row are the
+        authoritative outcome.
+        """
+        from backend.app.audit.events import AuditEventRecord, write_audit
+        from backend.app.pipeline.run_cancellation import fail_run_cascade
+
+        run = await session.get(RepoSyncRun, run_id)
+        if run is None:
+            raise LookupError(f"Run not found: {run_id}")
+        if run.status not in (RepoSyncRunStatus.QUEUED, RepoSyncRunStatus.RUNNING):
+            return run
+
+        # Best-effort ARQ abort. Job.abort() is cooperative: for QUEUED
+        # jobs it just removes them from the queue; for in-flight jobs
+        # it signals cancellation, but the actual coroutine only dies
+        # at the next ``await`` (the step-level asyncio.wait_for from
+        # #6 is what guarantees forward progress). Any error here is
+        # non-fatal — the DB cascade still runs.
+        if run.arq_job_id:
+            try:
+                from arq.jobs import Job
+
+                job = Job(
+                    run.arq_job_id,
+                    redis=self._job_queue,  # type: ignore[arg-type]
+                    _queue_name=self._queue_name,
+                )
+                await job.abort(timeout=2.0)
+            except Exception as exc:  # noqa: BLE001
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "ARQ abort failed for run %s (arq_job_id=%s); proceeding "
+                    "with DB cancellation. cause=%s",
+                    run_id,
+                    run.arq_job_id,
+                    exc,
+                )
+
+        cascade = await fail_run_cascade(
+            session=session,
+            run=run,
+            run_status=RepoSyncRunStatus.CANCELLED,
+            batch_status=SyncJobStatus.CANCELLED,
+            job_status=SyncJobStatus.CANCELLED,
+            error_code="cancelled_by_admin",
+            error_msg=reason,
+        )
+        await write_audit(
+            session,
+            AuditEventRecord(
+                actor_user_id=actor_user_id,
+                target_user_id=None,
+                event_type="repo_sync_run_cancelled",
+                metadata={
+                    "run_id": str(run_id),
+                    "repository_id": str(run.repository_id),
+                    "batch_id": str(cascade.batch_id) if cascade.batch_id else None,
+                    "jobs_cancelled": cascade.jobs_updated,
+                    "reason": reason,
+                },
+            ),
+        )
+        await session.commit()
+        return run
 
     async def _mark_enqueue_failed(
         self,

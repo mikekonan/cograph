@@ -61,13 +61,29 @@ class OpenAIEmbedProvider:
         api_key: str,
         model: str,
         dimensions: int,
+        request_timeout_seconds: float = 120.0,
+        connect_timeout_seconds: float = 10.0,
         _max_attempts: int = 5,
         _wait_initial: float = 1.0,
         _wait_max: float = 30.0,
     ) -> None:
+        import httpx
         from openai import AsyncOpenAI
 
-        self._client = AsyncOpenAI(base_url=api_url, api_key=api_key)
+        # Split timeouts: see the matching comment in
+        # `OpenAICompletionProvider.__init__` — the bare AsyncOpenAI had
+        # no client-side default and a stalled endpoint could hang the
+        # embed step until the 2 h arq job_timeout.
+        self._client = AsyncOpenAI(
+            base_url=api_url,
+            api_key=api_key,
+            timeout=httpx.Timeout(
+                connect=connect_timeout_seconds,
+                read=request_timeout_seconds,
+                write=request_timeout_seconds,
+                pool=10.0,
+            ),
+        )
         self._model = model
         self._dimensions = dimensions
         self._max_attempts = _max_attempts

@@ -25,6 +25,7 @@ from backend.app.pipeline.constants import REPO_SYNC_QUEUE_NAME
 from backend.app.pipeline.orchestrator import RepoSyncOrchestrator
 from backend.app.pipeline.processor import RepoSyncProcessor
 from backend.app.pipeline.schedule import RepoSyncScheduler
+from backend.app.pipeline.stale_sweep import sweep_stale_repo_sync_runs
 from backend.app.rag.pivot import GraphPivot
 from backend.app.rag.runtime import build_hybrid_retriever
 from backend.app.wiki import LLMWikiGenerator, WikiGenerationConfig
@@ -82,6 +83,8 @@ async def _build_processor(
                 api_url=structured_api_url,
                 api_key=structured_api_key,
                 model=structured_model,
+                request_timeout_seconds=settings.completion.request_timeout_seconds,
+                connect_timeout_seconds=settings.completion.connect_timeout_seconds,
             )
             wiki_retriever = WikiRetrievalService(
                 hybrid=build_hybrid_retriever(settings),
@@ -104,6 +107,7 @@ async def _build_processor(
         repo_document_embedder_service=repo_doc_embedder_service,
         summary_generator=summary_generator,
         wiki_generator=wiki_generator,
+        timeouts=settings.pipeline_timeouts,
     )
 
 
@@ -112,6 +116,8 @@ def _build_structured_llm(
     api_url: str,
     api_key: str,
     model: str,
+    request_timeout_seconds: float,
+    connect_timeout_seconds: float,
 ) -> OpenAICompatibleStructuredProvider:
     """Build the structured-output provider from the runtime LLM assignment.
 
@@ -124,6 +130,8 @@ def _build_structured_llm(
         api_url=api_url,
         api_key=api_key,
         model=model,
+        request_timeout_seconds=request_timeout_seconds,
+        connect_timeout_seconds=connect_timeout_seconds,
     )
 
 
@@ -430,6 +438,31 @@ async def run_scheduler_tick(ctx: dict[str, Any]) -> dict[str, int]:
     }
 
 
+async def run_stale_run_sweep(ctx: dict[str, Any]) -> dict[str, object]:
+    """Cron tick: reap stale ``repo_sync_runs`` orphaned by worker death."""
+
+    settings = ctx.get("settings")
+    session_manager = ctx.get("session_manager")
+    assert isinstance(settings, Settings)
+    assert isinstance(session_manager, SessionManager)
+
+    repo_sync_queue = ctx.get("repo_sync_queue")
+    if repo_sync_queue is None:
+        repo_sync_queue = await create_pool(build_redis_settings(settings.redis.url))
+        ctx["repo_sync_queue"] = repo_sync_queue
+
+    result = await sweep_stale_repo_sync_runs(
+        session_manager=session_manager,
+        settings=settings,
+        arq_pool=repo_sync_queue,
+    )
+    return {
+        "runs_failed": result.runs_failed,
+        "jobs_cancelled": result.jobs_cancelled,
+        "cutoff": result.cutoff.isoformat(),
+    }
+
+
 async def _get_repo_sync_scheduler(ctx: dict[str, Any]) -> RepoSyncScheduler:
     scheduler = ctx.get("repo_sync_scheduler")
     if isinstance(scheduler, RepoSyncScheduler):
@@ -463,6 +496,7 @@ class WorkerSettings:
     functions = [
         run_repo_sync,
         run_scheduler_tick,
+        run_stale_run_sweep,
         embed_md_collection,
         resolve_md_links,
         purge_repository,
@@ -475,9 +509,23 @@ class WorkerSettings:
             second=0,
             microsecond=0,
             job_id="repo-sync-scheduler",
-        )
+        ),
+        cron(
+            run_stale_run_sweep,
+            # Every 15 min — matches the default
+            # ``stale_run_threshold_minutes`` so a row never sits stale
+            # for more than ~30 min worst case.
+            minute={0, 15, 30, 45},
+            second=0,
+            microsecond=0,
+            job_id="repo-sync-stale-sweep",
+        ),
     ]
-    max_jobs = 10
+    # Dropped 10→4 after a 2026-05-12 OOMKill: ten concurrent wiki-gen
+    # runs blew the worker container's 8 Gi limit because every page
+    # ingest holds the full subgraph + retrieved chunks in memory. Four
+    # is the empirical headroom; raise only after profiling.
+    max_jobs = 4
     # Wiki regen with the agentic writer takes 10–30 min on a medium repo;
     # 2 h is a safe ceiling that covers worst-case big repos without
     # retrying on a non-recoverable failure.

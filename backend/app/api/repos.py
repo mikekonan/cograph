@@ -67,6 +67,7 @@ from backend.app.models.enums import (
     SyncSchedule,
 )
 from backend.app.models.repo_document import RepoDocument
+from backend.app.models.repo_sync_run import RepoSyncRun
 from backend.app.models.repository import Repository
 from backend.app.models.source_file import SourceFile
 from backend.app.models.sync_batch import SyncBatch
@@ -203,6 +204,16 @@ class UpdateRepositoryRequest(BaseModel):
 class RepoReindexResponse(BaseModel):
     id: UUID
     status: str
+
+
+class RepoSyncRunResponse(BaseModel):
+    id: UUID
+    status: str
+    started_at: datetime | None
+    finished_at: datetime | None
+    error_code: str | None
+    error_msg: str | None
+    requested_ref: str | None
 
 
 class RepoWebhookTriggerResponse(BaseModel):
@@ -1096,6 +1107,68 @@ async def reindex_repository(
     return RepoReindexResponse(
         id=result.sync_run_id,
         status="pending",
+    )
+
+
+@router.post(
+    "/{host}/{owner}/{name}/runs/{run_id}/cancel",
+    response_model=RepoSyncRunResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def cancel_repo_sync_run(
+    host: str,
+    owner: str,
+    name: str,
+    run_id: UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(require_admin),
+    _csrf: User = Depends(require_csrf),
+    settings: Settings = Depends(get_settings_dep),
+) -> RepoSyncRunResponse:
+    """Force-cancel a wedged QUEUED/RUNNING ``repo_sync_runs`` row.
+
+    Admin-only because a wrongful cancel clobbers in-flight indexing.
+    The endpoint resolves the repo via the standard slug check, asserts
+    the run actually belongs to this repo (otherwise 404 to avoid leaking
+    run IDs across repos), and delegates to ``orchestrator.cancel_run``
+    which handles the ARQ abort + DB cascade + audit row in a single
+    transaction.
+    """
+    del _csrf
+    repository = await get_readable_repository_by_slug(
+        session=session,
+        host=host,
+        owner=owner,
+        name=name,
+        settings=settings,
+        current_user=current_user,
+    )
+    run = await session.get(RepoSyncRun, run_id)
+    if run is None or run.repository_id != repository.id:
+        raise ApiError(404, "NOT_FOUND", "Run not found")
+    if run.status not in (RepoSyncRunStatus.QUEUED, RepoSyncRunStatus.RUNNING):
+        raise ApiError(
+            409,
+            "INVALID_STATE",
+            f"Cannot cancel run in status {run.status.value}",
+        )
+    orchestrator = await _resolve_repo_sync_orchestrator(request)
+    await orchestrator.cancel_run(
+        session=session,
+        run_id=run_id,
+        actor_user_id=current_user.id,
+        reason="Cancelled by admin.",
+    )
+    await session.refresh(run)
+    return RepoSyncRunResponse(
+        id=run.id,
+        status=run.status.value,
+        started_at=run.started_at,
+        finished_at=run.finished_at,
+        error_code=run.error_code,
+        error_msg=run.error_msg,
+        requested_ref=run.requested_ref,
     )
 
 

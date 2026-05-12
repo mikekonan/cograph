@@ -23,6 +23,8 @@ def build_query_embed_provider(settings: Settings) -> EmbedProvider | None:
         api_key=settings.embedding.api_key.get_secret_value(),
         model=settings.embedding.model,
         dimensions=settings.embedding.dimensions,
+        request_timeout_seconds=settings.embedding.request_timeout_seconds,
+        connect_timeout_seconds=settings.embedding.connect_timeout_seconds,
     )
 
 

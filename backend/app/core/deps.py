@@ -426,6 +426,8 @@ def get_summary_generator(request: Request) -> "SummaryGenerator | None":
         api_url=settings.completion.api_url,
         api_key=settings.completion.api_key.get_secret_value(),
         model=settings.completion.model,
+        request_timeout_seconds=settings.completion.request_timeout_seconds,
+        connect_timeout_seconds=settings.completion.connect_timeout_seconds,
     )
     generator = SummaryGenerator(llm=provider)
     request.app.state.summary_generator = generator

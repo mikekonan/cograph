@@ -118,6 +118,8 @@ class LLMRoleResolver:
             api_key=resolved.api_key,
             model=resolved.model_name,
             dimensions=self._settings.embedding.dimensions,
+            request_timeout_seconds=self._settings.embedding.request_timeout_seconds,
+            connect_timeout_seconds=self._settings.embedding.connect_timeout_seconds,
         )
 
     async def get_completion_client(
@@ -130,6 +132,8 @@ class LLMRoleResolver:
             api_url=resolved.api_url,
             api_key=resolved.api_key,
             model=resolved.model_name,
+            request_timeout_seconds=self._settings.completion.request_timeout_seconds,
+            connect_timeout_seconds=self._settings.completion.connect_timeout_seconds,
         )
 
     async def get_structured_client(
@@ -142,4 +146,6 @@ class LLMRoleResolver:
             api_url=resolved.api_url,
             api_key=resolved.api_key,
             model=resolved.model_name,
+            request_timeout_seconds=self._settings.completion.request_timeout_seconds,
+            connect_timeout_seconds=self._settings.completion.connect_timeout_seconds,
         )
