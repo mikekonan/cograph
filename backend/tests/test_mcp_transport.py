@@ -61,10 +61,14 @@ def _pick_free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def _wait_for_port(host: str, port: int, *, timeout: float = 30.0) -> None:
-    # 30s, not 10s: these tests boot a real uvicorn subprocess with the full
-    # FastAPI app (backend.app.main), which on a busy shared CI runner can
-    # take 15–25s for cold imports alone (slowest-20 reports confirm).
+def _wait_for_port(host: str, port: int, *, timeout: float = 90.0) -> None:
+    # 90s, not 30s: these tests boot a real uvicorn subprocess with the full
+    # FastAPI app (backend.app.main). On a busy shared CI runner, cold
+    # imports alone can take 30s+ (slowest-20 has seen 33s for the sibling
+    # entrypoint test, and `test_mounted_mcp_streamable_http_app_serves_node_tool`
+    # has timed out at 30s on at least one CI run). 90s leaves a comfortable
+    # margin for transient load spikes without making local runs measurably
+    # slower (success path returns as soon as the port is open).
     deadline = time.time() + timeout
     while time.time() < deadline:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
