@@ -286,6 +286,8 @@ async def run_wiki_dry_run(
             api_url=settings.completion.api_url,
             api_key=api_key,
             model=settings.completion.model,
+            request_timeout_seconds=settings.completion.request_timeout_seconds,
+            connect_timeout_seconds=settings.completion.connect_timeout_seconds,
         )
 
     retriever = None
@@ -561,6 +563,8 @@ async def run_wiki_persist(
             api_url=settings.completion.api_url,
             api_key=api_key,
             model=settings.completion.model,
+            request_timeout_seconds=settings.completion.request_timeout_seconds,
+            connect_timeout_seconds=settings.completion.connect_timeout_seconds,
         )
 
     if fake_mode:

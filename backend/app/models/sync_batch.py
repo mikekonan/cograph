@@ -25,6 +25,7 @@ class SyncBatch(CreatedAtMixin, Base):
     __table_args__ = (
         Index("ix_sync_batches_repository_id", "repository_id"),
         Index("ix_sync_batches_created_at", "created_at"),
+        Index("ix_sync_batches_run_id", "run_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -59,6 +60,17 @@ class SyncBatch(CreatedAtMixin, Base):
     repository_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("repositories.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+
+    # The repo_sync_run this batch belongs to. Set in
+    # RepoSyncOrchestrator.enqueue_repository_sync after the run is flushed
+    # so its id is available; NULL on legacy batches that pre-date
+    # migration 0051 and on rows whose run got hard-deleted (the FK is
+    # ON DELETE SET NULL so batch history survives independently).
+    run_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("repo_sync_runs.id", ondelete="SET NULL"),
         nullable=True,
     )
 

@@ -181,3 +181,4 @@ class SyncErrorCode(StrEnum):
     GO_BUILD_VARIANT_CONFLICT = "go_build_variant_conflict"
     SUMMARY_PROVIDER_FAILED = "summary_provider_failed"
     WIKI_PROVIDER_FAILED = "wiki_provider_failed"
+    STEP_TIMEOUT = "step_timeout"

@@ -67,13 +67,29 @@ class OpenAICompletionProvider:
         model: str,
         max_tokens: int = 512,
         temperature: float = 0.2,
+        request_timeout_seconds: float = 120.0,
+        connect_timeout_seconds: float = 10.0,
         _max_attempts: int = 5,
         _wait_initial: float = 1.0,
         _wait_max: float = 30.0,
     ) -> None:
+        import httpx
         from openai import AsyncOpenAI
 
-        self._client = AsyncOpenAI(base_url=api_url, api_key=api_key)
+        # Split timeouts: a flaky endpoint that accepts the connection then
+        # stalls mid-response was the prod failure mode that the bare
+        # `AsyncOpenAI(...)` had no defense against — there's no client-side
+        # default, so the request could hang until arq's 2 h job_timeout.
+        self._client = AsyncOpenAI(
+            base_url=api_url,
+            api_key=api_key,
+            timeout=httpx.Timeout(
+                connect=connect_timeout_seconds,
+                read=request_timeout_seconds,
+                write=request_timeout_seconds,
+                pool=10.0,
+            ),
+        )
         self._model = model
         self._max_tokens = max_tokens
         self._temperature = temperature

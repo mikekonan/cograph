@@ -116,6 +116,12 @@ class EmbeddingSettings(BaseModel):
     model: str = "text-embedding-3-small"
     dimensions: int = 1536
     batch_size: int = 256
+    # httpx-level timeouts on the AsyncOpenAI client (`backend/app/llm/
+    # embedder.py`). Without these, a flaky upstream can hang the embed
+    # step until the 2 h arq job_timeout fires. read covers waiting on a
+    # response after the request is sent; connect is for TCP/TLS setup.
+    request_timeout_seconds: float = 120.0
+    connect_timeout_seconds: float = 10.0
 
     @model_validator(mode="after")
     def _require_api_key_when_enabled(self) -> "EmbeddingSettings":
@@ -143,6 +149,13 @@ class CompletionSettings(BaseModel):
     api_url: str = "https://api.openai.com/v1"
     api_key: SecretStr = SecretStr("")
     model: str = "gpt-5.4-mini"
+    # httpx-level timeouts on the AsyncOpenAI client (`backend/app/llm/
+    # completion.py` for summaries + `backend/app/wiki/llm_client.py`
+    # for structured wiki generation). request covers the full
+    # response wait — wiki generation routinely takes 60 s+ per page,
+    # so the default is generous; tune down for chatty endpoints.
+    request_timeout_seconds: float = 120.0
+    connect_timeout_seconds: float = 10.0
 
     @model_validator(mode="after")
     def _require_api_key_when_enabled(self) -> "CompletionSettings":
@@ -183,6 +196,34 @@ class RetrievalSettings(BaseModel):
     rerank: RerankSettings = Field(default_factory=RerankSettings)
 
 
+class PipelineTimeoutsSettings(BaseModel):
+    """Per-step deadlines for `RepoSyncProcessor.process_checkout` and
+    knobs for the `repo_sync_runs` stale-sweep cron.
+
+    Each step is wrapped in `asyncio.wait_for(...)` so a hang in any
+    single step kills only that step (via CancelledError → marked ERROR
+    with `step_timeout`), not the whole run. Values are generous
+    ceilings — typical step durations are well under each budget; the
+    budgets exist to catch genuine hangs.
+
+    Stale-sweep knobs: `threshold_minutes` is the minimum age (since
+    `started_at`, falling back to `created_at`) before a QUEUED/RUNNING
+    run is considered for the worker_died cascade. `sweep_limit` caps
+    the per-tick batch to avoid a thundering herd if many zombies
+    accumulate before the first sweep runs.
+    """
+
+    parse_seconds: int = 1200
+    extract_graph_seconds: int = 600
+    embed_seconds: int = 900
+    index_repo_docs_seconds: int = 600
+    embed_repo_docs_seconds: int = 900
+    generate_summaries_seconds: int = 1800
+    generate_wiki_seconds: int = 1800
+    stale_run_threshold_minutes: int = 15
+    stale_run_sweep_limit: int = 50
+
+
 class McpSettings(BaseModel):
     """DNS-rebinding protection for the mounted MCP transport.
 
@@ -221,6 +262,9 @@ class Settings(BaseSettings):
     embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
     completion: CompletionSettings = Field(default_factory=CompletionSettings)
     retrieval: RetrievalSettings = Field(default_factory=RetrievalSettings)
+    pipeline_timeouts: PipelineTimeoutsSettings = Field(
+        default_factory=PipelineTimeoutsSettings
+    )
     mcp: McpSettings = Field(default_factory=McpSettings)
 
     @model_validator(mode="after")

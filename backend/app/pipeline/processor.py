@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from backend.app.config import PipelineTimeoutsSettings
 from backend.app.graph.ingest import GraphIngestResult, GraphIngestService
 from backend.app.graph.go_variants import (
     GoBuildConstraintUnsupportedError,
@@ -50,6 +51,36 @@ _TRIGGER_MAP: dict[RepoSyncTriggerKind, SyncBatchTrigger] = {
 }
 
 
+class StepTimeoutError(RuntimeError):
+    """A pipeline step exceeded its per-step deadline.
+
+    Raised by ``_run_step_with_timeout`` and mapped to
+    :class:`SyncErrorCode.STEP_TIMEOUT` so the failing run + batch + job
+    surface the hang root cause instead of the generic GRAPH_INGEST_FAILED.
+    """
+
+    def __init__(self, step: SyncStep, timeout_seconds: int) -> None:
+        super().__init__(
+            f"Step {step.value} exceeded {timeout_seconds}s deadline"
+        )
+        self.step = step
+        self.timeout_seconds = timeout_seconds
+
+
+async def _run_step_with_timeout(coro, *, timeout_seconds: int, step: SyncStep):
+    """Wrap a step coroutine with ``asyncio.wait_for``.
+
+    On expiry the inner task is cancelled — for any network-bound work
+    the httpx read-timeout fires first anyway; this is the safety net
+    that bounds the whole step regardless of where the hang is.
+    """
+
+    try:
+        return await asyncio.wait_for(coro, timeout=timeout_seconds)
+    except asyncio.TimeoutError as exc:
+        raise StepTimeoutError(step, timeout_seconds) from exc
+
+
 @dataclass(slots=True, kw_only=True)
 class RepoSyncResult:
     repository_id: UUID
@@ -73,6 +104,7 @@ class RepoSyncProcessor:
         repo_document_embedder_service: RepoDocumentEmbedderService | None = None,
         summary_generator: SummaryGenerator | None = None,
         wiki_generator: LLMWikiGenerator | None = None,
+        timeouts: PipelineTimeoutsSettings | None = None,
     ) -> None:
         self._graph_ingest_service = graph_ingest_service or GraphIngestService()
         self._repo_document_indexer = repo_document_indexer or RepoDocumentIndexer()
@@ -81,6 +113,9 @@ class RepoSyncProcessor:
         self._repo_document_embedder_service = repo_document_embedder_service
         self._summary_generator = summary_generator
         self._wiki_generator = wiki_generator
+        # Defaults match the prod yaml — keeps the tests / CLI working
+        # without each caller having to construct a settings object.
+        self._timeouts = timeouts or PipelineTimeoutsSettings()
 
     async def process_checkout(
         self,
@@ -188,12 +223,16 @@ class RepoSyncProcessor:
             parse_job = _get_job(SyncStep.PARSE)
             running_job_id = parse_job.id if parse_job is not None else None
             await self._start_step(session, parse_job)
-            graph_ingest = await self._graph_ingest_service.ingest_checkout(
-                session=session,
-                repository_id=repository_id,
-                checkout_path=checkout_path,
-                last_commit=repository.last_commit,
-                commit_sha=sync_run.requested_ref or repository.last_commit,
+            graph_ingest = await _run_step_with_timeout(
+                self._graph_ingest_service.ingest_checkout(
+                    session=session,
+                    repository_id=repository_id,
+                    checkout_path=checkout_path,
+                    last_commit=repository.last_commit,
+                    commit_sha=sync_run.requested_ref or repository.last_commit,
+                ),
+                timeout_seconds=self._timeouts.parse_seconds,
+                step=SyncStep.PARSE,
             )
             await self._complete_step(
                 session,
@@ -229,9 +268,13 @@ class RepoSyncProcessor:
             running_job_id = embed_job.id if embed_job is not None else None
             await self._start_step(session, embed_job)
             if self._code_embedder_service is not None:
-                embed_result = await self._code_embedder_service.embed_repository(
-                    session=session,
-                    repository_id=repository_id,
+                embed_result = await _run_step_with_timeout(
+                    self._code_embedder_service.embed_repository(
+                        session=session,
+                        repository_id=repository_id,
+                    ),
+                    timeout_seconds=self._timeouts.embed_seconds,
+                    step=SyncStep.EMBED,
                 )
                 await self._complete_step(
                     session,
@@ -254,10 +297,14 @@ class RepoSyncProcessor:
             repo_docs_job = _get_job(SyncStep.INDEX_REPO_DOCS)
             running_job_id = repo_docs_job.id if repo_docs_job is not None else None
             await self._start_step(session, repo_docs_job)
-            repo_documents = await self._repo_document_indexer.index_checkout(
-                session=session,
-                repository_id=repository_id,
-                checkout_path=checkout_path,
+            repo_documents = await _run_step_with_timeout(
+                self._repo_document_indexer.index_checkout(
+                    session=session,
+                    repository_id=repository_id,
+                    checkout_path=checkout_path,
+                ),
+                timeout_seconds=self._timeouts.index_repo_docs_seconds,
+                step=SyncStep.INDEX_REPO_DOCS,
             )
             await self._complete_step(
                 session,
@@ -276,11 +323,13 @@ class RepoSyncProcessor:
             )
             await self._start_step(session, repo_doc_embed_job)
             if self._repo_document_embedder_service is not None:
-                repo_doc_embed_result = (
-                    await self._repo_document_embedder_service.embed_repository(
+                repo_doc_embed_result = await _run_step_with_timeout(
+                    self._repo_document_embedder_service.embed_repository(
                         session=session,
                         repository_id=repository_id,
-                    )
+                    ),
+                    timeout_seconds=self._timeouts.embed_repo_docs_seconds,
+                    step=SyncStep.EMBED_REPO_DOCS,
                 )
                 await self._complete_step(
                     session,
@@ -309,9 +358,13 @@ class RepoSyncProcessor:
             running_job_id = summary_job.id if summary_job is not None else None
             await self._start_step(session, summary_job)
             if self._summary_generator is not None:
-                summary_result = await self._summary_generator.generate(
-                    session=session,
-                    repository_id=repository_id,
+                summary_result = await _run_step_with_timeout(
+                    self._summary_generator.generate(
+                        session=session,
+                        repository_id=repository_id,
+                    ),
+                    timeout_seconds=self._timeouts.generate_summaries_seconds,
+                    step=SyncStep.GENERATE_SUMMARIES,
                 )
                 await self._complete_step(
                     session,
@@ -342,12 +395,16 @@ class RepoSyncProcessor:
             running_job_id = wiki_job.id if wiki_job is not None else None
             await self._start_step(session, wiki_job)
             if self._wiki_generator is not None:
-                wiki_result = await self._wiki_generator.generate(
-                    session=session,
-                    repository_id=repository_id,
-                    sync_run_id=sync_run.id,
-                    verified_commit=sync_run.requested_ref,
-                    checkout_path=checkout_path,
+                wiki_result = await _run_step_with_timeout(
+                    self._wiki_generator.generate(
+                        session=session,
+                        repository_id=repository_id,
+                        sync_run_id=sync_run.id,
+                        verified_commit=sync_run.requested_ref,
+                        checkout_path=checkout_path,
+                    ),
+                    timeout_seconds=self._timeouts.generate_wiki_seconds,
+                    step=SyncStep.GENERATE_WIKI,
                 )
                 await self._complete_step(
                     session,
@@ -664,6 +721,8 @@ def _sync_error_code(exc: Exception) -> SyncErrorCode:
     from backend.app.llm.embedder import EmbeddingProviderError
     from backend.app.wiki.llm_client import StructuredCompletionError
 
+    if isinstance(exc, StepTimeoutError):
+        return SyncErrorCode.STEP_TIMEOUT
     if isinstance(exc, FileNotFoundError):
         return SyncErrorCode.CHECKOUT_NOT_FOUND
     if isinstance(exc, NotADirectoryError):

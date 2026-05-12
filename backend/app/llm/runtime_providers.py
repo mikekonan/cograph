@@ -77,7 +77,9 @@ async def build_runtime_providers(
         )
     return RuntimeProviders(
         embed_provider=embed_provider,
-        completion_provider=_build_completion_provider(assignments.completion),
+        completion_provider=_build_completion_provider(
+            assignments.completion, settings
+        ),
     )
 
 
@@ -188,11 +190,14 @@ def _build_embed_provider(
         api_key=configured.api_key,
         model=configured.model_name,
         dimensions=settings.embedding.dimensions,
+        request_timeout_seconds=settings.embedding.request_timeout_seconds,
+        connect_timeout_seconds=settings.embedding.connect_timeout_seconds,
     )
 
 
 def _build_completion_provider(
     configured: RuntimeProviderConfig | None,
+    settings: Settings,
 ) -> CompletionProvider | None:
     if configured is None:
         return None
@@ -201,4 +206,6 @@ def _build_completion_provider(
         api_url=configured.api_url,
         api_key=configured.api_key,
         model=configured.model_name,
+        request_timeout_seconds=settings.completion.request_timeout_seconds,
+        connect_timeout_seconds=settings.completion.connect_timeout_seconds,
     )
