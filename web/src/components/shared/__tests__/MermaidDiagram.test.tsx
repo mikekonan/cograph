@@ -93,16 +93,75 @@ describe("sanitizeMermaidSvg", () => {
     expect(() => sanitizeMermaidSvg(broken)).toThrowError(MermaidSvgParseError);
   });
 
-  it("throws on real mermaid output that contains an unclosed <br> inside <foreignObject>", () => {
-    // The actual failure mode in prod: Mermaid emits HTML-style void <br>
-    // inside foreignObject. Strict image/svg+xml parsing rejects it as
-    // "Opening and ending tag mismatch". Guard against regressing the
-    // sanitizer back to silently passing the broken parse through.
-    const broken = [
+  it("rescues real mermaid output with HTML-void <br> inside <foreignObject>", () => {
+    // The actual failure mode in prod that made every wiki page show
+    // "Couldn't render diagram": Mermaid emits HTML-style void <br>
+    // inside foreignObject for htmlLabels-mode long-label wrapping.
+    // Strict image/svg+xml parsing rejects unclosed <br>. We
+    // pre-normalise HTML voids to self-closing form before the strict
+    // parse, so the diagram renders cleanly AND the strict parser
+    // continues to reject genuinely malformed XML.
+    const real = [
       '<svg xmlns="http://www.w3.org/2000/svg">',
       '<foreignObject><span class="nodeLabel">',
-      "first line<br>second line",
+      "first line<br>second line<br>third",
       "</span></foreignObject>",
+      "</svg>",
+    ].join("");
+    const cleaned = sanitizeMermaidSvg(real);
+    expect(cleaned).toContain("<svg");
+    expect(cleaned).toContain("foreignObject");
+    expect(cleaned).toContain("first line");
+    expect(cleaned).toContain("second line");
+    expect(cleaned).toContain("third");
+    // The serializer is free to emit either <br/> or <br></br>, but
+    // crucially the parsererror block must NOT be present.
+    expect(cleaned.toLowerCase()).not.toContain("parsererror");
+    expect(cleaned.toLowerCase()).toContain("<br");
+  });
+
+  it("rescues mermaid output that mixes unclosed and self-closed <br> on one line", () => {
+    // Idempotency check: re-running over already-self-closed tags
+    // must not double up (the `(?<!\/)` lookbehind in VOID_TAG_RE).
+    const mixed = [
+      '<svg xmlns="http://www.w3.org/2000/svg">',
+      "<foreignObject><span>a<br/>b<br>c<br/>d</span></foreignObject>",
+      "</svg>",
+    ].join("");
+    const cleaned = sanitizeMermaidSvg(mixed);
+    expect(cleaned.toLowerCase()).not.toContain("parsererror");
+    expect(cleaned).toContain("a");
+    expect(cleaned).toContain("b");
+    expect(cleaned).toContain("c");
+    expect(cleaned).toContain("d");
+  });
+
+  it("rescues unclosed <img> with attributes inside foreignObject and still strips its event handlers", () => {
+    // Two invariants combined: (1) the unclosed <img> shouldn't trip
+    // the strict-XML parser; (2) the dangerous onerror= attribute must
+    // still be removed by the security walk that runs AFTER the parse.
+    const svg = [
+      '<svg xmlns="http://www.w3.org/2000/svg">',
+      '<foreignObject><div class="nodeLabel">',
+      '<img src="https://example.com/x.png" alt="hi" onerror="alert(1)">',
+      "</div></foreignObject>",
+      "</svg>",
+    ].join("");
+    const cleaned = sanitizeMermaidSvg(svg);
+    expect(cleaned.toLowerCase()).not.toContain("parsererror");
+    expect(cleaned.toLowerCase()).not.toContain("onerror");
+    expect(cleaned).toContain("https://example.com/x.png");
+  });
+
+  it("still throws on genuinely malformed SVG that isn't a HTML-void-tag issue", () => {
+    // The void-tag normaliser must NOT mask other parse failures:
+    // a mismatched non-void tag pair still has to throw so callers
+    // surface the friendly error panel instead of injecting partial
+    // SVG. Here `<g>` is closed as `</span>`, which is unfixable by
+    // void-tag preprocessing.
+    const broken = [
+      '<svg xmlns="http://www.w3.org/2000/svg">',
+      '<g><rect width="10" height="10"/></span>',
       "</svg>",
     ].join("");
     expect(() => sanitizeMermaidSvg(broken)).toThrowError(MermaidSvgParseError);
