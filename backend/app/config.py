@@ -213,13 +213,13 @@ class PipelineTimeoutsSettings(BaseModel):
     accumulate before the first sweep runs.
     """
 
-    parse_seconds: int = 1200
-    extract_graph_seconds: int = 600
-    embed_seconds: int = 900
-    index_repo_docs_seconds: int = 600
-    embed_repo_docs_seconds: int = 900
-    generate_summaries_seconds: int = 1800
-    generate_wiki_seconds: int = 1800
+    parse_seconds: int = 3600
+    extract_graph_seconds: int = 3600
+    embed_seconds: int = 3600
+    index_repo_docs_seconds: int = 3600
+    embed_repo_docs_seconds: int = 3600
+    generate_summaries_seconds: int = 3600
+    generate_wiki_seconds: int = 3600
     stale_run_threshold_minutes: int = 15
     stale_run_sweep_limit: int = 50
 
