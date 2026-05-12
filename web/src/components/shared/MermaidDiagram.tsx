@@ -29,23 +29,48 @@ export class MermaidSvgParseError extends Error {
   }
 }
 
+// HTML5 void elements — tags that never have a closing pair. Mermaid's
+// htmlLabels mode emits `<br>` (HTML style) inside `<foreignObject>` so
+// long FQN labels wrap; under strict `image/svg+xml` parsing those
+// unclosed tags are rejected with "Opening and ending tag mismatch".
+// We normalise them to self-closing form (`<br/>`) BEFORE feeding the
+// string to DOMParser. This keeps every other shape of malformed input
+// failing the strict-XML check — only the legitimate Mermaid output
+// shape is rescued.
+//
+// The regex matches:
+//   - the tag name (any of the HTML5 voids that could appear in Mermaid
+//     output: br, hr, img, input, meta, link, source, area, col, embed,
+//     track, wbr)
+//   - whatever attributes follow (greedy, but bounded by `[^>]*`)
+//   - only when the tag is NOT already self-closed (`(?<!\/)` before `>`)
+//
+// The lookbehind makes the substitution idempotent — re-running the
+// preprocess on already-clean input is a no-op.
+const VOID_TAG_RE =
+  /<(br|hr|img|input|meta|link|source|area|col|embed|track|wbr)\b([^>]*?)(?<!\/)>/gi;
+
+function normaliseHtmlVoidTagsForXml(svg: string): string {
+  return svg.replace(VOID_TAG_RE, "<$1$2/>");
+}
+
 export function sanitizeMermaidSvg(svg: string): string {
   if (typeof DOMParser === "undefined") return svg;
   const parser = new DOMParser();
-  const doc = parser.parseFromString(svg, "image/svg+xml");
+  const doc = parser.parseFromString(normaliseHtmlVoidTagsForXml(svg), "image/svg+xml");
   const root = doc.documentElement;
   if (!root) {
     throw new MermaidSvgParseError("Diagram SVG parsed to empty document");
   }
-  // In strict XML mode, browsers report parse failures differently:
-  // Firefox makes <parsererror> the documentElement; Chrome and WebKit
-  // insert a <parsererror> child *inside* a still-named-svg root
-  // (Mermaid emits HTML-style void <br> tags inside foreignObject, which
-  // strict XML rejects with "Opening and ending tag mismatch"). Checking
-  // only the root nodeName missed Chrome's variant, so the broken
-  // partial-SVG plus the visible red parsererror block were getting
-  // serialized straight back into dangerouslySetInnerHTML. Probe the
-  // whole subtree before trusting the parse.
+  // Even after normalising HTML void tags, the strict XML parser may
+  // still reject the input for genuinely malformed shapes (mismatched
+  // non-void tags, bad XML entities, etc). When it fails, browsers
+  // report it differently: Firefox makes `<parsererror>` the
+  // documentElement; Chrome and WebKit insert it as a child *inside* a
+  // still-named-svg root. Probe the whole subtree before trusting the
+  // parse — earlier we only checked the root nodeName, which missed
+  // Chrome's variant and let the broken partial-SVG plus the red
+  // parsererror block leak into dangerouslySetInnerHTML.
   const parseErrorNode =
     root.nodeName === "parsererror" ? root : (root.getElementsByTagName("parsererror")[0] ?? null);
   if (parseErrorNode) {
