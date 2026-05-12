@@ -154,6 +154,23 @@ class SyncStep(StrEnum):
     EXPORT_CONFLUENCE = "export_confluence"
 
 
+class GrantLevel(StrEnum):
+    """Access-level ladder for per-(group, resource) ACL grants.
+
+    The values are deliberately the same strings stored in the
+    `level` CHECK-constrained column on `repository_grants` and
+    `collection_grants`, so the enum can be compared against raw row
+    values without translation. Use `grant_level_int()` from
+    `backend.app.core.group_permissions` to map a level onto a
+    monotonically increasing rank for satisfaction checks
+    (READ < WRITE < ADMIN).
+    """
+
+    READ = "read"
+    WRITE = "write"
+    ADMIN = "admin"
+
+
 class SyncErrorCode(StrEnum):
     CHECKOUT_NOT_FOUND = "checkout_not_found"
     CHECKOUT_INVALID = "checkout_invalid"
