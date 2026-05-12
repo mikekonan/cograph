@@ -104,6 +104,13 @@ class Repository(TimestampMixin, Base):
     )
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     next_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Set the moment a user clicks Delete; the synchronous handler flips
+    # `status -> DELETING` + this timestamp and immediately returns 204,
+    # while an arq worker drains the cascade. Read paths
+    # (list endpoints, slug lookup, sync scheduler) MUST filter on
+    # `deleted_at IS NULL` so a soft-deleted row is invisible from the
+    # instant the user pressed the button.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     webhook_secret: Mapped[str | None] = mapped_column(String(255))
     error_msg: Mapped[str | None] = mapped_column(Text)
     graph_storage_version: Mapped[int] = mapped_column(

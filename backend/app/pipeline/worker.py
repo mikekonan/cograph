@@ -18,6 +18,7 @@ from backend.app.llm.runtime_providers import (
 )
 from backend.app.llm.repo_document_embedder import RepoDocumentEmbedderService
 from backend.app.md_rag.worker import embed_md_collection, resolve_md_links
+from backend.app.repos.purge_worker import purge_repository
 from backend.app.models.enums import RepoSyncTriggerKind
 from backend.app.pipeline.checkout import GitCheckoutAdapter
 from backend.app.pipeline.constants import REPO_SYNC_QUEUE_NAME
@@ -464,6 +465,7 @@ class WorkerSettings:
         run_scheduler_tick,
         embed_md_collection,
         resolve_md_links,
+        purge_repository,
     ]
     on_startup = worker_startup
     on_shutdown = worker_shutdown
