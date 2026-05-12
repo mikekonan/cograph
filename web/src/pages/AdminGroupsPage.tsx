@@ -624,7 +624,11 @@ function AddRepositoryGrantDialog({
 }) {
   const reposQuery = useQuery({
     queryKey: ["admin", "groups", "repo-picker"],
-    queryFn: () => apiJson<OffsetPage<Repository>>("/api/repos?per_page=200"),
+    // Backend caps `per_page` at 100. We don't paginate the picker —
+    // 100 candidates is enough for the dialog; if a deployment ever
+    // grows beyond it, the right answer is a typeahead, not a higher
+    // bulk fetch.
+    queryFn: () => apiJson<OffsetPage<Repository>>("/api/repos?per_page=100"),
     enabled: open,
   });
   const putGrant = usePutGroupRepositoryGrant(groupId);
@@ -813,7 +817,8 @@ function AddCollectionGrantDialog({
 }) {
   const collectionsQuery = useQuery({
     queryKey: ["admin", "groups", "collection-picker"],
-    queryFn: () => apiJson<OffsetPage<MdCollection>>("/api/md-collections?page=1&per_page=200"),
+    queryFn: () =>
+      apiJson<OffsetPage<MdCollection>>("/api/md-collections?page=1&per_page=100"),
     enabled: open,
   });
   const putGrant = usePutGroupCollectionGrant(groupId);
