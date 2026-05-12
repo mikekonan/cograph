@@ -629,7 +629,13 @@ async def test_list_repositories_owner_sees_admin_only(client, db_session, setti
     assert response.json()["total"] == 2
 
 
-async def test_list_repositories_pat_user_sees_admin_only(client, db_session):
+async def test_list_repositories_pat_user_without_grant_sees_only_public(
+    client, db_session
+):
+    """USER-tier PAT without any group grant must NOT see ADMIN_ONLY
+    repos. This is the new ACL contract: visibility funnel + group
+    grants, no implicit access just because you authenticated.
+    """
     member = User(email="member@example.com", password_hash="hashed", role=UserRole.USER)
     db_session.add_all(
         [
@@ -662,7 +668,68 @@ async def test_list_repositories_pat_user_sees_admin_only(client, db_session):
     response = await client.get("/api/repos", headers=headers)
 
     assert response.status_code == 200
-    assert response.json()["total"] == 2
+    body = response.json()
+    assert body["total"] == 1
+    assert {item["name"] for item in body["items"]} == {"public"}
+
+
+async def test_list_repositories_pat_user_with_grant_sees_admin_only(
+    client, db_session
+):
+    """USER-tier PAT in a group with a READ grant on an ADMIN_ONLY
+    repo MUST see that repo through the funnel. Proves the grant
+    extension reaches REST list endpoints.
+    """
+    from backend.app.models.enums import GrantLevel
+    from backend.app.models.group import Group, GroupMember, RepositoryGrant
+
+    member = User(email="grantee@example.com", password_hash="hashed", role=UserRole.USER)
+    public_repo = Repository(
+        host="example.com",
+        git_url="https://github.com/acme/public.git",
+        name="public",
+        owner="acme",
+        branch="main",
+        visibility=RepositoryVisibility.PUBLIC,
+    )
+    secret_repo = Repository(
+        host="example.com",
+        git_url="https://github.com/acme/secret.git",
+        name="secret",
+        owner="acme",
+        branch="main",
+        visibility=RepositoryVisibility.ADMIN_ONLY,
+    )
+    db_session.add_all([member, public_repo, secret_repo])
+    await db_session.commit()
+
+    group = Group(name="grantees")
+    db_session.add(group)
+    await db_session.commit()
+    db_session.add_all(
+        [
+            GroupMember(group_id=group.id, user_id=member.id),
+            RepositoryGrant(
+                group_id=group.id,
+                repository_id=secret_repo.id,
+                level=GrantLevel.READ.value,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    headers = await _mint_pat(
+        db_session,
+        member,
+        "cgr_pat_repo_read_grantee_token_0000000000000000000000",
+    )
+
+    response = await client.get("/api/repos", headers=headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 2
+    assert {item["name"] for item in body["items"]} == {"public", "secret"}
 
 
 async def test_list_repositories_pagination(client, db_session):
@@ -793,7 +860,12 @@ async def test_get_repository_owner_can_read_admin_only_repo(
     assert response.json()["visibility"] == "admin_only"
 
 
-async def test_get_repository_pat_user_can_read_admin_only_repo(client, db_session):
+async def test_get_repository_pat_user_without_grant_404s_on_admin_only(
+    client, db_session
+):
+    """USER-tier PAT without a grant must get a 404 (not 403) on an
+    ADMIN_ONLY repo — funnel hides its existence to avoid leaking.
+    """
     member = User(email="member-read@example.com", password_hash="hashed", role=UserRole.USER)
     repository = Repository(
         host="example.com",
@@ -809,6 +881,57 @@ async def test_get_repository_pat_user_can_read_admin_only_repo(client, db_sessi
         db_session,
         member,
         "cgr_pat_repo_detail_member_token_0000000000000000000000",
+    )
+
+    response = await client.get(
+        f"/api/repos/{repository.host}/{repository.owner}/{repository.name}",
+        headers=headers,
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "NOT_FOUND"
+
+
+async def test_get_repository_pat_user_with_grant_can_read_admin_only(
+    client, db_session
+):
+    """USER-tier PAT with a READ grant on an ADMIN_ONLY repo MUST be
+    able to GET it by slug — the positive counterpart of the 404 case.
+    """
+    from backend.app.models.enums import GrantLevel
+    from backend.app.models.group import Group, GroupMember, RepositoryGrant
+
+    member = User(email="grantee-detail@example.com", password_hash="hashed", role=UserRole.USER)
+    repository = Repository(
+        host="example.com",
+        git_url="https://github.com/acme/secret.git",
+        name="secret",
+        owner="acme",
+        branch="main",
+        visibility=RepositoryVisibility.ADMIN_ONLY,
+    )
+    db_session.add_all([member, repository])
+    await db_session.commit()
+
+    group = Group(name="detail-grantees")
+    db_session.add(group)
+    await db_session.commit()
+    db_session.add_all(
+        [
+            GroupMember(group_id=group.id, user_id=member.id),
+            RepositoryGrant(
+                group_id=group.id,
+                repository_id=repository.id,
+                level=GrantLevel.READ.value,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    headers = await _mint_pat(
+        db_session,
+        member,
+        "cgr_pat_repo_detail_grantee_token_00000000000000000000",
     )
 
     response = await client.get(

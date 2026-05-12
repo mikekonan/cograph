@@ -2,6 +2,7 @@ from backend.app.models.enums import (
     CodeEdgeType,
     CodeNodeRole,
     CodeNodeType,
+    GrantLevel,
     MdCollectionVisibility,
     MdJobKind,
     MdJobStatus,
@@ -26,6 +27,12 @@ from backend.app.models.code_subgraph_summary import CodeSubgraphSummary
 from backend.app.models.document import Document
 from backend.app.models.git_credential import GitCredential
 from backend.app.models.git_host import GitHost
+from backend.app.models.group import (
+    CollectionGrant,
+    Group,
+    GroupMember,
+    RepositoryGrant,
+)
 from backend.app.models.idempotency_key import IdempotencyKey
 from backend.app.models.identity_provider import IdentityProvider
 from backend.app.models.llm_model_assignment import (
@@ -69,9 +76,13 @@ __all__ = [
     "CodeNodeSummary",
     "CodeSubgraphSummary",
     "CodeNodeType",
+    "CollectionGrant",
     "Document",
     "GitCredential",
     "GitHost",
+    "GrantLevel",
+    "Group",
+    "GroupMember",
     "IdempotencyKey",
     "IdentityProvider",
     "LLM_REASONING_EFFORTS",
@@ -100,6 +111,7 @@ __all__ = [
     "RepoSyncTriggerKind",
     "RepoWebhookDelivery",
     "Repository",
+    "RepositoryGrant",
     "RepositoryStatus",
     "SCIMClient",
     "SCIMEvent",
