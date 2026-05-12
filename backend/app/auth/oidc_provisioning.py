@@ -18,8 +18,17 @@ Provisioning policy:
    password" migration path.
 3. Auto-provision a new user iff the provider opts in:
    - `auto_provision=true`
-   - `email_verified=true` in the ID token
-   - `email` domain inside `domain_allowlist` (when set)
+   - `email` is present in the ID token
+   - the email is "trusted", by EITHER
+       - the IdP asserting `email_verified=true`, OR
+       - the provider having a non-empty `domain_allowlist` that the
+         email's domain matches (the admin pre-trusts that domain).
+     The same rationale as for auto-link applies: when an admin has
+     explicitly pinned the trusted domains, the allowlist match is a
+     stronger signal than the IdP's self-asserted `email_verified`
+     flag (Okta and several other IdPs omit it by default).
+   - when `domain_allowlist` is set, the email's domain must match it
+     regardless of which trust signal carried us here.
 4. Group to admin promotion is OFF unless `admin_group_mode='owner_delegated'`
    AND the IdP-asserted groups intersect `admin_groups`. Group removal on
    subsequent login NEVER demotes - owner action required.
@@ -47,6 +56,44 @@ def _email_domain(email: str | None) -> str | None:
     if not email or "@" not in email:
         return None
     return email.rsplit("@", 1)[1].lower()
+
+
+def _email_is_trusted(
+    *,
+    provider: IdentityProvider,
+    claims: IdTokenClaims,
+) -> bool:
+    """Whether we can trust the email claim well enough to use it for
+    account-creation/account-linking decisions.
+
+    Two equally strong signals; EITHER is sufficient:
+
+      1. The IdP asserts `email_verified=true` in the ID token (the
+         RFC-spec'd signal).
+      2. The provider has a non-empty `domain_allowlist` AND the email's
+         domain matches one of the allowlisted domains. An admin
+         explicitly pinning trusted domains is a stronger signal than
+         the IdP's self-asserted flag — and crucially, this path is
+         what unblocks Okta, which by default does not emit
+         `email_verified` without custom authorization-server config.
+
+    When neither holds (no `email_verified`, no allowlist match), the
+    email cannot be trusted as proof of control over the inbox.
+
+    Note: this function does NOT enforce the domain allowlist on its
+    own. Callers must still run the separate domain-allowlist check
+    (`OIDC_DOMAIN_NOT_ALLOWED`) to surface a clear "wrong tenant"
+    error instead of silently rejecting via `OIDC_EMAIL_UNVERIFIED`.
+    """
+    if not claims.email:
+        return False
+    if claims.email_verified:
+        return True
+    allowlist = {d.lower() for d in (provider.domain_allowlist or [])}
+    if not allowlist:
+        return False
+    domain = _email_domain(claims.email)
+    return domain is not None and domain in allowlist
 
 
 async def find_or_create_user(
@@ -115,12 +162,22 @@ async def find_or_create_user(
             "OIDC_EMAIL_MISSING",
             "Identity provider did not return an email claim",
         )
-    if not claims.email_verified:
+    # `email_verified=true` is no longer required unconditionally; we
+    # accept the admin-pinned domain allowlist as an equally strong
+    # trust anchor (see `_email_is_trusted`). Okta in particular omits
+    # this claim by default, so requiring it broke every fresh-user
+    # SSO sign-up on Okta-backed deployments.
+    if not _email_is_trusted(provider=provider, claims=claims):
         raise ApiError(
             403,
             "OIDC_EMAIL_UNVERIFIED",
             "Identity provider has not verified this email",
         )
+    # Even when the email is trusted via the allowlist path, we still
+    # reject if the provider has an allowlist set AND the email's
+    # domain does not match it. This handles the edge case where
+    # `email_verified=true` is asserted but the domain is outside the
+    # tenant — without this we'd happily create cross-tenant accounts.
     domain = _email_domain(claims.email)
     if provider.domain_allowlist:
         if domain is None or domain not in {d.lower() for d in provider.domain_allowlist}:
@@ -175,45 +232,26 @@ def _can_auto_link(
 ) -> bool:
     """Decide whether a colliding email may be auto-linked to the local user.
 
-    Two gates must hold; the third (verification of the email) accepts
-    either of two signals:
+    Three gates must hold:
 
       1. Provider opted in (`auto_link_on_verified_email=true`).
-      2. Claims carry an email at all (we look up the local user by it).
-      3. Email is trusted, by EITHER:
-         - the IdP asserting `email_verified=true`, OR
-         - the provider having a non-empty `domain_allowlist` that the
-           email's domain matches.
-
-    Rationale for accepting `domain_allowlist` as a substitute for
-    `email_verified`: when an admin has explicitly pinned the set of
-    domains they trust for this provider, the allowlist match itself is
-    a stronger signal than the IdP's self-asserted `email_verified` flag
-    (which many IdPs — Okta in particular — omit by default). This
-    matches real-world deployments where Okta does not ship the claim
-    without custom authorization-server config.
-
-    When the provider has NO domain allowlist (wide-open / multi-tenant
-    case), we still require `email_verified=true` because there is no
-    other admin-supplied trust anchor.
-
-    Note: the auto-provision branch in `find_or_create_user` continues
-    to require `email_verified=true` unconditionally — creating a brand
-    new account is a stronger action than linking to an existing one
-    whose owner already proved control via the local password.
+      2. The email claim is trusted (see `_email_is_trusted` — accepts
+         either `email_verified=true` or a domain_allowlist match).
+      3. When `domain_allowlist` is set, the email's domain matches it.
+         This is the tenant-scope guard: a verified email from a
+         different tenant must not be silently linked into this one.
+         Symmetric to the separate OIDC_DOMAIN_NOT_ALLOWED check on
+         the auto-provision path.
     """
     if not provider.auto_link_on_verified_email:
         return False
-    if not claims.email:
+    if not _email_is_trusted(provider=provider, claims=claims):
         return False
-
     allowlist = {d.lower() for d in (provider.domain_allowlist or [])}
-    if allowlist:
-        domain = _email_domain(claims.email)
-        return domain is not None and domain in allowlist
-
-    # No allowlist → fall back to requiring the IdP-asserted flag.
-    return bool(claims.email_verified)
+    if not allowlist:
+        return True
+    domain = _email_domain(claims.email)
+    return domain is not None and domain in allowlist
 
 
 async def _auto_link_existing_user(
