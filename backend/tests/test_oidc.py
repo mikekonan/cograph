@@ -350,17 +350,17 @@ async def test_find_or_create_user_provisions_when_domain_allowlist_substitutes_
     # via `domain_allowlist` and the email's domain matches, treat the
     # allowlist match itself as the admin-supplied trust anchor and
     # provision the new account. Symmetric to the auto-link path.
-    provider = _make_provider(domain_allowlist=["finteqhub.com"])
+    provider = _make_provider(domain_allowlist=["allowed.com"])
     db_session.add(provider)
     await db_session.commit()
 
     claims = _make_claims(
-        email="newhire@finteqhub.com",
+        email="newhire@allowed.com",
         email_verified=False,
     )
     user = await find_or_create_user(db_session, provider=provider, claims=claims)
     await db_session.commit()
-    assert user.email == "newhire@finteqhub.com"
+    assert user.email == "newhire@allowed.com"
     assert user.auth_source == "oidc"
     assert user.password_hash is None
 
@@ -374,7 +374,7 @@ async def test_find_or_create_user_still_rejects_when_allowlist_set_but_domain_m
     # via the new allowlist path). The cross-tenant attack vector this
     # closes: a misconfigured wildcard IdP returning an outside-domain
     # email with no email_verified claim must not provision an account.
-    provider = _make_provider(domain_allowlist=["finteqhub.com"])
+    provider = _make_provider(domain_allowlist=["allowed.com"])
     db_session.add(provider)
     await db_session.commit()
 
