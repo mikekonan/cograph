@@ -14,7 +14,7 @@ RUN apt-get update \
 COPY backend/pyproject.toml backend/uv.lock /app/backend/
 
 RUN python -m pip install --upgrade pip \
-    && python -m pip install uv \
+    && python -m pip install 'uv==0.11.13' \
     && cd /app/backend \
     && uv export --frozen --no-dev --no-emit-project --format requirements-txt --output-file /tmp/requirements.txt > /dev/null \
     && python -m pip install --require-hashes -r /tmp/requirements.txt
