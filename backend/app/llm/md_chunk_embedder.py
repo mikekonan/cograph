@@ -13,6 +13,7 @@ from uuid import UUID
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.graph._chunking import chunked
 from backend.app.llm.code_embedder import EmbedResult
 from backend.app.llm.embedder import EmbedProvider
 from backend.app.models.md_collection import MdChunk, MdDocument
@@ -46,15 +47,19 @@ class MdChunkEmbedderService:
                 embedded_nodes=0, skipped_nodes=0, model=self._provider.model
             )
 
-        # Build chunk_id -> source_key mapping for progress reporting
+        # Build chunk_id -> source_key mapping for progress reporting.
+        # Chunked IN-lookup so collections with >32k documents don't blow
+        # past asyncpg's placeholder cap.
         doc_ids = list({c.document_id for c in chunks})
-        docs = list(
-            (
-                await session.scalars(
-                    select(MdDocument).where(MdDocument.id.in_(doc_ids))
-                )
-            ).all()
-        )
+        docs: list[MdDocument] = []
+        for batch in chunked(doc_ids):
+            docs.extend(
+                (
+                    await session.scalars(
+                        select(MdDocument).where(MdDocument.id.in_(batch))
+                    )
+                ).all()
+            )
         source_map = {d.id: d.source_key for d in docs}
         chunk_sources = {c.id: source_map.get(c.document_id) for c in chunks}
 
@@ -78,26 +83,32 @@ class MdChunkEmbedderService:
                 embedded_nodes=0, skipped_nodes=0, model=self._provider.model
             )
 
-        chunks = list(
-            (
-                await session.scalars(
-                    select(MdChunk).where(MdChunk.document_id.in_(document_ids))
-                )
-            ).all()
-        )
+        # Chunked lookups: callers pass collection-scale document_ids
+        # lists that can exceed asyncpg's 32767-placeholder cap.
+        chunks: list[MdChunk] = []
+        for batch in chunked(document_ids):
+            chunks.extend(
+                (
+                    await session.scalars(
+                        select(MdChunk).where(MdChunk.document_id.in_(batch))
+                    )
+                ).all()
+            )
 
         if not chunks:
             return EmbedResult(
                 embedded_nodes=0, skipped_nodes=0, model=self._provider.model
             )
 
-        docs = list(
-            (
-                await session.scalars(
-                    select(MdDocument).where(MdDocument.id.in_(document_ids))
-                )
-            ).all()
-        )
+        docs: list[MdDocument] = []
+        for batch in chunked(document_ids):
+            docs.extend(
+                (
+                    await session.scalars(
+                        select(MdDocument).where(MdDocument.id.in_(batch))
+                    )
+                ).all()
+            )
         source_map = {d.id: d.source_key for d in docs}
         chunk_sources = {c.id: source_map.get(c.document_id) for c in chunks}
 

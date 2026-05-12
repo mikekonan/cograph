@@ -16,6 +16,7 @@ from uuid import UUID
 from sqlalchemy import insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.graph._chunking import chunked
 from backend.app.llm.embedder import EmbedProvider
 from backend.app.models.code_embedding import CodeEmbedding
 from backend.app.models.code_node import CodeNode
@@ -50,15 +51,20 @@ class CodeEmbedderService:
         if not nodes:
             return EmbedResult(embedded_nodes=0, skipped_nodes=0, model=self._provider.model)
 
+        # asyncpg caps a single statement at 32767 placeholders, so on a
+        # large monorepo (~50k+ nodes) the unchunked IN-list below crashed
+        # the whole indexing pass with "the number of query arguments
+        # cannot exceed 32767". Chunk the lookup; result is stitched into
+        # the same dict the rest of this method expects.
         node_ids = [n.id for n in nodes]
-        existing: dict[UUID, CodeEmbedding] = {
-            row.code_node_id: row
+        existing: dict[UUID, CodeEmbedding] = {}
+        for batch in chunked(node_ids):
             for row in (
                 await session.scalars(
-                    select(CodeEmbedding).where(CodeEmbedding.code_node_id.in_(node_ids))
+                    select(CodeEmbedding).where(CodeEmbedding.code_node_id.in_(batch))
                 )
-            ).all()
-        }
+            ).all():
+                existing[row.code_node_id] = row
 
         id_to_qname: dict[str, str] = {str(n.id): n.qualified_name for n in nodes}
 
