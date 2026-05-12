@@ -137,14 +137,18 @@ async def test_patch_collection_allowed_for_write_grant(
     assert response.json()["description"] == "edited by grantee"
 
 
-# ----- DELETE (ADMIN) ------------------------------------------------------
+# ----- DELETE (OWNER/ADMIN role only) --------------------------------------
+# Migration 0052 retired GrantLevel.ADMIN; destructive endpoints now gate on
+# the OWNER/ADMIN role at the dependency layer (require_admin) instead of a
+# per-resource ADMIN grant.
 
 
 async def test_delete_collection_denied_for_write_grant(
     client, db_session, settings
 ):
-    """WRITE must NOT satisfy DELETE — the ladder check distinguishes
-    the two ranks. Regression guard for ladder-comparison bugs.
+    """A WRITE grant must not be enough to delete — delete now needs
+    OWNER/ADMIN role. Regression guard for the migration-0052
+    semantic change.
     """
     owner = await _make_user(db_session)
     other = await _make_user(db_session)
@@ -161,16 +165,18 @@ async def test_delete_collection_denied_for_write_grant(
     assert response.status_code == 403
 
 
-async def test_delete_collection_allowed_for_admin_grant(
+async def test_delete_collection_allowed_for_admin_role(
     client, db_session, settings
 ):
+    """An ADMIN-role user can delete any collection — destructive ops
+    gate at the role layer post-0052.
+    """
+    from backend.app.models.enums import UserRole
+
     owner = await _make_user(db_session)
-    other = await _make_user(db_session)
+    admin = await _make_user(db_session, role=UserRole.ADMIN)
     coll = await _make_collection(db_session, owner=owner)
-    await _grant(
-        db_session, user=other, collection=coll, level=GrantLevel.ADMIN
-    )
-    await _auth(client, settings, other)
+    await _auth(client, settings, admin)
 
     response = await client.delete(
         f"/api/md-collections/{coll.id}",

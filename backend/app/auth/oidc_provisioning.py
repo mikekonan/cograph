@@ -45,6 +45,7 @@ from sqlalchemy.orm import selectinload
 
 from backend.app.audit.events import AuditEventRecord, write_audit
 from backend.app.auth.oidc_client import IdTokenClaims
+from backend.app.auth.oidc_group_sync import sync_oidc_group_memberships
 from backend.app.core.errors import ApiError
 from backend.app.models.enums import UserRole
 from backend.app.models.identity_provider import IdentityProvider
@@ -125,6 +126,12 @@ async def find_or_create_user(
                 "Account is disabled. Contact an administrator.",
             )
         existing_identity.last_login_at = datetime.now(UTC)
+        await sync_oidc_group_memberships(
+            session=session,
+            user_id=user.id,
+            provider=provider,
+            claim_groups=claims.groups,
+        )
         return user
 
     # 2. Email collision — either auto-link (opt-in) or refuse.
@@ -134,12 +141,19 @@ async def find_or_create_user(
         )
         if existing_user is not None:
             if _can_auto_link(provider=provider, claims=claims):
-                return await _auto_link_existing_user(
+                linked_user = await _auto_link_existing_user(
                     session,
                     user=existing_user,
                     provider=provider,
                     claims=claims,
                 )
+                await sync_oidc_group_memberships(
+                    session=session,
+                    user_id=linked_user.id,
+                    provider=provider,
+                    claim_groups=claims.groups,
+                )
+                return linked_user
             raise ApiError(
                 409,
                 "OIDC_LINK_REQUIRED",
@@ -221,6 +235,12 @@ async def find_or_create_user(
                 "role": role.value,
             },
         ),
+    )
+    await sync_oidc_group_memberships(
+        session=session,
+        user_id=user.id,
+        provider=provider,
+        claim_groups=claims.groups,
     )
     return user
 

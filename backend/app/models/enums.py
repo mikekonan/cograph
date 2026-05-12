@@ -157,18 +157,20 @@ class SyncStep(StrEnum):
 class GrantLevel(StrEnum):
     """Access-level ladder for per-(group, resource) ACL grants.
 
-    The values are deliberately the same strings stored in the
-    `level` CHECK-constrained column on `repository_grants` and
-    `collection_grants`, so the enum can be compared against raw row
-    values without translation. Use `grant_level_int()` from
-    `backend.app.core.group_permissions` to map a level onto a
-    monotonically increasing rank for satisfaction checks
-    (READ < WRITE < ADMIN).
+    Two levels: READ (visible + queryable via API) and WRITE
+    (additionally allowed to run jobs — reindex, upload, delete
+    documents, etc.). NONE is the absence of a grant row, not an enum
+    value. Grant administration (handing out grants) is OWNER/ADMIN
+    role only and lives outside this ladder.
+
+    The values are the same strings stored in the ``level``
+    CHECK-constrained column on ``repository_grants`` and
+    ``collection_grants``, so the enum compares directly against raw
+    row values without translation.
     """
 
     READ = "read"
     WRITE = "write"
-    ADMIN = "admin"
 
 
 class SyncErrorCode(StrEnum):

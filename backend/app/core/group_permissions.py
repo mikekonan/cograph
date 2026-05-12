@@ -40,7 +40,6 @@ from backend.app.models.user import User
 _LEVEL_TO_RANK: dict[str, int] = {
     GrantLevel.READ.value: 1,
     GrantLevel.WRITE.value: 2,
-    GrantLevel.ADMIN.value: 3,
 }
 
 
@@ -69,7 +68,6 @@ async def has_repository_permission(
         return True
 
     rank_case = case(
-        (RepositoryGrant.level == GrantLevel.ADMIN.value, 3),
         (RepositoryGrant.level == GrantLevel.WRITE.value, 2),
         else_=1,
     )
@@ -125,7 +123,6 @@ async def has_collection_permission(
             return True
 
     rank_case = case(
-        (CollectionGrant.level == GrantLevel.ADMIN.value, 3),
         (CollectionGrant.level == GrantLevel.WRITE.value, 2),
         else_=1,
     )

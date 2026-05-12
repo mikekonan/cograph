@@ -4,6 +4,7 @@ import type {
   AdminGroup,
   CollectionGrant,
   GrantLevel,
+  GroupMemberSource,
   MdCollection,
   OffsetPage,
   Repository,
@@ -45,6 +46,7 @@ import {
   useRemoveGroupMember,
   useUpdateAdminGroup,
 } from "@/hooks/useGroups";
+import { useIdentityProviders } from "@/hooks/useIdentityProviders";
 import { useAdminUsers } from "@/hooks/useUsers";
 import { cn } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
@@ -62,12 +64,16 @@ import { useMemo, useState } from "react";
 
 /**
  * AdminGroupsPage — Settings → Groups. CRUD for groups, group membership,
- * and per-resource (repository / md-collection) grants at READ / WRITE / ADMIN
- * levels. Layered on top of visibility — grants ONLY expand who can see/act
+ * and per-resource (repository / md-collection) grants at READ / WRITE
+ * levels (no per-resource ADMIN — destructive actions gate on OWNER/ADMIN
+ * role). Layered on top of visibility — grants ONLY expand who can see/act
  * on a resource. OWNER/ADMIN tier always sees everything regardless.
  *
- * Three panels on the right when a group is selected: members, repository
- * grants, collection grants. List is on the left.
+ * Groups optionally declare an OIDC mapping pair (IdP + group name in
+ * the IdP); on every successful OIDC login users whose `groups` claim
+ * matches that pair are added to the cograph group. Additive only —
+ * memberships are never removed by the sync. Each member row shows
+ * provenance (`manual` vs `oidc`).
  */
 export default function AdminGroupsPage() {
   const groupsQuery = useAdminGroups();
@@ -100,7 +106,8 @@ export default function AdminGroupsPage() {
             Groups bundle users together so you can grant them access to specific repositories or
             markdown collections without making them admins. Grants are additive — a USER who is in
             a group with a READ grant on an ADMIN_ONLY repo can see and search it; WRITE adds
-            reindex and metadata edits; ADMIN adds delete.
+            reindex and metadata edits. Destructive actions (delete a repo/collection) require the
+            OWNER/ADMIN role, not a per-resource grant.
           </p>
         </div>
         <Button onClick={() => setCreateOpen(true)}>
@@ -361,16 +368,19 @@ function MembersPanel({ groupId, groupName }: { groupId: UUID; groupName: string
                   <p className="truncate text-xs text-[color:var(--color-fg-muted)]">{m.name}</p>
                 )}
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                aria-label={`Remove ${m.email}`}
-                onClick={() => removeMember.mutate(m.user_id)}
-                disabled={removeMember.isPending}
-                className="text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </Button>
+              <div className="flex items-center gap-2">
+                <MemberSourceBadge source={m.source} />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-label={`Remove ${m.email}`}
+                  onClick={() => removeMember.mutate(m.user_id)}
+                  disabled={removeMember.isPending}
+                  className="text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
             </li>
           ))}
         </ul>
@@ -907,6 +917,27 @@ function AddCollectionGrantDialog({
 // Shared bits: panel shell, level select, field, dialogs
 // ---------------------------------------------------------------------------
 
+function MemberSourceBadge({ source }: { source: GroupMemberSource }) {
+  const isOidc = source === "oidc";
+  return (
+    <span
+      title={
+        isOidc
+          ? "Added by OIDC group sync on login. Will be re-added on each login."
+          : "Added manually. OIDC sync does not touch this row."
+      }
+      className={cn(
+        "rounded-full px-2 py-0.5 text-2xs font-medium uppercase tracking-wide",
+        isOidc
+          ? "bg-[color:var(--color-accent)]/10 text-[color:var(--color-accent)]"
+          : "bg-[color:var(--color-bg-subtle)] text-[color:var(--color-fg-muted)]",
+      )}
+    >
+      {isOidc ? "synced" : "manual"}
+    </span>
+  );
+}
+
 function PanelShell({
   icon,
   title,
@@ -958,7 +989,6 @@ function LevelSelect({
       <SelectContent>
         <SelectItem value="read">Read</SelectItem>
         <SelectItem value="write">Write</SelectItem>
-        <SelectItem value="admin">Admin</SelectItem>
       </SelectContent>
     </Select>
   );
@@ -999,22 +1029,37 @@ function CreateGroupDialog({
 }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [oidcProviderId, setOidcProviderId] = useState<string>("");
+  const [oidcGroupName, setOidcGroupName] = useState("");
   const [topError, setTopError] = useState<string | null>(null);
   const createGroup = useCreateAdminGroup();
 
   function reset() {
     setName("");
     setDescription("");
+    setOidcProviderId("");
+    setOidcGroupName("");
     setTopError(null);
   }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setTopError(null);
+    const trimmedClaim = oidcGroupName.trim();
+    const providerSet = oidcProviderId !== "";
+    const claimSet = trimmedClaim !== "";
+    if (providerSet !== claimSet) {
+      setTopError(
+        "Provide both the identity provider and the group name in the IdP, or leave both blank.",
+      );
+      return;
+    }
     try {
       await createGroup.mutateAsync({
         name: name.trim(),
         description: description.trim() || null,
+        oidc_provider_id: providerSet ? oidcProviderId : null,
+        oidc_group_name: claimSet ? trimmedClaim : null,
       });
       reset();
       onOpenChange(false);
@@ -1066,6 +1111,12 @@ function CreateGroupDialog({
               rows={3}
             />
           </Field>
+          <OidcMappingFields
+            providerId={oidcProviderId}
+            groupName={oidcGroupName}
+            onProviderChange={setOidcProviderId}
+            onGroupNameChange={setOidcGroupName}
+          />
           <DialogFooter>
             <Button
               type="button"
@@ -1095,6 +1146,8 @@ function EditGroupDialog({
   const updateGroup = useUpdateAdminGroup();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [oidcProviderId, setOidcProviderId] = useState<string>("");
+  const [oidcGroupName, setOidcGroupName] = useState("");
   const [topError, setTopError] = useState<string | null>(null);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-seed only when a new group is opened
@@ -1102,6 +1155,8 @@ function EditGroupDialog({
     if (group) {
       setName(group.name);
       setDescription(group.description ?? "");
+      setOidcProviderId(group.oidc_provider_id ?? "");
+      setOidcGroupName(group.oidc_group_name ?? "");
       setTopError(null);
     }
   }, [group?.id]);
@@ -1112,10 +1167,30 @@ function EditGroupDialog({
     e.preventDefault();
     if (!group) return;
     setTopError(null);
-    const payload: { name?: string; description?: string | null } = {};
+    const trimmedClaim = oidcGroupName.trim();
+    const providerSet = oidcProviderId !== "";
+    const claimSet = trimmedClaim !== "";
+    if (providerSet !== claimSet) {
+      setTopError(
+        "Provide both the identity provider and the group name in the IdP, or leave both blank.",
+      );
+      return;
+    }
+    const payload: {
+      name?: string;
+      description?: string | null;
+      oidc_provider_id?: UUID | null;
+      oidc_group_name?: string | null;
+    } = {};
     if (name.trim() !== group.name) payload.name = name.trim();
     const currentDesc = group.description ?? "";
     if (description !== currentDesc) payload.description = description.trim() || null;
+    const currentProvider = group.oidc_provider_id ?? "";
+    const currentClaim = group.oidc_group_name ?? "";
+    if (oidcProviderId !== currentProvider || trimmedClaim !== currentClaim) {
+      payload.oidc_provider_id = providerSet ? oidcProviderId : null;
+      payload.oidc_group_name = claimSet ? trimmedClaim : null;
+    }
     if (Object.keys(payload).length === 0) {
       onClose();
       return;
@@ -1160,6 +1235,12 @@ function EditGroupDialog({
               rows={3}
             />
           </Field>
+          <OidcMappingFields
+            providerId={oidcProviderId}
+            groupName={oidcGroupName}
+            onProviderChange={setOidcProviderId}
+            onGroupNameChange={setOidcGroupName}
+          />
           <DialogFooter>
             <Button
               type="button"
@@ -1244,6 +1325,67 @@ function DeleteGroupDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function OidcMappingFields({
+  providerId,
+  groupName,
+  onProviderChange,
+  onGroupNameChange,
+}: {
+  providerId: string;
+  groupName: string;
+  onProviderChange: (id: string) => void;
+  onGroupNameChange: (name: string) => void;
+}) {
+  const providersQuery = useIdentityProviders();
+  const providers = providersQuery.data ?? [];
+  const NONE = "__none__";
+
+  return (
+    <fieldset className="flex flex-col gap-3 rounded-[var(--radius)] border border-[color:var(--color-border-subtle)] bg-[color:var(--color-bg-subtle)] px-3 py-3">
+      <legend className="px-1 text-xs font-medium uppercase tracking-wide text-[color:var(--color-fg-muted)]">
+        OIDC group sync (optional)
+      </legend>
+      <p className="text-xs text-[color:var(--color-fg-muted)]">
+        Users whose ID-token <code className="font-mono">groups</code> claim contains the value
+        below will be added to this group on each successful login. Removals are not synced —
+        additive only.
+      </p>
+      <Field label="Identity provider">
+        <Select
+          value={providerId === "" ? NONE : providerId}
+          onValueChange={(v) => {
+            const next = v === NONE ? "" : v;
+            onProviderChange(next);
+            if (next === "") onGroupNameChange("");
+          }}
+          disabled={providersQuery.isPending}
+        >
+          <SelectTrigger aria-label="Identity provider">
+            <SelectValue placeholder="None" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={NONE}>None</SelectItem>
+            {providers.map((p) => (
+              <SelectItem key={p.id} value={p.id}>
+                {p.display_name} ({p.slug})
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </Field>
+      <Field label="Group name in IdP">
+        <Input
+          value={groupName}
+          onChange={(e) => onGroupNameChange(e.target.value)}
+          placeholder="cograph-platform"
+          maxLength={256}
+          disabled={providerId === ""}
+        />
+      </Field>
+    </fieldset>
   );
 }
 

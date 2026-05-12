@@ -386,14 +386,24 @@ async def test_put_repo_grant_creates_and_upgrades(
     assert response.status_code == 200
     assert response.json()["level"] == "read"
 
-    # Upgrade to ADMIN.
+    # Upgrade to WRITE (post-0052: ADMIN level is gone; WRITE is the
+    # top of the per-resource ladder).
+    response = await client.post(
+        f"/api/admin/groups/{group.id}/repositories",
+        json={"repository_id": str(repo.id), "level": "write"},
+        headers=_csrf(),
+    )
+    assert response.status_code == 200
+    assert response.json()["level"] == "write"
+
+    # An explicit `admin` value is now a 422 — Pydantic rejects it at
+    # the GrantLevel enum.
     response = await client.post(
         f"/api/admin/groups/{group.id}/repositories",
         json={"repository_id": str(repo.id), "level": "admin"},
         headers=_csrf(),
     )
-    assert response.status_code == 200
-    assert response.json()["level"] == "admin"
+    assert response.status_code == 422
 
     audit_types = await _audit_types(db_session)
     assert "repo_grant_added" in audit_types
@@ -471,7 +481,7 @@ async def test_list_repo_grants_returns_slug_and_level(
     db_session.add(group)
     await db_session.commit()
     db_session.add(
-        RepositoryGrant(group_id=group.id, repository_id=repo.id, level="admin")
+        RepositoryGrant(group_id=group.id, repository_id=repo.id, level="write")
     )
     await db_session.commit()
 
@@ -481,7 +491,7 @@ async def test_list_repo_grants_returns_slug_and_level(
     items = response.json()["items"]
     assert len(items) == 1
     assert items[0]["repository_slug"] == f"{repo.host}/{repo.owner}/{repo.name}"
-    assert items[0]["level"] == "admin"
+    assert items[0]["level"] == "write"
 
 
 # ---------------------------------------------------------------------------
@@ -605,4 +615,188 @@ async def test_grant_level_change_uses_helper_to_swap_repo_visibility(
     slugs = {f"{item['host']}/{item['owner']}/{item['name']}" for item in body["items"]}
     assert f"{repo.host}/{repo.owner}/{repo.name}" in slugs
 
+
+# ----- OIDC group mapping --------------------------------------------------
+# Migration 0052 added an optional (oidc_provider_id, oidc_group_name) pair
+# on groups for OIDC sync. The pair is set together or cleared together; the
+# unique constraint prevents two cograph groups from claiming the same IdP
+# group. The members list now exposes a `source` field per row.
+
+
+async def _make_idp(db_session, *, slug: str = "kc-prod"):
+    from backend.app.models.identity_provider import IdentityProvider
+
+    provider = IdentityProvider(
+        slug=slug,
+        display_name=f"IdP {slug}",
+        kind="oidc",
+        issuer_url=f"https://{slug}.example.com",
+        client_id="test-client",
+        scopes=["openid", "profile", "email", "groups"],
+        response_mode="query",
+        auto_provision=True,
+        admin_group_mode="ignore",
+        enabled=True,
+    )
+    db_session.add(provider)
+    await db_session.commit()
+    return provider
+
+
+async def test_create_group_with_oidc_mapping(client, db_session, settings):
+    admin = await _make_user(db_session, role=UserRole.ADMIN)
+    provider = await _make_idp(db_session)
+    await _auth(client, settings, admin)
+
+    response = await client.post(
+        "/api/admin/groups",
+        json={
+            "name": "platform",
+            "oidc_provider_id": str(provider.id),
+            "oidc_group_name": "cograph-platform",
+        },
+        headers=_csrf(),
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["oidc_provider_id"] == str(provider.id)
+    assert body["oidc_provider_slug"] == provider.slug
+    assert body["oidc_group_name"] == "cograph-platform"
+
+
+async def test_create_group_oidc_pair_partial_rejected(
+    client, db_session, settings
+):
+    admin = await _make_user(db_session, role=UserRole.ADMIN)
+    provider = await _make_idp(db_session)
+    await _auth(client, settings, admin)
+
+    # provider without name → 422
+    response = await client.post(
+        "/api/admin/groups",
+        json={
+            "name": "g-bad-1",
+            "oidc_provider_id": str(provider.id),
+        },
+        headers=_csrf(),
+    )
+    assert response.status_code == 422
+
+    # name without provider → 422
+    response = await client.post(
+        "/api/admin/groups",
+        json={
+            "name": "g-bad-2",
+            "oidc_group_name": "some-name",
+        },
+        headers=_csrf(),
+    )
+    assert response.status_code == 422
+
+
+async def test_create_group_oidc_mapping_collision_returns_409(
+    client, db_session, settings
+):
+    admin = await _make_user(db_session, role=UserRole.ADMIN)
+    provider = await _make_idp(db_session)
+    await _auth(client, settings, admin)
+
+    response = await client.post(
+        "/api/admin/groups",
+        json={
+            "name": "first",
+            "oidc_provider_id": str(provider.id),
+            "oidc_group_name": "shared-name",
+        },
+        headers=_csrf(),
+    )
+    assert response.status_code == 201
+
+    response = await client.post(
+        "/api/admin/groups",
+        json={
+            "name": "second",
+            "oidc_provider_id": str(provider.id),
+            "oidc_group_name": "shared-name",
+        },
+        headers=_csrf(),
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "OIDC_MAPPING_TAKEN"
+
+
+async def test_create_group_unknown_oidc_provider_returns_422(
+    client, db_session, settings
+):
+    admin = await _make_user(db_session, role=UserRole.ADMIN)
+    await _auth(client, settings, admin)
+    response = await client.post(
+        "/api/admin/groups",
+        json={
+            "name": "bad-provider",
+            "oidc_provider_id": str(uuid4()),
+            "oidc_group_name": "x",
+        },
+        headers=_csrf(),
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "OIDC_PROVIDER_NOT_FOUND"
+
+
+async def test_patch_group_clears_oidc_mapping(client, db_session, settings):
+    admin = await _make_user(db_session, role=UserRole.ADMIN)
+    provider = await _make_idp(db_session)
+    await _auth(client, settings, admin)
+
+    response = await client.post(
+        "/api/admin/groups",
+        json={
+            "name": "to-clear",
+            "oidc_provider_id": str(provider.id),
+            "oidc_group_name": "x",
+        },
+        headers=_csrf(),
+    )
+    assert response.status_code == 201
+    group_id = response.json()["id"]
+
+    response = await client.patch(
+        f"/api/admin/groups/{group_id}",
+        json={
+            "oidc_provider_id": None,
+            "oidc_group_name": None,
+        },
+        headers=_csrf(),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["oidc_provider_id"] is None
+    assert body["oidc_group_name"] is None
+
+
+async def test_list_members_returns_source_field(client, db_session, settings):
+    admin = await _make_user(db_session, role=UserRole.ADMIN)
+    member = await _make_user(db_session)
+    await _auth(client, settings, admin)
+
+    response = await client.post(
+        "/api/admin/groups", json={"name": "src-test"}, headers=_csrf()
+    )
+    assert response.status_code == 201
+    group_id = response.json()["id"]
+
+    response = await client.post(
+        f"/api/admin/groups/{group_id}/members",
+        json={"user_ids": [str(member.id)]},
+        headers=_csrf(),
+    )
+    assert response.status_code == 200
+
+    response = await client.get(
+        f"/api/admin/groups/{group_id}/members"
+    )
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert len(items) == 1
+    assert items[0]["source"] == "manual"
 

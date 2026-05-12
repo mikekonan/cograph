@@ -27,7 +27,7 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Response, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,6 +46,7 @@ from backend.app.models.group import (
     GroupMember,
     RepositoryGrant,
 )
+from backend.app.models.identity_provider import IdentityProvider
 from backend.app.models.md_collection import MdCollection
 from backend.app.models.repository import Repository
 from backend.app.models.user import User
@@ -68,6 +69,9 @@ class GroupResponse(BaseModel):
     member_count: int
     repository_grant_count: int
     collection_grant_count: int
+    oidc_provider_id: UUID | None
+    oidc_provider_slug: str | None
+    oidc_group_name: str | None
 
 
 class GroupListResponse(BaseModel):
@@ -79,13 +83,57 @@ class CreateGroupRequest(BaseModel):
 
     name: str = Field(min_length=1, max_length=128)
     description: str | None = Field(default=None, max_length=2048)
+    oidc_provider_id: UUID | None = None
+    oidc_group_name: str | None = Field(default=None, max_length=256)
+
+    @model_validator(mode="after")
+    def _oidc_paired(self) -> "CreateGroupRequest":
+        if (self.oidc_provider_id is None) != (self.oidc_group_name is None):
+            raise ValueError(
+                "oidc_provider_id and oidc_group_name must be set together"
+            )
+        return self
 
 
 class UpdateGroupRequest(BaseModel):
+    """Patch shape — every field optional.
+
+    For the OIDC mapping pair we use a sentinel-free convention: send
+    both fields together to either set or clear the mapping. Because
+    a Pydantic optional defaults to None on absence, the only way to
+    *clear* an existing mapping is to PATCH with both fields explicitly
+    null, which is unambiguous because the validator rejects partial
+    pairs.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1, max_length=128)
     description: str | None = Field(default=None, max_length=2048)
+    oidc_provider_id: UUID | None = None
+    oidc_group_name: str | None = Field(default=None, max_length=256)
+    # The two OIDC fields use Field-default sentinels so we can tell
+    # "field omitted from request" apart from "field explicitly null".
+    # Pydantic's `model_fields_set` exposes that distinction directly.
+
+    @model_validator(mode="after")
+    def _oidc_paired(self) -> "UpdateGroupRequest":
+        # Both must be present together or absent together. "Absent"
+        # means absent from the request payload (not just None).
+        set_fields = self.model_fields_set
+        provider_set = "oidc_provider_id" in set_fields
+        name_set = "oidc_group_name" in set_fields
+        if provider_set != name_set:
+            raise ValueError(
+                "oidc_provider_id and oidc_group_name must be set together"
+            )
+        if provider_set:
+            # When provided, either both null (clear) or both non-null (set).
+            if (self.oidc_provider_id is None) != (self.oidc_group_name is None):
+                raise ValueError(
+                    "oidc_provider_id and oidc_group_name must be set together"
+                )
+        return self
 
 
 class GroupMemberResponse(BaseModel):
@@ -94,6 +142,7 @@ class GroupMemberResponse(BaseModel):
     name: str | None
     added_at: datetime
     added_by: UUID | None
+    source: str
 
 
 class GroupMembersResponse(BaseModel):
@@ -192,6 +241,13 @@ async def _to_group_response(
     session: AsyncSession, group: Group
 ) -> GroupResponse:
     members, repos, colls = await _group_counts(session, group.id)
+    provider_slug: str | None = None
+    if group.oidc_provider_id is not None:
+        provider_slug = await session.scalar(
+            select(IdentityProvider.slug).where(
+                IdentityProvider.id == group.oidc_provider_id
+            )
+        )
     return GroupResponse(
         id=group.id,
         name=group.name,
@@ -201,7 +257,29 @@ async def _to_group_response(
         member_count=members,
         repository_grant_count=repos,
         collection_grant_count=colls,
+        oidc_provider_id=group.oidc_provider_id,
+        oidc_provider_slug=provider_slug,
+        oidc_group_name=group.oidc_group_name,
     )
+
+
+async def _validate_oidc_provider(
+    session: AsyncSession, provider_id: UUID
+) -> None:
+    """422 if `provider_id` does not resolve to an IdentityProvider.
+
+    The DB FK would surface as a 500 on commit; this explicit check
+    turns it into a clean 422 with a helpful error code.
+    """
+    exists = await session.scalar(
+        select(IdentityProvider.id).where(IdentityProvider.id == provider_id)
+    )
+    if exists is None:
+        raise ApiError(
+            422,
+            "OIDC_PROVIDER_NOT_FOUND",
+            f"Identity provider not found: {provider_id}",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -233,10 +311,15 @@ async def create_group(
 ) -> GroupResponse:
     del _csrf
 
+    if payload.oidc_provider_id is not None:
+        await _validate_oidc_provider(session, payload.oidc_provider_id)
+
     group = Group(
         name=payload.name.strip(),
         description=payload.description,
         created_by=current_admin.id,
+        oidc_provider_id=payload.oidc_provider_id,
+        oidc_group_name=payload.oidc_group_name,
     )
     session.add(group)
     try:
@@ -247,19 +330,52 @@ async def create_group(
                 actor_user_id=current_admin.id,
                 target_user_id=None,
                 event_type="group_created",
-                metadata={"group_id": str(group.id), "name": group.name},
+                metadata={
+                    "group_id": str(group.id),
+                    "name": group.name,
+                    **(
+                        {
+                            "oidc_provider_id": str(payload.oidc_provider_id),
+                            "oidc_group_name": payload.oidc_group_name,
+                        }
+                        if payload.oidc_provider_id is not None
+                        else {}
+                    ),
+                },
             ),
         )
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
-        raise ApiError(
-            409,
-            "NAME_TAKEN",
-            "A group with this name already exists.",
-        ) from exc
+        raise _map_group_integrity_error(exc) from exc
     await session.refresh(group)
     return await _to_group_response(session, group)
+
+
+def _map_group_integrity_error(exc: IntegrityError) -> ApiError:
+    """Translate a UNIQUE-constraint violation on `groups` into the
+    user-facing 409 with a meaningful code.
+
+    PG surfaces the constraint name in ``str(exc.orig)``
+    (`uq_groups_oidc_mapping` / `uq_groups_name`); SQLite formats the
+    error string with the column list (`groups.oidc_provider_id,
+    groups.oidc_group_name`). We match on either signal so the test
+    suite (SQLite) and prod (PG) both land in the right branch.
+    """
+    message = str(exc.orig)
+    if "uq_groups_oidc_mapping" in message or (
+        "oidc_provider_id" in message and "oidc_group_name" in message
+    ):
+        return ApiError(
+            409,
+            "OIDC_MAPPING_TAKEN",
+            "Another cograph group already maps to this IdP group.",
+        )
+    return ApiError(
+        409,
+        "NAME_TAKEN",
+        "A group with this name already exists.",
+    )
 
 
 @router.patch("/{group_id}", response_model=GroupResponse)
@@ -276,6 +392,7 @@ async def update_group(
     previous_name = group.name
     name_changed = False
     description_changed = False
+    oidc_changed = False
 
     if payload.name is not None and payload.name.strip() != group.name:
         group.name = payload.name.strip()
@@ -284,7 +401,19 @@ async def update_group(
         group.description = payload.description
         description_changed = True
 
-    if name_changed or description_changed:
+    set_fields = payload.model_fields_set
+    if "oidc_provider_id" in set_fields and "oidc_group_name" in set_fields:
+        if payload.oidc_provider_id is not None:
+            await _validate_oidc_provider(session, payload.oidc_provider_id)
+        if (
+            group.oidc_provider_id != payload.oidc_provider_id
+            or group.oidc_group_name != payload.oidc_group_name
+        ):
+            group.oidc_provider_id = payload.oidc_provider_id
+            group.oidc_group_name = payload.oidc_group_name
+            oidc_changed = True
+
+    if name_changed or description_changed or oidc_changed:
         if name_changed:
             await write_audit(
                 session,
@@ -299,15 +428,29 @@ async def update_group(
                     },
                 ),
             )
+        if oidc_changed:
+            await write_audit(
+                session,
+                AuditEventRecord(
+                    actor_user_id=current_admin.id,
+                    target_user_id=None,
+                    event_type="group_oidc_mapping_changed",
+                    metadata={
+                        "group_id": str(group.id),
+                        "oidc_provider_id": (
+                            str(group.oidc_provider_id)
+                            if group.oidc_provider_id is not None
+                            else None
+                        ),
+                        "oidc_group_name": group.oidc_group_name,
+                    },
+                ),
+            )
         try:
             await session.commit()
         except IntegrityError as exc:
             await session.rollback()
-            raise ApiError(
-                409,
-                "NAME_TAKEN",
-                "A group with this name already exists.",
-            ) from exc
+            raise _map_group_integrity_error(exc) from exc
         await session.refresh(group)
 
     return await _to_group_response(session, group)
@@ -368,6 +511,7 @@ async def list_members(
                 name=user.name,
                 added_at=member.added_at,
                 added_by=member.added_by,
+                source=member.source,
             )
             for member, user in rows
         ]
