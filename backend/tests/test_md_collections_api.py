@@ -102,14 +102,57 @@ async def test_list_jobs_returns_items(client, settings, user, collection, db_se
     assert payload["items"][0]["result_summary"]["embedded_nodes"] == 5
 
 
-async def test_list_jobs_visible_to_authenticated_user(
+async def test_list_jobs_denied_for_non_owner_without_grant(
     client, settings, collection, db_session
 ):
+    """Without a group grant, a USER-role caller who is not the owner
+    of a private collection must NOT see its jobs — the read-scope
+    funnel hides the collection, so the slug→404 path triggers.
+    """
     other = User(
         email="other@test.com", password_hash="secret", name="Other", role=UserRole.USER
     )
     db_session.add(other)
     await db_session.commit()
+    await _auth_user(client, settings, other)
+
+    response = await client.get(f"/api/md-collections/{collection.id}/jobs")
+    assert response.status_code == 403
+
+
+async def test_list_jobs_visible_to_grantee(
+    client, settings, collection, db_session
+):
+    """A USER in a group with READ on the private collection MUST
+    see its jobs — proves the grant extension reaches the jobs route.
+    """
+    from backend.app.models.enums import GrantLevel
+    from backend.app.models.group import CollectionGrant, Group, GroupMember
+
+    other = User(
+        email="other-grantee@test.com",
+        password_hash="secret",
+        name="Other",
+        role=UserRole.USER,
+    )
+    db_session.add(other)
+    await db_session.commit()
+
+    group = Group(name="jobs-grantees")
+    db_session.add(group)
+    await db_session.commit()
+    db_session.add_all(
+        [
+            GroupMember(group_id=group.id, user_id=other.id),
+            CollectionGrant(
+                group_id=group.id,
+                collection_id=collection.id,
+                level=GrantLevel.READ.value,
+            ),
+        ]
+    )
+    await db_session.commit()
+
     await _auth_user(client, settings, other)
 
     response = await client.get(f"/api/md-collections/{collection.id}/jobs")
@@ -508,14 +551,58 @@ async def test_embed_status_with_chunks(client, settings, user, collection, db_s
 
 
 @pytest.mark.asyncio
-async def test_embed_status_visible_to_authenticated_user(
+async def test_embed_status_denied_for_non_owner_without_grant(
     client, settings, collection, db_session
 ):
+    """Embed-status sits behind the same read-scope funnel; a USER
+    without a grant on a private collection must NOT be able to peek
+    at its embed progress.
+    """
     other = User(
         email="other@test.com", password_hash="secret", name="Other", role=UserRole.USER
     )
     db_session.add(other)
     await db_session.commit()
+    await _auth_user(client, settings, other)
+
+    response = await client.get(f"/api/md-collections/{collection.id}/embed-status")
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_embed_status_visible_to_grantee(
+    client, settings, collection, db_session
+):
+    """USER in a group with READ on the private collection MUST
+    see its embed status — positive ACL counterpart.
+    """
+    from backend.app.models.enums import GrantLevel
+    from backend.app.models.group import CollectionGrant, Group, GroupMember
+
+    other = User(
+        email="other-embed-grantee@test.com",
+        password_hash="secret",
+        name="Other",
+        role=UserRole.USER,
+    )
+    db_session.add(other)
+    await db_session.commit()
+
+    group = Group(name="embed-grantees")
+    db_session.add(group)
+    await db_session.commit()
+    db_session.add_all(
+        [
+            GroupMember(group_id=group.id, user_id=other.id),
+            CollectionGrant(
+                group_id=group.id,
+                collection_id=collection.id,
+                level=GrantLevel.READ.value,
+            ),
+        ]
+    )
+    await db_session.commit()
+
     await _auth_user(client, settings, other)
 
     response = await client.get(f"/api/md-collections/{collection.id}/embed-status")
@@ -639,14 +726,75 @@ async def test_search_md_collection_returns_results(
 
 
 @pytest.mark.asyncio
-async def test_search_md_collection_visible_to_authenticated_user(
+async def test_search_md_collection_denied_for_non_owner_without_grant(
     client, settings, collection, db_session, app
 ):
+    """Search is gated on read access — a USER without a grant on
+    the private collection must NOT be able to query it.
+    """
     other = User(
         email="other@test.com", password_hash="secret", name="Other", role=UserRole.USER
     )
     db_session.add(other)
     await db_session.commit()
+    await _auth_user(client, settings, other)
+
+    from backend.app.api.md_collections import (
+        get_md_search_embed_provider,
+        get_md_hybrid_retriever,
+    )
+
+    app.dependency_overrides[get_md_search_embed_provider] = lambda: (
+        _StubEmbedProvider()
+    )
+    app.dependency_overrides[get_md_hybrid_retriever] = lambda: _StubMdRetriever()
+
+    try:
+        response = await client.post(
+            f"/api/md-collections/{collection.id}/search",
+            json={"query": "how does auth work", "top_k": 5},
+        )
+    finally:
+        app.dependency_overrides.pop(get_md_search_embed_provider, None)
+        app.dependency_overrides.pop(get_md_hybrid_retriever, None)
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_search_md_collection_visible_to_grantee(
+    client, settings, collection, db_session, app
+):
+    """USER in a group with READ on the private collection MUST be
+    able to search it. Positive ACL counterpart for the search route.
+    """
+    from backend.app.models.enums import GrantLevel
+    from backend.app.models.group import CollectionGrant, Group, GroupMember
+
+    other = User(
+        email="other-search-grantee@test.com",
+        password_hash="secret",
+        name="Other",
+        role=UserRole.USER,
+    )
+    db_session.add(other)
+    await db_session.commit()
+
+    group = Group(name="search-grantees")
+    db_session.add(group)
+    await db_session.commit()
+    db_session.add_all(
+        [
+            GroupMember(group_id=group.id, user_id=other.id),
+            CollectionGrant(
+                group_id=group.id,
+                collection_id=collection.id,
+                level=GrantLevel.READ.value,
+            ),
+        ]
+    )
+    await db_session.commit()
+
     await _auth_user(client, settings, other)
 
     from backend.app.api.md_collections import (
@@ -790,9 +938,13 @@ async def test_anonymous_cannot_read_private_collection(
 
 
 @pytest.mark.asyncio
-async def test_pat_user_can_read_private_collection(
+async def test_pat_user_without_grant_cannot_read_private_collection(
     client, settings, db_session, app
 ):
+    """PAT for a USER-role caller who does NOT own the private
+    collection and has no grant must receive 403 — the funnel hides
+    the row, the single-row helper raises FORBIDDEN.
+    """
     owner = User(
         email="owner5@test.com",
         password_hash="secret",
@@ -823,6 +975,69 @@ async def test_pat_user_can_read_private_collection(
         db_session,
         reader,
         "cgr_pat_md_read_member_token_00000000000000000000000000",
+    )
+
+    response = await client.get(f"/api/md-collections/{col.id}", headers=headers)
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_pat_user_with_grant_can_read_private_collection(
+    client, settings, db_session, app
+):
+    """PAT for a USER who is in a group with READ on the private
+    collection MUST be able to GET it. Positive ACL counterpart.
+    """
+    from backend.app.models.enums import GrantLevel
+    from backend.app.models.group import CollectionGrant, Group, GroupMember
+
+    owner = User(
+        email="owner-grant@test.com",
+        password_hash="secret",
+        name="OwnerGrant",
+        role=UserRole.USER,
+    )
+    reader = User(
+        email="reader-grant@test.com",
+        password_hash="secret",
+        name="ReaderGrant",
+        role=UserRole.USER,
+    )
+    db_session.add_all([owner, reader])
+    await db_session.commit()
+    await db_session.refresh(owner)
+    await db_session.refresh(reader)
+
+    col = MdCollection(
+        name="private-pat-grant-col",
+        description="",
+        visibility="private",
+        owner_id=owner.id,
+    )
+    db_session.add(col)
+    await db_session.commit()
+    await db_session.refresh(col)
+
+    group = Group(name="pat-grantees")
+    db_session.add(group)
+    await db_session.commit()
+    db_session.add_all(
+        [
+            GroupMember(group_id=group.id, user_id=reader.id),
+            CollectionGrant(
+                group_id=group.id,
+                collection_id=col.id,
+                level=GrantLevel.READ.value,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    headers = await _mint_pat(
+        db_session,
+        reader,
+        "cgr_pat_md_read_grantee_token_0000000000000000000000000",
     )
 
     response = await client.get(f"/api/md-collections/{col.id}", headers=headers)
