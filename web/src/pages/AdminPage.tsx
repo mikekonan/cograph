@@ -1,14 +1,24 @@
 import { cn } from "@/lib/utils";
 import AdminGitHostsPage from "@/pages/AdminGitHostsPage";
+import AdminGroupsPage from "@/pages/AdminGroupsPage";
 import AdminIdentityProvidersPage from "@/pages/AdminIdentityProvidersPage";
 import AdminLLMRuntimePage from "@/pages/AdminLLMRuntimePage";
 import AdminScimClientsPage from "@/pages/AdminScimClientsPage";
 import AdminUsersPage from "@/pages/AdminUsersPage";
-import { Bot, Globe, type LucideIcon, Plug, Settings2, ShieldCheck, Users } from "lucide-react";
+import {
+  Bot,
+  Globe,
+  type LucideIcon,
+  Plug,
+  Settings2,
+  ShieldCheck,
+  Users,
+  UsersRound,
+} from "lucide-react";
 import { type ComponentType, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router";
 
-type TabId = "llm-runtime" | "users" | "identity-providers" | "scim" | "git-hosts";
+type TabId = "llm-runtime" | "users" | "groups" | "identity-providers" | "scim" | "git-hosts";
 
 interface TabSpec {
   id: TabId;
@@ -20,6 +30,7 @@ interface TabSpec {
 const TABS: TabSpec[] = [
   { id: "llm-runtime", label: "LLM runtime", icon: Bot, Component: AdminLLMRuntimePage },
   { id: "users", label: "Users", icon: Users, Component: AdminUsersPage },
+  { id: "groups", label: "Groups", icon: UsersRound, Component: AdminGroupsPage },
   {
     id: "identity-providers",
     label: "Identity providers",
@@ -67,8 +78,8 @@ export default function AdminPage() {
           <Settings2 className="h-6 w-6" aria-hidden="true" /> Config
         </h1>
         <p className="max-w-3xl text-sm text-[color:var(--color-fg-muted)]">
-          Owner / admin control plane: API secrets, LLM role assignments, users, identity providers,
-          SCIM clients, and git hosts.
+          Owner / admin control plane: API secrets, LLM role assignments, users, groups & ACL,
+          identity providers, SCIM clients, and git hosts.
         </p>
       </header>
 
