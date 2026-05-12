@@ -703,6 +703,7 @@ async def resolve_repository_by_slug(
             Repository.host == host,
             Repository.owner == owner,
             Repository.name == name,
+            Repository.deleted_at.is_(None),
         )
     )
     if repository is None:

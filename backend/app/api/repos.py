@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 import secrets
 from datetime import UTC, datetime
@@ -8,6 +9,7 @@ from typing import Any
 from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
+from arq import create_pool
 from fastapi import (
     APIRouter,
     Depends,
@@ -27,7 +29,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from sqlalchemy import case, delete, func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -67,11 +69,15 @@ from backend.app.models.source_file import SourceFile
 from backend.app.models.sync_batch import SyncBatch
 from backend.app.models.user import User
 from backend.app.pipeline.checkout import GitCheckoutError, _detect_default_branch
+from backend.app.pipeline.constants import REPO_SYNC_QUEUE_NAME
 from backend.app.pipeline.orchestrator import JobEnqueueError, RepoSyncOrchestrator
 from backend.app.pipeline.schedule import RepoSyncScheduleService
+from backend.app.pipeline.worker import build_redis_settings
 from backend.app.pipeline.zip_checkout import ZipCheckoutAdapter, ZipCheckoutError
 
 router = APIRouter(prefix="/repos", tags=["repos"])
+
+_purge_enqueue_logger = logging.getLogger(__name__)
 
 # Regex patterns for accepted git URL forms:
 # 1. https://<host>/<owner>/<repo>[.git]
@@ -873,6 +879,7 @@ async def replace_repository_archive(
 
 @router.delete("/{host}/{owner}/{name}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_repository(
+    request: Request,
     host: str,
     owner: str,
     name: str,
@@ -893,25 +900,57 @@ async def delete_repository(
         current_user=current_user,
     )
     repository_id = repository.id
-
     is_zip = repository.source is RepoSource.ZIP
-    # Issue a single SQL DELETE and let Postgres handle the cascade via the
-    # `ondelete="CASCADE"` FKs on every child table (code_nodes, code_edges,
-    # code_node_summaries, module_embeddings, code_subgraph_summaries,
-    # repo_documents, documents, sync_runs, sync_batches, sync_jobs,
-    # source_files). `session.delete(repository)` would force the ORM to
-    # load each `cascade="all, delete-orphan"` relationship into the Python
-    # session and delete row-by-row — for a real repo that's tens of
-    # thousands of rows and the request appears to hang. The DB-level
-    # cascade does the same work in one statement.
-    await session.execute(delete(Repository).where(Repository.id == repository_id))
+
+    # Soft-delete: flip the row's status + stamp deleted_at and return
+    # 204 immediately. The actual DB cascade (HNSW-indexed embedding
+    # tables, hundreds of thousands of code_edges, etc.) runs in an arq
+    # worker via `purge_repository` — see
+    # `backend/app/repos/purge_worker.py` for the chunked drain.
+    #
+    # Read-path filtering (`Repository.deleted_at.is_(None)` in
+    # `apply_repository_read_scope`, the schedule scanner, webhook
+    # lookup, mcp slug resolver) guarantees the row is invisible to
+    # users from the instant this UPDATE commits.
+    repository.status = RepositoryStatus.DELETING
+    repository.deleted_at = datetime.now(UTC)
     await session.commit()
 
+    # Zip-source archives live on the local filesystem and are cheap to
+    # remove synchronously. Doing it here keeps the previous handler's
+    # observable behaviour (the .zip + extracted tree are gone the
+    # instant the DELETE returns) without blocking on the HNSW cascade.
     if is_zip:
-        # Best-effort filesystem cleanup. Failure here is logged by the
-        # adapter (silent) — the row is already gone, so the next upload
-        # for a different repo isn't blocked.
         await zip_adapter.discard(repository_id=repository_id)
+
+    await _enqueue_purge_repository(request, repository_id=repository_id)
+
+
+async def _enqueue_purge_repository(request: Request, *, repository_id: UUID) -> None:
+    """Drop a `purge_repository` job onto the repo-sync queue.
+
+    Failures here are logged but not surfaced — the row is already in
+    `status=DELETING` so the user sees the delete take effect, and an
+    admin retry endpoint (or a fresh delete attempt) can re-enqueue.
+    Mirrors the enqueue shape used by `_enqueue_md_rag_jobs` in
+    `api/md_collections.py`. `create_pool` is imported on the
+    module body (not inside this function) so tests can monkeypatch
+    `backend.app.api.repos.create_pool` the same way they patch the
+    similar import in `core.deps`.
+    """
+    settings = request.app.state.settings
+    try:
+        pool = await create_pool(
+            build_redis_settings(settings.redis.url),
+            default_queue_name=REPO_SYNC_QUEUE_NAME,
+        )
+        await pool.enqueue_job("purge_repository", str(repository_id))
+        await pool.aclose()
+    except Exception as exc:  # noqa: BLE001 — log and swallow, see docstring
+        _purge_enqueue_logger.warning(
+            "Failed to enqueue purge_repository job",
+            extra={"repository_id": str(repository_id), "error": str(exc)},
+        )
 
 
 @router.patch("/{host}/{owner}/{name}", response_model=RepositoryResponse)
@@ -1039,6 +1078,9 @@ async def trigger_repository_webhook(
             Repository.host == host,
             Repository.owner == owner,
             Repository.name == name,
+            # A soft-deleted repo is being purged in the background;
+            # webhook hits for it look identical to "no such repo".
+            Repository.deleted_at.is_(None),
         )
     )
     if repository is None:

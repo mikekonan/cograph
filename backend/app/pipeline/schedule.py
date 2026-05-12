@@ -132,6 +132,11 @@ class RepoSyncScheduler:
                 await session.scalars(
                     select(Repository.id)
                     .where(
+                        # Don't re-sync a repo whose user already pressed
+                        # Delete — the purge worker is or will be tearing
+                        # the row down, and a fresh sync would just race
+                        # the cascade.
+                        Repository.deleted_at.is_(None),
                         Repository.sync_schedule.in_(
                             (
                                 SyncSchedule.HOURLY,

@@ -60,6 +60,10 @@ class RepositoryStatus(StrEnum):
     GENERATING = "generating"
     READY = "ready"
     ERROR = "error"
+    # The user pressed Delete and we kicked the cascade off to a
+    # background worker — the row still exists in `repositories` until
+    # the worker drains every child table, but read paths must hide it.
+    DELETING = "deleting"
 
 
 class RepositoryVisibility(StrEnum):

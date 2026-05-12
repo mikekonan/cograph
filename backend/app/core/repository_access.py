@@ -17,6 +17,11 @@ def apply_repository_read_scope(
     settings: Settings,
     current_user: User | None,
 ) -> Select:
+    # Soft-deleted repositories must vanish from every read path from
+    # the instant the DELETE click lands — the background purge worker
+    # has not yet drained the cascade, but the user must not see the
+    # row, and the sync scheduler must not pick it up.
+    statement = statement.where(Repository.deleted_at.is_(None))
     if current_user is not None:
         return statement
     if not settings.auth.public_read:
@@ -30,6 +35,8 @@ def can_read_repository(
     settings: Settings,
     current_user: User | None,
 ) -> bool:
+    if repository.deleted_at is not None:
+        return False
     if current_user is not None:
         return True
     return (
