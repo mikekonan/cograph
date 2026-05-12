@@ -165,6 +165,9 @@ async def receive_github_webhook(
                 Repository.host_id == host.id,
                 Repository.owner == owner,
                 Repository.name == name,
+                # A soft-deleted repo is being torn down by the purge
+                # worker — ignore inbound webhooks for it.
+                Repository.deleted_at.is_(None),
             )
         )
 

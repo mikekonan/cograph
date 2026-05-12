@@ -2,15 +2,14 @@ from __future__ import annotations
 
 import hashlib
 from datetime import UTC, datetime
+from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import func, select
 
 from backend.app.core.auth import TokenType, create_token
 from backend.app.core.deps import get_repo_sync_orchestrator
-from backend.app.models.code_node import CodeNode
 from backend.app.models.enums import (
-    CodeNodeType,
     RepoSyncRunStatus,
     RepoSyncTriggerKind,
     RepositoryStatus,
@@ -20,7 +19,6 @@ from backend.app.models.enums import (
 )
 from backend.app.models.personal_access_token import PersonalAccessToken
 from backend.app.models.repo_document import RepoDocument
-from backend.app.models.repo_sync_run import RepoSyncRun
 from backend.app.models.repository import Repository
 from backend.app.models.source_file import SourceFile
 from backend.app.models.user import User
@@ -1226,8 +1224,15 @@ async def test_delete_repository_not_found(client, db_session, settings):
     assert response.json()["error"]["code"] == "NOT_FOUND"
 
 
-async def test_delete_repository_cascades(client, db_session, settings):
-    """Deleting a repository removes all child rows via DB cascade."""
+async def test_delete_repository_soft_deletes_and_enqueues_purge(
+    client, db_session, settings, monkeypatch
+):
+    """DELETE flips the row to DELETING + stamps deleted_at + enqueues a
+    `purge_repository` job, then returns 204. The actual cascade drain
+    runs in the background worker (covered by test_purge_worker.py) —
+    here we only verify the synchronous half is fast and side-effecting
+    only what the user sees.
+    """
     admin = User(email="admin@example.com", password_hash="hashed", role=UserRole.ADMIN)
     repository = Repository(
         host="example.com",
@@ -1239,7 +1244,8 @@ async def test_delete_repository_cascades(client, db_session, settings):
     db_session.add_all([admin, repository])
     await db_session.commit()
 
-    # Attach a SourceFile
+    # Attach a child row to prove the synchronous handler does NOT
+    # cascade-delete it any more (the worker will).
     source_file = SourceFile(
         repository_id=repository.id,
         file_path="app/main.py",
@@ -1252,33 +1258,22 @@ async def test_delete_repository_cascades(client, db_session, settings):
     db_session.add(source_file)
     await db_session.commit()
 
-    # Attach a CodeNode
-    code_node = CodeNode(
-        repository_id=repository.id,
-        source_file_id=source_file.id,
-        file_path="app/main.py",
-        qualified_name="app.main.hello",
-        node_type=CodeNodeType.FUNCTION,
-        name="hello",
-        language="python",
-        start_line=1,
-        end_line=1,
-        content="def hello(): pass",
-        content_hash="def123",
-    )
-    db_session.add(code_node)
-    await db_session.commit()
-
-    # Attach a RepoSyncRun
-    sync_run = RepoSyncRun(
-        repository_id=repository.id,
-        trigger_kind=RepoSyncTriggerKind.MANUAL,
-        status=RepoSyncRunStatus.QUEUED,
-    )
-    db_session.add(sync_run)
-    await db_session.commit()
-
     await _authenticate_admin(client, settings, admin)
+
+    enqueued: list[tuple[str, tuple[Any, ...]]] = []
+
+    class _FakePool:
+        async def enqueue_job(self, name: str, *args: Any) -> None:
+            enqueued.append((name, args))
+
+        async def aclose(self) -> None:
+            return None
+
+    async def _fake_create_pool(*args: Any, **kwargs: Any) -> _FakePool:
+        del args, kwargs
+        return _FakePool()
+
+    monkeypatch.setattr("backend.app.api.repos.create_pool", _fake_create_pool)
 
     response = await client.delete(
         f"/api/repos/{repository.host}/{repository.owner}/{repository.name}",
@@ -1286,25 +1281,80 @@ async def test_delete_repository_cascades(client, db_session, settings):
     )
     assert response.status_code == 204
 
-    # The HTTP handler committed in a separate session. Use scalar queries to
-    # bypass the identity map and read fresh rows from the DB.
-    repo_count = await db_session.scalar(
-        select(func.count(Repository.id)).where(Repository.id == repository.id)
-    )
+    # Row still exists, but soft-deleted (status=DELETING, deleted_at set).
+    # The HTTP handler committed in a separate session, so query the DB
+    # directly (don't rely on the identity map cache from the test session).
+    row = (
+        await db_session.execute(
+            select(Repository.status, Repository.deleted_at).where(
+                Repository.id == repository.id
+            )
+        )
+    ).one()
+    assert row.status is RepositoryStatus.DELETING
+    assert row.deleted_at is not None
+
+    # Child row is still in the DB — the worker is responsible for
+    # tearing it down. The synchronous path must not block on this.
     sf_count = await db_session.scalar(
         select(func.count(SourceFile.id)).where(SourceFile.id == source_file.id)
     )
-    node_count = await db_session.scalar(
-        select(func.count(CodeNode.id)).where(CodeNode.id == code_node.id)
-    )
-    run_count = await db_session.scalar(
-        select(func.count(RepoSyncRun.id)).where(RepoSyncRun.id == sync_run.id)
-    )
+    assert sf_count == 1, "child rows should not be deleted by the synchronous handler"
 
-    assert repo_count == 0, "Repository row should be deleted"
-    assert sf_count == 0, "SourceFile row should be cascade-deleted"
-    assert node_count == 0, "CodeNode row should be cascade-deleted"
-    assert run_count == 0, "RepoSyncRun row should be cascade-deleted"
+    # Exactly one purge_repository job enqueued with the repo's UUID.
+    assert enqueued == [("purge_repository", (str(repository.id),))]
+
+
+async def test_delete_repository_hides_row_from_get_and_list(
+    client, db_session, settings, monkeypatch
+):
+    """A soft-deleted repository must be invisible to GET /repos and
+    GET /repos/{slug} from the instant the DELETE response lands.
+    """
+    admin = User(email="admin@example.com", password_hash="hashed", role=UserRole.ADMIN)
+    repository = Repository(
+        host="example.com",
+        git_url="https://github.com/acme/demo.git",
+        name="demo",
+        owner="acme",
+        branch="main",
+    )
+    db_session.add_all([admin, repository])
+    await db_session.commit()
+
+    await _authenticate_admin(client, settings, admin)
+
+    class _FakePool:
+        async def enqueue_job(self, *args: Any) -> None:
+            return None
+
+        async def aclose(self) -> None:
+            return None
+
+    async def _fake_create_pool(*args: Any, **kwargs: Any) -> _FakePool:
+        del args, kwargs
+        return _FakePool()
+
+    monkeypatch.setattr("backend.app.api.repos.create_pool", _fake_create_pool)
+
+    delete_response = await client.delete(
+        f"/api/repos/{repository.host}/{repository.owner}/{repository.name}",
+        headers={"X-CSRF-Token": _TEST_CSRF},
+    )
+    assert delete_response.status_code == 204
+
+    get_response = await client.get(
+        f"/api/repos/{repository.host}/{repository.owner}/{repository.name}"
+    )
+    assert get_response.status_code == 404, "soft-deleted repos must 404 from slug GET"
+
+    list_response = await client.get("/api/repos")
+    assert list_response.status_code == 200
+    items = list_response.json()["items"]
+    repo_ids = {item["id"] for item in items}
+    assert str(repository.id) not in repo_ids, (
+        "soft-deleted repos must not appear in the list endpoint"
+    )
 
 
 # ---------------------------------------------------------------------------
