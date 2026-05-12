@@ -576,9 +576,14 @@ async def test_mcp_endpoint_passes_through_with_valid_token(
     assert response.status_code != 403
 
 
-async def test_mcp_repositories_lists_private_repo_for_pat_user(
+async def test_mcp_repositories_hides_admin_only_repo_without_grant(
     client, db_session, settings
 ):
+    """USER PAT without any group grant must NOT see ADMIN_ONLY repos
+    through the MCP `cograph.repositories` tool. MCP funnels through
+    the same `apply_repository_read_scope` as REST — so this proves
+    the ACL extension propagates to MCP for free.
+    """
     member = await _make_user(db_session)
     plaintext = "cgr_pat_" + "g" * 48
     db_session.add_all(
@@ -599,6 +604,79 @@ async def test_mcp_repositories_lists_private_repo_for_pat_user(
                 status=RepositoryStatus.READY,
                 visibility=RepositoryVisibility.ADMIN_ONLY,
                 sync_schedule=SyncSchedule.MANUAL,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    response = await client.post(
+        "/mcp/",
+        headers={
+            "Authorization": f"Bearer {plaintext}",
+            "Accept": "application/json",
+        },
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "cograph.repositories",
+                "arguments": {},
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    result = json.loads(payload["result"]["content"][0]["text"])
+    assert result["total"] == 0
+
+
+async def test_mcp_repositories_lists_admin_only_repo_for_grant_holder(
+    client, db_session, settings
+):
+    """USER PAT in a group with READ on the ADMIN_ONLY repo MUST see
+    it through MCP — positive ACL counterpart for `cograph.repositories`.
+    """
+    from backend.app.models.enums import GrantLevel
+    from backend.app.models.group import Group, GroupMember, RepositoryGrant
+
+    member = await _make_user(db_session)
+    plaintext = "cgr_pat_" + "j" * 48
+    repo = Repository(
+        host="example.com",
+        git_url="https://example.com/acme/private.git",
+        name="private",
+        owner="acme",
+        branch="main",
+        status=RepositoryStatus.READY,
+        visibility=RepositoryVisibility.ADMIN_ONLY,
+        sync_schedule=SyncSchedule.MANUAL,
+    )
+    db_session.add_all(
+        [
+            PersonalAccessToken(
+                user_id=member.id,
+                name="mcp-read",
+                token_hash=_hash(plaintext),
+                token_prefix=plaintext[:16],
+                scopes=["api:read", "mcp"],
+            ),
+            repo,
+        ]
+    )
+    await db_session.commit()
+
+    group = Group(name="mcp-grantees")
+    db_session.add(group)
+    await db_session.commit()
+    db_session.add_all(
+        [
+            GroupMember(group_id=group.id, user_id=member.id),
+            RepositoryGrant(
+                group_id=group.id,
+                repository_id=repo.id,
+                level=GrantLevel.READ.value,
             ),
         ]
     )
