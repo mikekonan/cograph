@@ -1,0 +1,1266 @@
+import { apiJson } from "@/api/client";
+import { ApiError } from "@/api/errors";
+import type {
+  AdminGroup,
+  CollectionGrant,
+  GrantLevel,
+  MdCollection,
+  OffsetPage,
+  Repository,
+  RepositoryGrant,
+  UUID,
+} from "@/api/types";
+import { Skeleton } from "@/components/shared/Skeleton";
+import { StateBoundary } from "@/components/shared/StateBoundary";
+import { Button } from "@/components/ui/Button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/Dialog";
+import { Input } from "@/components/ui/Input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/Select";
+import { Textarea } from "@/components/ui/Textarea";
+import {
+  useAddGroupMembers,
+  useAdminGroups,
+  useCreateAdminGroup,
+  useDeleteAdminGroup,
+  useDeleteGroupCollectionGrant,
+  useDeleteGroupRepositoryGrant,
+  useGroupCollectionGrants,
+  useGroupMembers,
+  useGroupRepositoryGrants,
+  usePutGroupCollectionGrant,
+  usePutGroupRepositoryGrant,
+  useRemoveGroupMember,
+  useUpdateAdminGroup,
+} from "@/hooks/useGroups";
+import { useAdminUsers } from "@/hooks/useUsers";
+import { cn } from "@/lib/utils";
+import { useQuery } from "@tanstack/react-query";
+import {
+  Database,
+  GitBranch,
+  Pencil,
+  Plus,
+  Trash2,
+  UserPlus,
+  Users,
+  UsersRound,
+} from "lucide-react";
+import { useMemo, useState } from "react";
+
+/**
+ * AdminGroupsPage — Settings → Groups. CRUD for groups, group membership,
+ * and per-resource (repository / md-collection) grants at READ / WRITE / ADMIN
+ * levels. Layered on top of visibility — grants ONLY expand who can see/act
+ * on a resource. OWNER/ADMIN tier always sees everything regardless.
+ *
+ * Three panels on the right when a group is selected: members, repository
+ * grants, collection grants. List is on the left.
+ */
+export default function AdminGroupsPage() {
+  const groupsQuery = useAdminGroups();
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<AdminGroup | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AdminGroup | null>(null);
+  const [selectedId, setSelectedId] = useState<UUID | null>(null);
+
+  const groups = groupsQuery.data ?? [];
+
+  const state = useMemo<"loading" | "error" | "ok">(() => {
+    if (groupsQuery.isError) return "error";
+    if (groupsQuery.isPending) return "loading";
+    return "ok";
+  }, [groupsQuery.isError, groupsQuery.isPending]);
+
+  const selectedGroup = useMemo(
+    () => groups.find((g) => g.id === selectedId) ?? null,
+    [groups, selectedId],
+  );
+
+  return (
+    <section className="flex flex-col gap-6">
+      <header className="flex items-end justify-between gap-3">
+        <div>
+          <h2 className="flex items-center gap-2 text-lg font-semibold tracking-tight">
+            <UsersRound className="h-5 w-5" aria-hidden="true" /> Groups
+          </h2>
+          <p className="max-w-3xl text-sm text-[color:var(--color-fg-muted)]">
+            Groups bundle users together so you can grant them access to specific repositories or
+            markdown collections without making them admins. Grants are additive — a USER who is in
+            a group with a READ grant on an ADMIN_ONLY repo can see and search it; WRITE adds
+            reindex and metadata edits; ADMIN adds delete.
+          </p>
+        </div>
+        <Button onClick={() => setCreateOpen(true)}>
+          <Plus className="h-4 w-4" />
+          Add group
+        </Button>
+      </header>
+
+      <StateBoundary
+        state={state}
+        error={groupsQuery.error instanceof Error ? groupsQuery.error : null}
+        onRetry={() => groupsQuery.refetch()}
+        loadingFallback={<GroupsListSkeleton />}
+      >
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)]">
+          <GroupsList
+            groups={groups}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+            onEdit={setEditTarget}
+            onDelete={setDeleteTarget}
+          />
+          <GroupDetail group={selectedGroup} />
+        </div>
+      </StateBoundary>
+
+      <CreateGroupDialog open={createOpen} onOpenChange={setCreateOpen} />
+      <EditGroupDialog group={editTarget} onClose={() => setEditTarget(null)} />
+      <DeleteGroupDialog
+        group={deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onDeleted={(id) => {
+          if (selectedId === id) setSelectedId(null);
+        }}
+      />
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Groups list (left column)
+// ---------------------------------------------------------------------------
+
+function GroupsList({
+  groups,
+  selectedId,
+  onSelect,
+  onEdit,
+  onDelete,
+}: {
+  groups: AdminGroup[];
+  selectedId: UUID | null;
+  onSelect: (id: UUID) => void;
+  onEdit: (g: AdminGroup) => void;
+  onDelete: (g: AdminGroup) => void;
+}) {
+  if (groups.length === 0) {
+    return (
+      <section
+        className={cn(
+          "flex h-full min-h-[12rem] flex-col items-center justify-center gap-2 rounded-[var(--radius-lg)] border p-8 text-center",
+          "border-[color:var(--color-border-subtle)] bg-[color:var(--color-bg-surface)]",
+        )}
+      >
+        <UsersRound className="h-6 w-6 text-[color:var(--color-fg-subtle)]" aria-hidden="true" />
+        <p className="text-sm text-[color:var(--color-fg-muted)]">
+          No groups yet. Create one to start granting access.
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <ul
+      className={cn(
+        "flex flex-col divide-y rounded-[var(--radius-lg)] border",
+        "divide-[color:var(--color-border-subtle)] border-[color:var(--color-border-subtle)] bg-[color:var(--color-bg-surface)]",
+      )}
+    >
+      {groups.map((group) => {
+        const isSelected = group.id === selectedId;
+        return (
+          <li key={group.id}>
+            <button
+              type="button"
+              onClick={() => onSelect(group.id)}
+              className={cn(
+                "flex w-full flex-col gap-1 px-4 py-3 text-left",
+                "transition-colors duration-[var(--motion-quick)]",
+                "focus-visible:outline-none focus-visible:bg-[color:var(--color-bg-hover)]",
+                isSelected
+                  ? "bg-[color:var(--color-bg-subtle)]"
+                  : "hover:bg-[color:var(--color-bg-hover)]",
+              )}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="truncate text-sm font-medium text-[color:var(--color-fg)]">
+                  {group.name}
+                </span>
+                <div className="flex items-center gap-0.5">
+                  <button
+                    type="button"
+                    aria-label={`Edit ${group.name}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onEdit(group);
+                    }}
+                    className="rounded-[var(--radius-sm)] p-1 text-[color:var(--color-fg-muted)] hover:bg-[color:var(--color-bg-hover)] hover:text-[color:var(--color-fg)]"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Delete ${group.name}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDelete(group);
+                    }}
+                    className="rounded-[var(--radius-sm)] p-1 text-[color:var(--color-fg-muted)] hover:bg-[color:var(--color-danger)]/10 hover:text-[color:var(--color-danger)]"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+              {group.description && (
+                <span className="line-clamp-2 text-xs text-[color:var(--color-fg-muted)]">
+                  {group.description}
+                </span>
+              )}
+              <div className="flex flex-wrap gap-3 text-2xs text-[color:var(--color-fg-subtle)]">
+                <CountChip icon={<Users className="h-3 w-3" />} value={group.member_count}>
+                  members
+                </CountChip>
+                <CountChip
+                  icon={<GitBranch className="h-3 w-3" />}
+                  value={group.repository_grant_count}
+                >
+                  repos
+                </CountChip>
+                <CountChip
+                  icon={<Database className="h-3 w-3" />}
+                  value={group.collection_grant_count}
+                >
+                  collections
+                </CountChip>
+              </div>
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function CountChip({
+  icon,
+  value,
+  children,
+}: {
+  icon: React.ReactNode;
+  value: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      {icon}
+      <span className="font-medium text-[color:var(--color-fg-muted)]">{value}</span>
+      <span>{children}</span>
+    </span>
+  );
+}
+
+function GroupsListSkeleton() {
+  return (
+    <div className="grid gap-6 lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)]">
+      <div
+        className={cn(
+          "flex flex-col gap-2 rounded-[var(--radius-lg)] border p-4",
+          "border-[color:var(--color-border-subtle)] bg-[color:var(--color-bg-surface)]",
+        )}
+      >
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Skeleton key={`grp-skel-${i + 1}`} className="h-14 rounded-[var(--radius-sm)]" />
+        ))}
+      </div>
+      <Skeleton className="h-64 rounded-[var(--radius-lg)]" />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Group detail (right column) — members + repo grants + collection grants
+// ---------------------------------------------------------------------------
+
+function GroupDetail({ group }: { group: AdminGroup | null }) {
+  if (!group) {
+    return (
+      <section
+        className={cn(
+          "flex h-full min-h-[12rem] flex-col items-center justify-center gap-2 rounded-[var(--radius-lg)] border p-8 text-center",
+          "border-[color:var(--color-border-subtle)] bg-[color:var(--color-bg-surface)]",
+        )}
+      >
+        <UsersRound className="h-6 w-6 text-[color:var(--color-fg-subtle)]" aria-hidden="true" />
+        <p className="text-sm text-[color:var(--color-fg-muted)]">
+          Select a group on the left to manage its members and grants.
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="flex flex-col gap-5">
+      <MembersPanel groupId={group.id} groupName={group.name} />
+      <RepositoryGrantsPanel groupId={group.id} groupName={group.name} />
+      <CollectionGrantsPanel groupId={group.id} groupName={group.name} />
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Members panel
+// ---------------------------------------------------------------------------
+
+function MembersPanel({ groupId, groupName }: { groupId: UUID; groupName: string }) {
+  const membersQuery = useGroupMembers(groupId);
+  const removeMember = useRemoveGroupMember(groupId);
+  const [addOpen, setAddOpen] = useState(false);
+  const members = membersQuery.data ?? [];
+
+  return (
+    <PanelShell
+      icon={<Users className="h-4 w-4" />}
+      title="Members"
+      hint={`Users who are part of ${groupName}.`}
+      action={
+        <Button size="sm" onClick={() => setAddOpen(true)}>
+          <UserPlus className="h-3.5 w-3.5" />
+          Add members
+        </Button>
+      }
+    >
+      {membersQuery.isPending ? (
+        <PanelRowSkeleton />
+      ) : membersQuery.isError ? (
+        <PanelError onRetry={() => membersQuery.refetch()} />
+      ) : members.length === 0 ? (
+        <PanelEmpty>No members in this group yet.</PanelEmpty>
+      ) : (
+        <ul className="divide-y divide-[color:var(--color-border-subtle)]">
+          {members.map((m) => (
+            <li key={m.user_id} className="flex items-center justify-between gap-3 px-4 py-2.5">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-[color:var(--color-fg)]">
+                  {m.email}
+                </p>
+                {m.name && (
+                  <p className="truncate text-xs text-[color:var(--color-fg-muted)]">{m.name}</p>
+                )}
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label={`Remove ${m.email}`}
+                onClick={() => removeMember.mutate(m.user_id)}
+                disabled={removeMember.isPending}
+                className="text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <AddMembersDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        groupId={groupId}
+        existingUserIds={new Set(members.map((m) => m.user_id))}
+      />
+    </PanelShell>
+  );
+}
+
+function AddMembersDialog({
+  open,
+  onOpenChange,
+  groupId,
+  existingUserIds,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  groupId: UUID;
+  existingUserIds: Set<UUID>;
+}) {
+  const usersQuery = useAdminUsers();
+  const addMembers = useAddGroupMembers(groupId);
+  const [selected, setSelected] = useState<Set<UUID>>(new Set());
+  const [topError, setTopError] = useState<string | null>(null);
+
+  const candidates = useMemo(() => {
+    const all = usersQuery.data ?? [];
+    return all.filter((u) => !existingUserIds.has(u.id));
+  }, [usersQuery.data, existingUserIds]);
+
+  function reset() {
+    setSelected(new Set());
+    setTopError(null);
+  }
+
+  function toggle(id: UUID) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function onSubmit() {
+    if (selected.size === 0) {
+      onOpenChange(false);
+      return;
+    }
+    setTopError(null);
+    try {
+      await addMembers.mutateAsync({ user_ids: Array.from(selected) });
+      reset();
+      onOpenChange(false);
+    } catch (err) {
+      setTopError(err instanceof ApiError ? err.message : "Could not add members.");
+    }
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        onOpenChange(v);
+        if (!v) reset();
+      }}
+    >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add members</DialogTitle>
+          <DialogDescription>
+            Pick one or more users to add to this group. Users already in the group are hidden.
+          </DialogDescription>
+        </DialogHeader>
+        {topError && (
+          <div
+            role="alert"
+            className="mb-3 rounded-[var(--radius)] border border-[color:var(--color-danger)]/50 bg-[color:var(--color-danger)]/10 px-3 py-2 text-sm text-[color:var(--color-danger)]"
+          >
+            {topError}
+          </div>
+        )}
+        <div className="max-h-72 overflow-auto rounded-[var(--radius)] border border-[color:var(--color-border-subtle)]">
+          {usersQuery.isPending ? (
+            <div className="p-3">
+              <Skeleton className="h-24" />
+            </div>
+          ) : candidates.length === 0 ? (
+            <p className="p-4 text-sm text-[color:var(--color-fg-muted)]">
+              No other users available. Create a user first under Users.
+            </p>
+          ) : (
+            <ul className="divide-y divide-[color:var(--color-border-subtle)]">
+              {candidates.map((u) => {
+                const isChecked = selected.has(u.id);
+                return (
+                  <li key={u.id}>
+                    <label
+                      className={cn(
+                        "flex cursor-pointer items-center gap-3 px-3 py-2 text-sm",
+                        "hover:bg-[color:var(--color-bg-hover)]",
+                        isChecked && "bg-[color:var(--color-bg-subtle)]",
+                      )}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => toggle(u.id)}
+                        className="h-4 w-4"
+                      />
+                      <div className="min-w-0">
+                        <p className="truncate font-medium text-[color:var(--color-fg)]">
+                          {u.email}
+                        </p>
+                        {u.name && (
+                          <p className="truncate text-xs text-[color:var(--color-fg-muted)]">
+                            {u.name}
+                          </p>
+                        )}
+                      </div>
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => onOpenChange(false)}
+            disabled={addMembers.isPending}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            onClick={onSubmit}
+            disabled={addMembers.isPending || selected.size === 0}
+          >
+            {addMembers.isPending ? "Adding…" : `Add ${selected.size || ""}`.trim()}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Repository grants panel
+// ---------------------------------------------------------------------------
+
+function RepositoryGrantsPanel({
+  groupId,
+  groupName,
+}: {
+  groupId: UUID;
+  groupName: string;
+}) {
+  const grantsQuery = useGroupRepositoryGrants(groupId);
+  const putGrant = usePutGroupRepositoryGrant(groupId);
+  const deleteGrant = useDeleteGroupRepositoryGrant(groupId);
+  const [addOpen, setAddOpen] = useState(false);
+  const grants = grantsQuery.data ?? [];
+
+  return (
+    <PanelShell
+      icon={<GitBranch className="h-4 w-4" />}
+      title="Repositories"
+      hint={`Repositories ${groupName} can access via grants.`}
+      action={
+        <Button size="sm" onClick={() => setAddOpen(true)}>
+          <Plus className="h-3.5 w-3.5" />
+          Grant repo
+        </Button>
+      }
+    >
+      {grantsQuery.isPending ? (
+        <PanelRowSkeleton />
+      ) : grantsQuery.isError ? (
+        <PanelError onRetry={() => grantsQuery.refetch()} />
+      ) : grants.length === 0 ? (
+        <PanelEmpty>No repository grants yet.</PanelEmpty>
+      ) : (
+        <ul className="divide-y divide-[color:var(--color-border-subtle)]">
+          {grants.map((g) => (
+            <li
+              key={g.repository_id}
+              className="flex items-center justify-between gap-3 px-4 py-2.5"
+            >
+              <p className="truncate font-mono text-xs text-[color:var(--color-fg)]">
+                {g.repository_slug}
+              </p>
+              <div className="flex items-center gap-2">
+                <LevelSelect
+                  value={g.level}
+                  onChange={(level) => putGrant.mutate({ repository_id: g.repository_id, level })}
+                  disabled={putGrant.isPending}
+                />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-label={`Revoke ${g.repository_slug}`}
+                  onClick={() => deleteGrant.mutate(g.repository_id)}
+                  disabled={deleteGrant.isPending}
+                  className="text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      <AddRepositoryGrantDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        groupId={groupId}
+        existing={grants}
+      />
+    </PanelShell>
+  );
+}
+
+function AddRepositoryGrantDialog({
+  open,
+  onOpenChange,
+  groupId,
+  existing,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  groupId: UUID;
+  existing: RepositoryGrant[];
+}) {
+  const reposQuery = useQuery({
+    queryKey: ["admin", "groups", "repo-picker"],
+    queryFn: () => apiJson<OffsetPage<Repository>>("/api/repos?per_page=200"),
+    enabled: open,
+  });
+  const putGrant = usePutGroupRepositoryGrant(groupId);
+
+  const [repositoryId, setRepositoryId] = useState<string>("");
+  const [level, setLevel] = useState<GrantLevel>("read");
+  const [topError, setTopError] = useState<string | null>(null);
+
+  const existingIds = useMemo(() => new Set(existing.map((g) => g.repository_id)), [existing]);
+  const candidates = useMemo(
+    () => (reposQuery.data?.items ?? []).filter((r) => !existingIds.has(r.id)),
+    [reposQuery.data, existingIds],
+  );
+
+  function reset() {
+    setRepositoryId("");
+    setLevel("read");
+    setTopError(null);
+  }
+
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!repositoryId) return;
+    setTopError(null);
+    try {
+      await putGrant.mutateAsync({ repository_id: repositoryId, level });
+      reset();
+      onOpenChange(false);
+    } catch (err) {
+      setTopError(err instanceof ApiError ? err.message : "Could not grant access.");
+    }
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        onOpenChange(v);
+        if (!v) reset();
+      }}
+    >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Grant repository access</DialogTitle>
+          <DialogDescription>
+            Pick a repository and the access level to grant this group.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={onSubmit} className="flex flex-col gap-4">
+          {topError && (
+            <div
+              role="alert"
+              className="rounded-[var(--radius)] border border-[color:var(--color-danger)]/50 bg-[color:var(--color-danger)]/10 px-3 py-2 text-sm text-[color:var(--color-danger)]"
+            >
+              {topError}
+            </div>
+          )}
+          <Field label="Repository">
+            <Select value={repositoryId} onValueChange={setRepositoryId}>
+              <SelectTrigger aria-label="Repository">
+                <SelectValue placeholder="Choose a repository" />
+              </SelectTrigger>
+              <SelectContent>
+                {candidates.length === 0 ? (
+                  <div className="px-3 py-2 text-sm text-[color:var(--color-fg-muted)]">
+                    No more repositories available.
+                  </div>
+                ) : (
+                  candidates.map((r) => (
+                    <SelectItem key={r.id} value={r.id}>
+                      {r.host}/{r.owner}/{r.name}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field label="Level">
+            <LevelSelect value={level} onChange={setLevel} />
+          </Field>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => onOpenChange(false)}
+              disabled={putGrant.isPending}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={putGrant.isPending || !repositoryId}>
+              {putGrant.isPending ? "Granting…" : "Grant access"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Collection grants panel
+// ---------------------------------------------------------------------------
+
+function CollectionGrantsPanel({
+  groupId,
+  groupName,
+}: {
+  groupId: UUID;
+  groupName: string;
+}) {
+  const grantsQuery = useGroupCollectionGrants(groupId);
+  const putGrant = usePutGroupCollectionGrant(groupId);
+  const deleteGrant = useDeleteGroupCollectionGrant(groupId);
+  const [addOpen, setAddOpen] = useState(false);
+  const grants = grantsQuery.data ?? [];
+
+  return (
+    <PanelShell
+      icon={<Database className="h-4 w-4" />}
+      title="Collections"
+      hint={`Markdown collections ${groupName} can access via grants.`}
+      action={
+        <Button size="sm" onClick={() => setAddOpen(true)}>
+          <Plus className="h-3.5 w-3.5" />
+          Grant collection
+        </Button>
+      }
+    >
+      {grantsQuery.isPending ? (
+        <PanelRowSkeleton />
+      ) : grantsQuery.isError ? (
+        <PanelError onRetry={() => grantsQuery.refetch()} />
+      ) : grants.length === 0 ? (
+        <PanelEmpty>No collection grants yet.</PanelEmpty>
+      ) : (
+        <ul className="divide-y divide-[color:var(--color-border-subtle)]">
+          {grants.map((g) => (
+            <li
+              key={g.collection_id}
+              className="flex items-center justify-between gap-3 px-4 py-2.5"
+            >
+              <p className="truncate text-sm font-medium text-[color:var(--color-fg)]">
+                {g.collection_name}
+              </p>
+              <div className="flex items-center gap-2">
+                <LevelSelect
+                  value={g.level}
+                  onChange={(level) => putGrant.mutate({ collection_id: g.collection_id, level })}
+                  disabled={putGrant.isPending}
+                />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-label={`Revoke ${g.collection_name}`}
+                  onClick={() => deleteGrant.mutate(g.collection_id)}
+                  disabled={deleteGrant.isPending}
+                  className="text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      <AddCollectionGrantDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        groupId={groupId}
+        existing={grants}
+      />
+    </PanelShell>
+  );
+}
+
+function AddCollectionGrantDialog({
+  open,
+  onOpenChange,
+  groupId,
+  existing,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  groupId: UUID;
+  existing: CollectionGrant[];
+}) {
+  const collectionsQuery = useQuery({
+    queryKey: ["admin", "groups", "collection-picker"],
+    queryFn: () => apiJson<OffsetPage<MdCollection>>("/api/md-collections?page=1&per_page=200"),
+    enabled: open,
+  });
+  const putGrant = usePutGroupCollectionGrant(groupId);
+
+  const [collectionId, setCollectionId] = useState<string>("");
+  const [level, setLevel] = useState<GrantLevel>("read");
+  const [topError, setTopError] = useState<string | null>(null);
+
+  const existingIds = useMemo(() => new Set(existing.map((g) => g.collection_id)), [existing]);
+  const candidates = useMemo(
+    () => (collectionsQuery.data?.items ?? []).filter((c) => !existingIds.has(c.id)),
+    [collectionsQuery.data, existingIds],
+  );
+
+  function reset() {
+    setCollectionId("");
+    setLevel("read");
+    setTopError(null);
+  }
+
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!collectionId) return;
+    setTopError(null);
+    try {
+      await putGrant.mutateAsync({ collection_id: collectionId, level });
+      reset();
+      onOpenChange(false);
+    } catch (err) {
+      setTopError(err instanceof ApiError ? err.message : "Could not grant access.");
+    }
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        onOpenChange(v);
+        if (!v) reset();
+      }}
+    >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Grant collection access</DialogTitle>
+          <DialogDescription>
+            Pick a markdown collection and the access level to grant this group.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={onSubmit} className="flex flex-col gap-4">
+          {topError && (
+            <div
+              role="alert"
+              className="rounded-[var(--radius)] border border-[color:var(--color-danger)]/50 bg-[color:var(--color-danger)]/10 px-3 py-2 text-sm text-[color:var(--color-danger)]"
+            >
+              {topError}
+            </div>
+          )}
+          <Field label="Collection">
+            <Select value={collectionId} onValueChange={setCollectionId}>
+              <SelectTrigger aria-label="Collection">
+                <SelectValue placeholder="Choose a collection" />
+              </SelectTrigger>
+              <SelectContent>
+                {candidates.length === 0 ? (
+                  <div className="px-3 py-2 text-sm text-[color:var(--color-fg-muted)]">
+                    No more collections available.
+                  </div>
+                ) : (
+                  candidates.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field label="Level">
+            <LevelSelect value={level} onChange={setLevel} />
+          </Field>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => onOpenChange(false)}
+              disabled={putGrant.isPending}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={putGrant.isPending || !collectionId}>
+              {putGrant.isPending ? "Granting…" : "Grant access"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Shared bits: panel shell, level select, field, dialogs
+// ---------------------------------------------------------------------------
+
+function PanelShell({
+  icon,
+  title,
+  hint,
+  action,
+  children,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  hint: string;
+  action: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section
+      className={cn(
+        "overflow-hidden rounded-[var(--radius-lg)] border",
+        "border-[color:var(--color-border-subtle)] bg-[color:var(--color-bg-surface)]",
+      )}
+    >
+      <header className="flex items-end justify-between gap-3 border-b border-[color:var(--color-border-subtle)] bg-[color:var(--color-bg-subtle)] px-4 py-3">
+        <div>
+          <h3 className="flex items-center gap-2 text-sm font-semibold tracking-tight">
+            {icon} {title}
+          </h3>
+          <p className="text-xs text-[color:var(--color-fg-muted)]">{hint}</p>
+        </div>
+        {action}
+      </header>
+      {children}
+    </section>
+  );
+}
+
+function LevelSelect({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: GrantLevel;
+  onChange: (level: GrantLevel) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <Select value={value} onValueChange={(v) => onChange(v as GrantLevel)} disabled={disabled}>
+      <SelectTrigger aria-label="Grant level" className="h-8 w-28">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="read">Read</SelectItem>
+        <SelectItem value="write">Write</SelectItem>
+        <SelectItem value="admin">Admin</SelectItem>
+      </SelectContent>
+    </Select>
+  );
+}
+
+function PanelRowSkeleton() {
+  return (
+    <div className="space-y-2 p-4">
+      <Skeleton className="h-9 rounded-[var(--radius-sm)]" />
+      <Skeleton className="h-9 rounded-[var(--radius-sm)]" />
+    </div>
+  );
+}
+
+function PanelError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="flex flex-col items-center gap-2 px-4 py-6 text-center">
+      <p className="text-sm text-[color:var(--color-danger)]">Could not load.</p>
+      <Button variant="secondary" size="sm" onClick={onRetry}>
+        Retry
+      </Button>
+    </div>
+  );
+}
+
+function PanelEmpty({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="px-4 py-6 text-center text-sm text-[color:var(--color-fg-muted)]">{children}</p>
+  );
+}
+
+function CreateGroupDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [topError, setTopError] = useState<string | null>(null);
+  const createGroup = useCreateAdminGroup();
+
+  function reset() {
+    setName("");
+    setDescription("");
+    setTopError(null);
+  }
+
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setTopError(null);
+    try {
+      await createGroup.mutateAsync({
+        name: name.trim(),
+        description: description.trim() || null,
+      });
+      reset();
+      onOpenChange(false);
+    } catch (err) {
+      setTopError(err instanceof ApiError ? err.message : "Could not create group.");
+    }
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        onOpenChange(v);
+        if (!v) reset();
+      }}
+    >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Create a group</DialogTitle>
+          <DialogDescription>
+            Groups bundle users so you can grant them access to specific resources.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={onSubmit} className="flex flex-col gap-4">
+          {topError && (
+            <div
+              role="alert"
+              className="rounded-[var(--radius)] border border-[color:var(--color-danger)]/50 bg-[color:var(--color-danger)]/10 px-3 py-2 text-sm text-[color:var(--color-danger)]"
+            >
+              {topError}
+            </div>
+          )}
+          <Field label="Name">
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="data-platform"
+              autoFocus
+              required
+              maxLength={128}
+            />
+          </Field>
+          <Field label="Description (optional)">
+            <Textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="What is this group for?"
+              maxLength={2048}
+              rows={3}
+            />
+          </Field>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => onOpenChange(false)}
+              disabled={createGroup.isPending}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={createGroup.isPending || !name.trim()}>
+              {createGroup.isPending ? "Creating…" : "Create group"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function EditGroupDialog({
+  group,
+  onClose,
+}: {
+  group: AdminGroup | null;
+  onClose: () => void;
+}) {
+  const updateGroup = useUpdateAdminGroup();
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [topError, setTopError] = useState<string | null>(null);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-seed only when a new group is opened
+  useMemo(() => {
+    if (group) {
+      setName(group.name);
+      setDescription(group.description ?? "");
+      setTopError(null);
+    }
+  }, [group?.id]);
+
+  if (!group) return null;
+
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!group) return;
+    setTopError(null);
+    const payload: { name?: string; description?: string | null } = {};
+    if (name.trim() !== group.name) payload.name = name.trim();
+    const currentDesc = group.description ?? "";
+    if (description !== currentDesc) payload.description = description.trim() || null;
+    if (Object.keys(payload).length === 0) {
+      onClose();
+      return;
+    }
+    try {
+      await updateGroup.mutateAsync({ groupId: group.id, payload });
+      onClose();
+    } catch (err) {
+      setTopError(err instanceof ApiError ? err.message : "Could not update group.");
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(v) => !v && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Edit {group.name}</DialogTitle>
+          <DialogDescription>Rename or update the description.</DialogDescription>
+        </DialogHeader>
+        <form onSubmit={onSubmit} className="flex flex-col gap-4">
+          {topError && (
+            <div
+              role="alert"
+              className="rounded-[var(--radius)] border border-[color:var(--color-danger)]/50 bg-[color:var(--color-danger)]/10 px-3 py-2 text-sm text-[color:var(--color-danger)]"
+            >
+              {topError}
+            </div>
+          )}
+          <Field label="Name">
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+              maxLength={128}
+            />
+          </Field>
+          <Field label="Description">
+            <Textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              maxLength={2048}
+              rows={3}
+            />
+          </Field>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={onClose}
+              disabled={updateGroup.isPending}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={updateGroup.isPending}>
+              {updateGroup.isPending ? "Saving…" : "Save changes"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DeleteGroupDialog({
+  group,
+  onClose,
+  onDeleted,
+}: {
+  group: AdminGroup | null;
+  onClose: () => void;
+  onDeleted: (id: UUID) => void;
+}) {
+  const deleteGroup = useDeleteAdminGroup();
+  const [topError, setTopError] = useState<string | null>(null);
+
+  if (!group) return null;
+
+  async function onConfirm() {
+    if (!group) return;
+    setTopError(null);
+    try {
+      await deleteGroup.mutateAsync(group.id);
+      onDeleted(group.id);
+      onClose();
+    } catch (err) {
+      setTopError(err instanceof ApiError ? err.message : "Could not delete group.");
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(v) => !v && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Delete {group.name}?</DialogTitle>
+          <DialogDescription>
+            Removes the group and all of its members and grants. Users in this group lose access to
+            any resources granted exclusively through it. This cannot be undone.
+          </DialogDescription>
+        </DialogHeader>
+        {topError && (
+          <div
+            role="alert"
+            className="rounded-[var(--radius)] border border-[color:var(--color-danger)]/50 bg-[color:var(--color-danger)]/10 px-3 py-2 text-sm text-[color:var(--color-danger)]"
+          >
+            {topError}
+          </div>
+        )}
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={onClose}
+            disabled={deleteGroup.isPending}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="danger"
+            onClick={onConfirm}
+            disabled={deleteGroup.isPending}
+          >
+            <Trash2 className="h-4 w-4" />
+            {deleteGroup.isPending ? "Deleting…" : "Delete group"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-xs font-medium text-[color:var(--color-fg-muted)]">{label}</span>
+      {children}
+      {hint && <span className="text-xs text-[color:var(--color-fg-subtle)]">{hint}</span>}
+    </div>
+  );
+}

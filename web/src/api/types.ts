@@ -685,3 +685,87 @@ export type MdJob = {
   started_at: string | null;
   finished_at: string | null;
 };
+
+// --- groups + ACL --------------------------------------------------------
+
+export type GrantLevel = "read" | "write" | "admin";
+
+export type AdminGroup = {
+  id: UUID;
+  name: string;
+  description: string | null;
+  created_at: ISODateTime;
+  created_by: UUID | null;
+  member_count: number;
+  repository_grant_count: number;
+  collection_grant_count: number;
+};
+
+export type AdminGroupListResponse = {
+  items: AdminGroup[];
+};
+
+export type CreateGroupRequest = {
+  name: string;
+  description?: string | null;
+};
+
+export type UpdateGroupRequest = {
+  name?: string | null;
+  description?: string | null;
+};
+
+export type AdminGroupMember = {
+  user_id: UUID;
+  email: string;
+  name: string | null;
+  added_at: ISODateTime;
+  added_by: UUID | null;
+};
+
+export type AdminGroupMembersResponse = {
+  items: AdminGroupMember[];
+};
+
+export type AddMembersRequest = {
+  user_ids: UUID[];
+};
+
+export type AddMembersResponse = {
+  added: UUID[];
+  already_present: UUID[];
+};
+
+export type RepositoryGrant = {
+  repository_id: UUID;
+  repository_slug: string;
+  level: GrantLevel;
+  granted_at: ISODateTime;
+  granted_by: UUID | null;
+};
+
+export type RepositoryGrantListResponse = {
+  items: RepositoryGrant[];
+};
+
+export type PutRepositoryGrantRequest = {
+  repository_id: UUID;
+  level: GrantLevel;
+};
+
+export type CollectionGrant = {
+  collection_id: UUID;
+  collection_name: string;
+  level: GrantLevel;
+  granted_at: ISODateTime;
+  granted_by: UUID | null;
+};
+
+export type CollectionGrantListResponse = {
+  items: CollectionGrant[];
+};
+
+export type PutCollectionGrantRequest = {
+  collection_id: UUID;
+  level: GrantLevel;
+};
