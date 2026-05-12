@@ -817,8 +817,7 @@ function AddCollectionGrantDialog({
 }) {
   const collectionsQuery = useQuery({
     queryKey: ["admin", "groups", "collection-picker"],
-    queryFn: () =>
-      apiJson<OffsetPage<MdCollection>>("/api/md-collections?page=1&per_page=100"),
+    queryFn: () => apiJson<OffsetPage<MdCollection>>("/api/md-collections?page=1&per_page=100"),
     enabled: open,
   });
   const putGrant = usePutGroupCollectionGrant(groupId);
