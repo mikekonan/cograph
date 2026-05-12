@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from backend.app.api.admin import router as admin_router
 from backend.app.api.admin_git_hosts import router as admin_git_hosts_router
+from backend.app.api.admin_groups import router as admin_groups_router
 from backend.app.api.admin_identity_providers import router as admin_idp_router
 from backend.app.api.admin_llm_runtime import router as admin_llm_runtime_router
 from backend.app.api.admin_scim_clients import router as admin_scim_clients_router
@@ -25,6 +26,7 @@ from backend.app.api.wiki import router as wiki_router
 api_router = APIRouter(prefix="/api")
 api_router.include_router(admin_router)
 api_router.include_router(admin_git_hosts_router)
+api_router.include_router(admin_groups_router)
 api_router.include_router(admin_idp_router)
 api_router.include_router(admin_llm_runtime_router)
 api_router.include_router(admin_scim_clients_router)
