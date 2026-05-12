@@ -42,8 +42,10 @@ from backend.app.core.deps import (
     get_zip_checkout_adapter,
     require_admin,
     require_csrf,
+    require_current_user,
 )
 from backend.app.core.errors import ApiError, FieldError
+from backend.app.core.group_permissions import has_repository_permission
 from backend.app.core.idempotency import (
     IdempotencyRecord,
     check_or_claim,
@@ -56,6 +58,7 @@ from backend.app.core.repository_access import (
 from backend.app.models.code_node import CodeNode
 from backend.app.models.enums import (
     CodeNodeType,
+    GrantLevel,
     RepoSource,
     RepoSyncRunStatus,
     RepoSyncTriggerKind,
@@ -78,6 +81,38 @@ from backend.app.pipeline.zip_checkout import ZipCheckoutAdapter, ZipCheckoutErr
 router = APIRouter(prefix="/repos", tags=["repos"])
 
 _purge_enqueue_logger = logging.getLogger(__name__)
+
+
+async def _require_repository_for_mutation(
+    *,
+    session: AsyncSession,
+    host: str,
+    owner: str,
+    name: str,
+    settings: Settings,
+    current_user: User,
+    required: GrantLevel,
+) -> Repository:
+    """Resolve a repo by slug AND assert the caller has `required` on it.
+
+    Two-step gate so the 403 only fires for callers who already
+    survived the 404 funnel (i.e. they could already SEE the repo):
+    this avoids leaking the existence of ADMIN_ONLY repos through a
+    role-tier bump on the same endpoint.
+    """
+    repository = await get_readable_repository_by_slug(
+        session=session,
+        host=host,
+        owner=owner,
+        name=name,
+        settings=settings,
+        current_user=current_user,
+    )
+    if not await has_repository_permission(
+        session, current_user, repository.id, required
+    ):
+        raise ApiError(403, "FORBIDDEN", "Repository access denied")
+    return repository
 
 # Regex patterns for accepted git URL forms:
 # 1. https://<host>/<owner>/<repo>[.git]
@@ -806,7 +841,7 @@ async def replace_repository_archive(
     request: Request,
     archive: UploadFile = File(...),
     session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_current_user),
     _csrf: User = Depends(require_csrf),
     settings: Settings = Depends(get_settings_dep),
     zip_adapter: ZipCheckoutAdapter = Depends(get_zip_checkout_adapter),
@@ -818,13 +853,14 @@ async def replace_repository_archive(
     """
     del _csrf
 
-    repository = await get_readable_repository_by_slug(
+    repository = await _require_repository_for_mutation(
         session=session,
         host=host,
         owner=owner,
         name=name,
         settings=settings,
         current_user=current_user,
+        required=GrantLevel.WRITE,
     )
     repository_id = repository.id
     if repository.source is not RepoSource.ZIP:
@@ -884,20 +920,21 @@ async def delete_repository(
     owner: str,
     name: str,
     session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_current_user),
     _csrf: User = Depends(require_csrf),
     settings: Settings = Depends(get_settings_dep),
     zip_adapter: ZipCheckoutAdapter = Depends(get_zip_checkout_adapter),
 ) -> None:
     del _csrf
 
-    repository = await get_readable_repository_by_slug(
+    repository = await _require_repository_for_mutation(
         session=session,
         host=host,
         owner=owner,
         name=name,
         settings=settings,
         current_user=current_user,
+        required=GrantLevel.ADMIN,
     )
     repository_id = repository.id
     is_zip = repository.source is RepoSource.ZIP
@@ -960,19 +997,20 @@ async def update_repository(
     name: str,
     payload: UpdateRepositoryRequest,
     session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_current_user),
     _csrf: User = Depends(require_csrf),
     settings: Settings = Depends(get_settings_dep),
 ) -> RepositoryResponse:
     del _csrf
 
-    repository = await get_readable_repository_by_slug(
+    repository = await _require_repository_for_mutation(
         session=session,
         host=host,
         owner=owner,
         name=name,
         settings=settings,
         current_user=current_user,
+        required=GrantLevel.WRITE,
     )
     repository_id = repository.id
 
@@ -1020,18 +1058,19 @@ async def reindex_repository(
     name: str,
     request: Request,
     session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_current_user),
     _csrf: User = Depends(require_csrf),
     settings: Settings = Depends(get_settings_dep),
 ) -> RepoReindexResponse:
     del _csrf
-    repository = await get_readable_repository_by_slug(
+    repository = await _require_repository_for_mutation(
         session=session,
         host=host,
         owner=owner,
         name=name,
         settings=settings,
         current_user=current_user,
+        required=GrantLevel.WRITE,
     )
     if repository.source is RepoSource.ZIP:
         raise ApiError(
