@@ -170,12 +170,13 @@ export function MermaidDiagram({ source, className }: MermaidDiagramProps) {
       mermaid.initialize({
         startOnLoad: false,
         theme: "base",
-        // `antiscript` (vs the default `strict`) keeps HTML-rendered
-        // labels — needed so long FQN node labels can wrap via `<br/>`
-        // and so the `htmlLabels` flag below actually does anything —
-        // while still stripping any `<script>` tags from the diagram
-        // source. Our diagrams are pipeline-generated, not user input,
-        // so the relaxed-but-sanitised level is the right balance.
+        // `antiscript` (vs the default `strict`) still strips `<script>`
+        // tags from the diagram source. We keep mermaid's default
+        // HTML-label path (htmlLabels: true) because `dagre-wrapper`
+        // — the only working flowchart renderer in mermaid 11 —
+        // ignores `htmlLabels: false` and always emits foreignObject.
+        // The long-label clipping that motivated past experiments
+        // here is solved via themeCSS below (foreignObject overflow).
         securityLevel: "antiscript",
         fontFamily: 'var(--font-sans), "Inter", sans-serif',
         flowchart: {
@@ -207,6 +208,22 @@ export function MermaidDiagram({ source, className }: MermaidDiagramProps) {
           .nodeLabel, .nodeLabel p, .edgeLabel, .edgeLabel p, .cluster-label, .cluster-label p {
             word-break: normal;
             overflow-wrap: normal;
+          }
+          /* Mermaid's HTML-label sizing pass underestimates text width
+             when the configured font (Inter) differs from the one its
+             internal measurement uses, leaving long labels visually
+             clipped on the right of the foreignObject. The
+             foreignObject defaults to overflow: hidden, which chops
+             the rendered glyphs. Letting foreignObject and its inner
+             label overflow visibly keeps the text readable; the few
+             px the glyph run extends past the rect on long FQNs is
+             cosmetic and within mermaid's own padding budget. */
+          foreignObject {
+            overflow: visible;
+          }
+          .nodeLabel,
+          .nodeLabel p {
+            overflow: visible;
           }
         `,
       });
