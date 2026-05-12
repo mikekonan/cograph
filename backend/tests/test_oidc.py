@@ -327,6 +327,11 @@ async def test_find_or_create_user_refuses_email_collision(db_session):
 
 
 async def test_find_or_create_user_blocks_unverified_email(db_session):
+    # With NO domain_allowlist there is no admin-supplied trust anchor
+    # to substitute for the IdP's email_verified flag, so we still
+    # refuse to provision when the claim is missing/false. This is the
+    # multi-tenant / wide-open default — a verified email is the only
+    # signal that the inbox is actually controlled.
     provider = _make_provider()
     db_session.add(provider)
     await db_session.commit()
@@ -337,7 +342,57 @@ async def test_find_or_create_user_blocks_unverified_email(db_session):
     assert exc.value.code == "OIDC_EMAIL_UNVERIFIED"
 
 
+async def test_find_or_create_user_provisions_when_domain_allowlist_substitutes_for_email_verified(
+    db_session,
+):
+    # The Okta unblock: Okta omits `email_verified` from the ID token by
+    # default. When an admin has explicitly pinned the trusted domains
+    # via `domain_allowlist` and the email's domain matches, treat the
+    # allowlist match itself as the admin-supplied trust anchor and
+    # provision the new account. Symmetric to the auto-link path.
+    provider = _make_provider(domain_allowlist=["finteqhub.com"])
+    db_session.add(provider)
+    await db_session.commit()
+
+    claims = _make_claims(
+        email="newhire@finteqhub.com",
+        email_verified=False,
+    )
+    user = await find_or_create_user(db_session, provider=provider, claims=claims)
+    await db_session.commit()
+    assert user.email == "newhire@finteqhub.com"
+    assert user.auth_source == "oidc"
+    assert user.password_hash is None
+
+
+async def test_find_or_create_user_still_rejects_when_allowlist_set_but_domain_mismatch(
+    db_session,
+):
+    # Edge case: allowlist is set AND email_verified=false AND the email
+    # domain is outside the allowlist. We must NOT silently fall back to
+    # verifying via email_verified=false (which would be "trusted" only
+    # via the new allowlist path). The cross-tenant attack vector this
+    # closes: a misconfigured wildcard IdP returning an outside-domain
+    # email with no email_verified claim must not provision an account.
+    provider = _make_provider(domain_allowlist=["finteqhub.com"])
+    db_session.add(provider)
+    await db_session.commit()
+
+    claims = _make_claims(
+        email="alien@other.com",
+        email_verified=False,
+    )
+    with pytest.raises(ApiError) as exc:
+        await find_or_create_user(db_session, provider=provider, claims=claims)
+    assert exc.value.code == "OIDC_EMAIL_UNVERIFIED"
+
+
 async def test_find_or_create_user_enforces_domain_allowlist(db_session):
+    # When `email_verified=true` carries the trust signal, the separate
+    # domain-allowlist check still has to fire — we don't want a
+    # different-tenant verified email to provision into this tenant.
+    # This surfaces the clearer OIDC_DOMAIN_NOT_ALLOWED code rather
+    # than the ambiguous OIDC_EMAIL_UNVERIFIED one.
     provider = _make_provider(domain_allowlist=["allowed.com"])
     db_session.add(provider)
     await db_session.commit()
