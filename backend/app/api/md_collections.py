@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from backend.app.auth.actor import AuthenticatedActor
+from backend.app.core.group_permissions import has_collection_permission
 from backend.app.core.md_collection_access import get_readable_md_collection
 from backend.app.core.deps import (
     get_current_user_optional,
@@ -25,7 +26,7 @@ from backend.app.llm.runtime_providers import build_runtime_providers
 from backend.app.md_rag.indexer import MdDocumentInput, MdIndexer
 from backend.app.md_rag.queries import MdQueryService
 from backend.app.models.md_collection import MdChunk, MdCollection, MdDocument, MdJob
-from backend.app.models.enums import MdCollectionVisibility, UserRole
+from backend.app.models.enums import GrantLevel, MdCollectionVisibility, UserRole
 from backend.app.models.user import User
 from backend.app.rag.hybrid import HybridRetriever
 from backend.app.rag.runtime import build_hybrid_retriever
@@ -378,6 +379,13 @@ async def update_md_collection(
     if payload.visibility is not None:
         collection.visibility = payload.visibility
     await session.commit()
+    # `TimestampMixin.updated_at` has `onupdate=now()`, so the in-session
+    # row's `updated_at` is now stale relative to the DB. The detail
+    # builder below reads `collection.updated_at` — without an explicit
+    # async refresh, the read triggers a lazy DB hit in sync context
+    # and trips SQLAlchemy's `MissingGreenlet` guard. Refresh explicitly
+    # so the read stays in-memory.
+    await session.refresh(collection)
 
     detail = await _md_query_service.get_collection(
         session=session,
@@ -397,10 +405,11 @@ async def delete_md_collection(
     _csrf: User = Depends(require_csrf),
 ) -> Response:
     del _csrf
-    collection = await _require_collection_owner_or_admin(
+    collection = await _require_collection_for_mutation(
         session=session,
         collection_id=collection_id,
         current_user=current_user,
+        required=GrantLevel.ADMIN,
     )
     await session.delete(collection)
     await session.commit()
@@ -1211,12 +1220,29 @@ async def _require_collection_access(
     )
 
 
-async def _require_collection_owner_or_admin(
+async def _require_collection_for_mutation(
     *,
     session: AsyncSession,
     collection_id: UUID,
     current_user: User,
+    required: GrantLevel,
 ) -> MdCollection:
+    """Resolve a collection by id AND assert the caller has `required` on it.
+
+    Ladder semantics:
+
+    * OWNER/ADMIN role short-circuits.
+    * Collection's `owner_id == current_user.id` short-circuits — the
+      pre-existing self-access semantic is preserved through this
+      rewrite so users who created their own private collection keep
+      full WRITE/ADMIN power without needing a synthetic group.
+    * Otherwise: a group grant on this collection must satisfy
+      `level >= required` per the (READ=1, WRITE=2, ADMIN=3) ladder.
+
+    Returns the loaded MdCollection on success; raises 404 if it
+    doesn't exist (or has no row), 403 if the caller can't pass the
+    ladder check.
+    """
     collection = await session.get(MdCollection, collection_id)
     if collection is None:
         raise ApiError(404, "NOT_FOUND", "Collection not found")
@@ -1224,7 +1250,30 @@ async def _require_collection_owner_or_admin(
         return collection
     if collection.owner_id == current_user.id:
         return collection
+    if await has_collection_permission(
+        session, current_user, collection, required
+    ):
+        return collection
     raise ApiError(403, "FORBIDDEN", "Collection access denied")
+
+
+# Back-compat shim: existing call sites that used the old
+# "owner-or-admin" gate now flow through the parametrized helper at
+# WRITE level. ADMIN-only sites pass `required=GrantLevel.ADMIN`
+# directly; we keep the old name as a deprecated alias so anything
+# importing it from elsewhere still resolves until the next refactor.
+async def _require_collection_owner_or_admin(
+    *,
+    session: AsyncSession,
+    collection_id: UUID,
+    current_user: User,
+) -> MdCollection:
+    return await _require_collection_for_mutation(
+        session=session,
+        collection_id=collection_id,
+        current_user=current_user,
+        required=GrantLevel.WRITE,
+    )
 
 
 async def _attach_or_create_upload_job(
