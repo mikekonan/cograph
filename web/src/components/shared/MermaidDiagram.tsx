@@ -211,15 +211,32 @@ export function MermaidDiagram({ source, className }: MermaidDiagramProps) {
           }
           /* Mermaid's HTML-label sizing pass underestimates text width
              when the configured font (Inter) differs from the one its
-             internal measurement uses, leaving long labels visually
-             clipped on the right of the foreignObject. The
-             foreignObject defaults to overflow: hidden, which chops
-             the rendered glyphs. Letting foreignObject and its inner
-             label overflow visibly keeps the text readable; the few
-             px the glyph run extends past the rect on long FQNs is
-             cosmetic and within mermaid's own padding budget. */
+             internal measurement uses. The default behaviour is then:
+             foreignObject is centered on the shape but sized too
+             narrow, the inner div (display:table, width:200px) grows
+             from the foreignObject's left edge, and the glyph run
+             either clips on the right (overflow:hidden) or visibly
+             skews off-center to the right (overflow:visible).
+
+             Fix: let the foreignObject overflow visibly, then re-pin
+             the inner div to *the foreignObject's center* with a
+             classic translate(-50%, -50%). The div sizes naturally
+             to its content (width:auto !important wipes mermaid's
+             inline 200px cap) so long labels grow symmetrically
+             instead of skewing — the rendered text is always
+             centered on the shape, regardless of mermaid's
+             measurement error. */
           foreignObject {
             overflow: visible;
+          }
+          foreignObject > div {
+            position: relative !important;
+            left: 50% !important;
+            top: 50% !important;
+            transform: translate(-50%, -50%) !important;
+            width: auto !important;
+            max-width: none !important;
+            display: inline-block !important;
           }
           .nodeLabel,
           .nodeLabel p {
