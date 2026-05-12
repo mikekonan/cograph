@@ -931,21 +931,24 @@ async def delete_repository(
     owner: str,
     name: str,
     session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_current_user),
+    current_user: User = Depends(require_admin),
     _csrf: User = Depends(require_csrf),
     settings: Settings = Depends(get_settings_dep),
     zip_adapter: ZipCheckoutAdapter = Depends(get_zip_checkout_adapter),
 ) -> None:
     del _csrf
 
-    repository = await _require_repository_for_mutation(
+    # Destructive op: OWNER/ADMIN role only (require_admin above).
+    # Per-resource ADMIN grant was retired with GrantLevel.ADMIN; no
+    # per-repo delegation today — operators must hand out OWNER/ADMIN
+    # role through admin_users.
+    repository = await get_readable_repository_by_slug(
         session=session,
         host=host,
         owner=owner,
         name=name,
         settings=settings,
         current_user=current_user,
-        required=GrantLevel.ADMIN,
     )
     repository_id = repository.id
     is_zip = repository.source is RepoSource.ZIP

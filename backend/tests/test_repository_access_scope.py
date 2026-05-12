@@ -184,7 +184,7 @@ async def test_grant_on_soft_deleted_repo_is_ignored(
         db_session,
         user=user,
         repo=repos["deleted_granted"],
-        level=GrantLevel.ADMIN,
+        level=GrantLevel.WRITE,
     )
     visible = await _list_visible(db_session, settings, user)
     assert visible == {"pub"}
@@ -239,7 +239,7 @@ async def test_slug_getter_404s_for_user_on_soft_deleted(
         db_session,
         user=user,
         repo=repos["deleted_granted"],
-        level=GrantLevel.ADMIN,
+        level=GrantLevel.WRITE,
     )
     gone = repos["deleted_granted"]
     with pytest.raises(ApiError) as exc:

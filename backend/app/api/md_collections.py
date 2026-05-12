@@ -405,12 +405,19 @@ async def delete_md_collection(
     _csrf: User = Depends(require_csrf),
 ) -> Response:
     del _csrf
-    collection = await _require_collection_for_mutation(
+    # Destructive op: OWNER/ADMIN role OR the collection's owner.
+    # Per-resource ADMIN grants were retired with GrantLevel.ADMIN; we
+    # keep the owner-shortcut so users who created their own private
+    # collection can still delete it without an admin in the loop.
+    collection = await get_readable_md_collection(
         session=session,
         collection_id=collection_id,
         current_user=current_user,
-        required=GrantLevel.ADMIN,
     )
+    is_owner_of_collection = collection.owner_id == current_user.id
+    is_role_admin = current_user.role in (UserRole.OWNER, UserRole.ADMIN)
+    if not (is_owner_of_collection or is_role_admin):
+        raise ApiError(403, "FORBIDDEN", "Collection access denied")
     await session.delete(collection)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -1235,9 +1242,9 @@ async def _require_collection_for_mutation(
     * Collection's `owner_id == current_user.id` short-circuits — the
       pre-existing self-access semantic is preserved through this
       rewrite so users who created their own private collection keep
-      full WRITE/ADMIN power without needing a synthetic group.
+      full WRITE power without needing a synthetic group.
     * Otherwise: a group grant on this collection must satisfy
-      `level >= required` per the (READ=1, WRITE=2, ADMIN=3) ladder.
+      `level >= required` per the (READ=1, WRITE=2) ladder.
 
     Returns the loaded MdCollection on success; raises 404 if it
     doesn't exist (or has no row), 403 if the caller can't pass the
@@ -1259,9 +1266,9 @@ async def _require_collection_for_mutation(
 
 # Back-compat shim: existing call sites that used the old
 # "owner-or-admin" gate now flow through the parametrized helper at
-# WRITE level. ADMIN-only sites pass `required=GrantLevel.ADMIN`
-# directly; we keep the old name as a deprecated alias so anything
-# importing it from elsewhere still resolves until the next refactor.
+# WRITE level. Destructive endpoints (delete collection, change
+# visibility) gate at the dependency layer via `require_admin` —
+# per-resource ADMIN grants were retired with `GrantLevel.ADMIN`.
 async def _require_collection_owner_or_admin(
     *,
     session: AsyncSession,

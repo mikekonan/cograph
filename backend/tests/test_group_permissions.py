@@ -1,10 +1,13 @@
 """Tests for `has_repository_permission` / `has_collection_permission`.
 
-Covers the ladder semantics (READ < WRITE < ADMIN — higher grant
-satisfies lower required level), the OWNER/ADMIN role short-circuit,
-the collection-owner self-access shortcut, and the case where a user
-is in two groups whose grants on the same resource have different
-levels (the helper must pick the highest).
+Covers the ladder semantics (READ < WRITE — higher grant satisfies
+lower required level), the OWNER/ADMIN role short-circuit, the
+collection-owner self-access shortcut, and the case where a user is in
+two groups whose grants on the same resource have different levels
+(the helper must pick the highest).
+
+GrantLevel.ADMIN was retired in migration 0052 — destructive endpoints
+now gate at the dependency layer via `require_admin_or_owner` instead.
 """
 
 from __future__ import annotations
@@ -108,7 +111,7 @@ async def _grant_coll(
 async def test_repo_admin_role_always_passes(db_session) -> None:
     admin = await _make_user(db_session, role=UserRole.ADMIN)
     repo = await _make_repo(db_session)
-    for level in (GrantLevel.READ, GrantLevel.WRITE, GrantLevel.ADMIN):
+    for level in (GrantLevel.READ, GrantLevel.WRITE):
         assert await has_repository_permission(db_session, admin, repo.id, level)
 
 
@@ -116,7 +119,7 @@ async def test_repo_owner_role_always_passes(db_session) -> None:
     owner = await _make_user(db_session, role=UserRole.OWNER)
     repo = await _make_repo(db_session)
     assert await has_repository_permission(
-        db_session, owner, repo.id, GrantLevel.ADMIN
+        db_session, owner, repo.id, GrantLevel.WRITE
     )
 
 
@@ -145,9 +148,6 @@ async def test_repo_read_grant_does_not_satisfy_write(db_session) -> None:
     assert not await has_repository_permission(
         db_session, user, repo.id, GrantLevel.WRITE
     )
-    assert not await has_repository_permission(
-        db_session, user, repo.id, GrantLevel.ADMIN
-    )
 
 
 async def test_repo_write_grant_satisfies_read_and_write(db_session) -> None:
@@ -160,45 +160,34 @@ async def test_repo_write_grant_satisfies_read_and_write(db_session) -> None:
     assert await has_repository_permission(
         db_session, user, repo.id, GrantLevel.WRITE
     )
-    assert not await has_repository_permission(
-        db_session, user, repo.id, GrantLevel.ADMIN
-    )
-
-
-async def test_repo_admin_grant_satisfies_every_level(db_session) -> None:
-    user = await _make_user(db_session)
-    repo = await _make_repo(db_session)
-    await _grant_repo(db_session, user=user, repo=repo, level=GrantLevel.ADMIN)
-    for level in (GrantLevel.READ, GrantLevel.WRITE, GrantLevel.ADMIN):
-        assert await has_repository_permission(db_session, user, repo.id, level)
 
 
 async def test_repo_highest_grant_across_multiple_groups_wins(
     db_session,
 ) -> None:
-    """A user in two groups, one with READ and one with ADMIN on the
-    same repo, must be treated as ADMIN. The helper picks max via
+    """A user in two groups, one with READ and one with WRITE on the
+    same repo, must be treated as WRITE. The helper picks max via
     `func.max(case(...))`, but if that breaks we'd silently regress
     users who got upgraded via a second group membership.
     """
     user = await _make_user(db_session)
     repo = await _make_repo(db_session)
     await _grant_repo(db_session, user=user, repo=repo, level=GrantLevel.READ)
-    await _grant_repo(db_session, user=user, repo=repo, level=GrantLevel.ADMIN)
+    await _grant_repo(db_session, user=user, repo=repo, level=GrantLevel.WRITE)
     assert await has_repository_permission(
-        db_session, user, repo.id, GrantLevel.ADMIN
+        db_session, user, repo.id, GrantLevel.WRITE
     )
 
 
 async def test_collection_owner_passes_without_grant(db_session) -> None:
     """Pre-existing semantic: a user owning their private collection
-    must keep WRITE/ADMIN access without any group grant. If we
-    silently broke this in the helper rewrite, every user-created
-    private collection would become read-only-for-self.
+    must keep WRITE access without any group grant. If we silently
+    broke this in the helper rewrite, every user-created private
+    collection would become read-only-for-self.
     """
     user = await _make_user(db_session)
     coll = await _make_collection(db_session, owner_id=user.id)
-    for level in (GrantLevel.READ, GrantLevel.WRITE, GrantLevel.ADMIN):
+    for level in (GrantLevel.READ, GrantLevel.WRITE):
         assert await has_collection_permission(db_session, user, coll, level)
         # also via UUID overload — same answer.
         assert await has_collection_permission(db_session, user, coll.id, level)
@@ -223,17 +212,21 @@ async def test_collection_write_grant_satisfies_read_and_write(
     coll = await _make_collection(db_session, owner_id=other.id)
     await _grant_coll(db_session, user=user, coll=coll, level=GrantLevel.WRITE)
     assert await has_collection_permission(
+        db_session, user, coll, GrantLevel.READ
+    )
+    assert await has_collection_permission(
         db_session, user, coll, GrantLevel.WRITE
     )
-    assert not await has_collection_permission(
-        db_session, user, coll, GrantLevel.ADMIN
-    )
 
 
-async def test_collection_admin_grant_satisfies_every_level(db_session) -> None:
+async def test_collection_read_grant_does_not_satisfy_write(db_session) -> None:
     user = await _make_user(db_session)
     other = await _make_user(db_session)
     coll = await _make_collection(db_session, owner_id=other.id)
-    await _grant_coll(db_session, user=user, coll=coll, level=GrantLevel.ADMIN)
-    for level in (GrantLevel.READ, GrantLevel.WRITE, GrantLevel.ADMIN):
-        assert await has_collection_permission(db_session, user, coll, level)
+    await _grant_coll(db_session, user=user, coll=coll, level=GrantLevel.READ)
+    assert await has_collection_permission(
+        db_session, user, coll, GrantLevel.READ
+    )
+    assert not await has_collection_permission(
+        db_session, user, coll, GrantLevel.WRITE
+    )

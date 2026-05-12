@@ -688,7 +688,7 @@ export type MdJob = {
 
 // --- groups + ACL --------------------------------------------------------
 
-export type GrantLevel = "read" | "write" | "admin";
+export type GrantLevel = "read" | "write";
 
 export type AdminGroup = {
   id: UUID;
@@ -699,6 +699,9 @@ export type AdminGroup = {
   member_count: number;
   repository_grant_count: number;
   collection_grant_count: number;
+  oidc_provider_id: UUID | null;
+  oidc_provider_slug: string | null;
+  oidc_group_name: string | null;
 };
 
 export type AdminGroupListResponse = {
@@ -708,12 +711,18 @@ export type AdminGroupListResponse = {
 export type CreateGroupRequest = {
   name: string;
   description?: string | null;
+  oidc_provider_id?: UUID | null;
+  oidc_group_name?: string | null;
 };
 
 export type UpdateGroupRequest = {
   name?: string | null;
   description?: string | null;
+  oidc_provider_id?: UUID | null;
+  oidc_group_name?: string | null;
 };
+
+export type GroupMemberSource = "manual" | "oidc";
 
 export type AdminGroupMember = {
   user_id: UUID;
@@ -721,6 +730,7 @@ export type AdminGroupMember = {
   name: string | null;
   added_at: ISODateTime;
   added_by: UUID | null;
+  source: GroupMemberSource;
 };
 
 export type AdminGroupMembersResponse = {

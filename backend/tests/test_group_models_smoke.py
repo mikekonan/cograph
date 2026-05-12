@@ -34,10 +34,10 @@ def test_grant_level_enum_values() -> None:
     # The values matter — they are the literal strings stored in the
     # `level` CHECK column on the grant tables and in the
     # `repository_grants_level_check` / `collection_grants_level_check`
-    # constraints in migration 0050.
+    # constraints. Migration 0052 collapsed ADMIN out of the ladder.
     assert GrantLevel.READ.value == "read"
     assert GrantLevel.WRITE.value == "write"
-    assert GrantLevel.ADMIN.value == "admin"
+    assert "admin" not in {member.value for member in GrantLevel}
 
 
 def test_group_acl_tables_registered_on_base_metadata() -> None:
@@ -124,9 +124,10 @@ async def test_group_create_and_member_roundtrip(db_session) -> None:
 async def test_repository_grant_accepts_each_documented_level(
     db_session,
 ) -> None:
-    """Schema accepts the three documented level strings. The CHECK
-    constraint at the DB level (Postgres in prod; advisory on SQLite)
-    is exercised in the migration; here we verify the ORM mapping.
+    """Schema accepts the two documented level strings (read, write).
+    The CHECK constraint at the DB level (Postgres in prod; advisory on
+    SQLite) is exercised in the migration; here we verify the ORM
+    mapping.
     """
     from backend.app.models.enums import RepoSource, RepositoryStatus
     from backend.app.models.repository import Repository
@@ -146,7 +147,7 @@ async def test_repository_grant_accepts_each_documented_level(
             source=RepoSource.GIT,
             status=RepositoryStatus.READY,
         )
-        for i in range(3)
+        for i in range(2)
     ]
     db_session.add_all(repos)
     await db_session.commit()
@@ -163,11 +164,6 @@ async def test_repository_grant_accepts_each_documented_level(
                 repository_id=repos[1].id,
                 level=GrantLevel.WRITE.value,
             ),
-            RepositoryGrant(
-                group_id=group.id,
-                repository_id=repos[2].id,
-                level=GrantLevel.ADMIN.value,
-            ),
         ]
     )
     await db_session.commit()
@@ -175,7 +171,7 @@ async def test_repository_grant_accepts_each_documented_level(
     rows = await db_session.scalars(
         select(RepositoryGrant.level).where(RepositoryGrant.group_id == group.id)
     )
-    assert sorted(rows.all()) == ["admin", "read", "write"]
+    assert sorted(rows.all()) == ["read", "write"]
 
 
 async def test_collection_grant_smoke_insert(db_session) -> None:

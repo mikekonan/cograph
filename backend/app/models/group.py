@@ -1,11 +1,19 @@
 """Groups + per-resource ACL grants.
 
 A `Group` is a named set of users. `RepositoryGrant` and
-`CollectionGrant` give a group a `level` (read / write / admin) on a
-single repository or md_collection. The read-scope funnels in
-`backend.app.core.repository_access` and `.md_collection_access` union
-these grants into the visible set for USER-role accounts; OWNER/ADMIN
-role short-circuits always.
+`CollectionGrant` give a group a `level` (read / write — NONE is the
+absence of a grant row) on a single repository or md_collection. The
+read-scope funnels in `backend.app.core.repository_access` and
+`.md_collection_access` union these grants into the visible set for
+USER-role accounts; OWNER/ADMIN role short-circuits always.
+
+A group can optionally declare an OIDC mapping via
+``(oidc_provider_id, oidc_group_name)``. When set as a pair, every
+successful login against that identity provider adds the user to the
+group if their ID-token ``groups`` claim contains the configured
+name. Sync is additive — manual members stay; nothing is removed when
+the IdP-side group changes. ``group_members.source`` records whether
+each row was added manually or through OIDC.
 
 The `level` column is a CHECK-constrained string rather than a native
 enum to match the project's existing pattern (see `User.role` in
@@ -24,8 +32,10 @@ from sqlalchemy import (
     ForeignKey,
     String,
     Text,
+    UniqueConstraint,
     Uuid,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -34,6 +44,17 @@ from backend.app.db.base import Base, CreatedAtMixin
 
 class Group(CreatedAtMixin, Base):
     __tablename__ = "groups"
+    __table_args__ = (
+        CheckConstraint(
+            "(oidc_provider_id IS NULL) = (oidc_group_name IS NULL)",
+            name="groups_oidc_mapping_paired",
+        ),
+        UniqueConstraint(
+            "oidc_provider_id",
+            "oidc_group_name",
+            name="uq_groups_oidc_mapping",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
@@ -46,6 +67,14 @@ class Group(CreatedAtMixin, Base):
         Uuid(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
+    )
+    oidc_provider_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("identity_providers.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    oidc_group_name: Mapped[str | None] = mapped_column(
+        String(256), nullable=True
     )
 
     members = relationship(
@@ -63,10 +92,17 @@ class Group(CreatedAtMixin, Base):
         back_populates="group",
         cascade="all, delete-orphan",
     )
+    oidc_provider = relationship("IdentityProvider")
 
 
 class GroupMember(Base):
     __tablename__ = "group_members"
+    __table_args__ = (
+        CheckConstraint(
+            "source IN ('manual', 'oidc')",
+            name="group_members_source_check",
+        ),
+    )
 
     group_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
@@ -88,6 +124,12 @@ class GroupMember(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
+    source: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="manual",
+        server_default=text("'manual'"),
+    )
 
     group = relationship("Group", back_populates="members")
 
@@ -96,7 +138,7 @@ class RepositoryGrant(Base):
     __tablename__ = "repository_grants"
     __table_args__ = (
         CheckConstraint(
-            "level IN ('read', 'write', 'admin')",
+            "level IN ('read', 'write')",
             name="repository_grants_level_check",
         ),
     )
@@ -130,7 +172,7 @@ class CollectionGrant(Base):
     __tablename__ = "collection_grants"
     __table_args__ = (
         CheckConstraint(
-            "level IN ('read', 'write', 'admin')",
+            "level IN ('read', 'write')",
             name="collection_grants_level_check",
         ),
     )

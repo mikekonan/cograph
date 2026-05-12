@@ -218,15 +218,17 @@ async def test_patch_repository_allowed_for_user_with_write_grant(
     assert response.json()["visibility"] == "public"
 
 
-# ----- DELETE (ADMIN) ------------------------------------------------------
+# ----- DELETE (OWNER/ADMIN role only) --------------------------------------
+# Migration 0052 retired GrantLevel.ADMIN; destructive endpoints now gate on
+# the OWNER/ADMIN role at the dependency layer (require_admin) instead of a
+# per-resource ADMIN grant.
 
 
 async def test_delete_repository_denied_for_user_with_write_grant(
     client, db_session, settings
 ):
-    """WRITE is one rung below ADMIN — must NOT satisfy DELETE.
-    Catches a future regression where the ladder comparison is
-    flipped or the wrong level is passed to the helper.
+    """A WRITE grant does NOT permit delete — destructive ops now gate
+    on OWNER/ADMIN role at the dependency layer.
     """
     user = await _make_user(db_session)
     repo = await _make_repo(db_session)
@@ -240,16 +242,17 @@ async def test_delete_repository_denied_for_user_with_write_grant(
     assert response.status_code == 403
 
 
-async def test_delete_repository_allowed_for_user_with_admin_grant(
+async def test_delete_repository_allowed_for_admin_role(
     client, db_session, settings, monkeypatch
 ):
-    """ADMIN-grantee can soft-delete. We monkeypatch the purge
+    """ADMIN-role user can soft-delete. We monkeypatch the purge
     enqueue helper to avoid touching Redis from a unit test.
     """
-    user = await _make_user(db_session)
+    from backend.app.models.enums import UserRole
+
+    admin = await _make_user(db_session, role=UserRole.ADMIN)
     repo = await _make_repo(db_session)
-    await _grant_repo(db_session, user=user, repo=repo, level=GrantLevel.ADMIN)
-    await _auth_user(client, settings, user)
+    await _auth_user(client, settings, admin)
 
     async def _noop_enqueue(*args, **kwargs):
         return None
