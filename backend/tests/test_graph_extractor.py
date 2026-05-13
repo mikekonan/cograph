@@ -160,7 +160,7 @@ func Helper(value string) string {
     edges = {(edge.edge_type, edge.source, edge.target) for edge in extracted.edges}
 
     assert set(nodes) == {
-        "service.auth",
+        "service.auth#module",
         "service.UserService",
         "service.UserService.Login",
         "service.Repo",
@@ -169,7 +169,7 @@ func Helper(value string) string {
         "service.Helper",
     }
 
-    module_node = nodes["service.auth"]
+    module_node = nodes["service.auth#module"]
     assert module_node.node_type is GraphNodeType.MODULE
     assert module_node.metadata["package_name"] == "service"
     assert module_node.metadata["package_qualified_name"] == "service"
@@ -198,11 +198,11 @@ func Helper(value string) string {
     assert helper_node.node_type is GraphNodeType.FUNCTION
     assert helper_node.signature == "func Helper(value string) string"
 
-    assert (GraphEdgeType.IMPORTS, "service.auth", "fmt") in edges
-    assert (GraphEdgeType.IMPORTS, "service.auth", "pkg.utils as localutils") in edges
-    assert (GraphEdgeType.DECLARES, "service.auth", "service.UserService") in edges
-    assert (GraphEdgeType.DECLARES, "service.auth", "service.Repo") in edges
-    assert (GraphEdgeType.DECLARES, "service.auth", "service.Helper") in edges
+    assert (GraphEdgeType.IMPORTS, "service.auth#module", "fmt") in edges
+    assert (GraphEdgeType.IMPORTS, "service.auth#module", "pkg.utils as localutils") in edges
+    assert (GraphEdgeType.DECLARES, "service.auth#module", "service.UserService") in edges
+    assert (GraphEdgeType.DECLARES, "service.auth#module", "service.Repo") in edges
+    assert (GraphEdgeType.DECLARES, "service.auth#module", "service.Helper") in edges
     assert (
         GraphEdgeType.DECLARES,
         "service.UserService",
@@ -257,11 +257,11 @@ def test_graph_extractor_builds_go_types_fixture_symbols_and_edges(
     nodes = {node.qualified_name: node for node in extracted.nodes}
     edges = {(edge.edge_type, edge.source, edge.target) for edge in extracted.edges}
 
-    assert "bcp47_language.bcp47_language" in nodes
+    assert "bcp47_language.bcp47_language#module" in nodes
     assert "bcp47_language.Language" in nodes
     assert "bcp47_language.Language.BaseISO639Language" in nodes
 
-    module_node = nodes["bcp47_language.bcp47_language"]
+    module_node = nodes["bcp47_language.bcp47_language#module"]
     assert module_node.node_type is GraphNodeType.MODULE
     assert module_node.metadata["package_name"] == "bcp47_language"
     assert module_node.metadata["package_qualified_name"] == "bcp47_language"
@@ -281,27 +281,27 @@ def test_graph_extractor_builds_go_types_fixture_symbols_and_edges(
 
     assert (
         GraphEdgeType.IMPORTS,
-        "bcp47_language.bcp47_language",
+        "bcp47_language.bcp47_language#module",
         "database.sql.driver",
     ) in edges
     assert (
         GraphEdgeType.IMPORTS,
-        "bcp47_language.bcp47_language",
+        "bcp47_language.bcp47_language#module",
         "encoding.json",
     ) in edges
     assert (
         GraphEdgeType.IMPORTS,
-        "bcp47_language.bcp47_language",
+        "bcp47_language.bcp47_language#module",
         "fmt",
     ) in edges
     assert (
         GraphEdgeType.IMPORTS,
-        "bcp47_language.bcp47_language",
+        "bcp47_language.bcp47_language#module",
         "language",
     ) in edges
     assert (
         GraphEdgeType.IMPORTS,
-        "bcp47_language.bcp47_language",
+        "bcp47_language.bcp47_language#module",
         "golang.org.x.text.language as stdLanguage",
     ) in edges
     assert (
@@ -328,11 +328,11 @@ def test_graph_extractor_builds_go_types_fixture_type_alias_calls_and_imports(
     nodes = {node.qualified_name: node for node in extracted.nodes}
     edges = {(edge.edge_type, edge.source, edge.target) for edge in extracted.edges}
 
-    assert "country.subdivision.code" in nodes
+    assert "country.subdivision.code#module" in nodes
     assert "country.subdivision.Code" in nodes
     assert "country.subdivision.Code.ValidateForCountry" in nodes
 
-    module_node = nodes["country.subdivision.code"]
+    module_node = nodes["country.subdivision.code#module"]
     assert module_node.node_type is GraphNodeType.MODULE
     assert module_node.metadata["package_name"] == "subdivision"
     assert module_node.metadata["package_qualified_name"] == "country.subdivision"
@@ -347,12 +347,12 @@ def test_graph_extractor_builds_go_types_fixture_type_alias_calls_and_imports(
 
     assert (
         GraphEdgeType.IMPORTS,
-        "country.subdivision.code",
+        "country.subdivision.code#module",
         "country",
     ) in edges
     assert (
         GraphEdgeType.IMPORTS,
-        "country.subdivision.code",
+        "country.subdivision.code#module",
         "internal.utils",
     ) in edges
     assert (
@@ -478,3 +478,60 @@ func config(s string) []byte { return []byte(s) }
     assert f"{test_pkg}.config" in test_nodes
     # The two packages live in disjoint QN namespaces — no overlap.
     assert prod_nodes.isdisjoint(test_nodes)
+
+
+def test_graph_extractor_separates_go_module_from_same_package_function_in_sibling_file():
+    """Module node from `callback.go` and `func callback` declared in a
+    sibling file (`responses.go`) of the same package must end up in
+    disjoint QN namespaces. Same-package cross-file module-vs-symbol
+    collision was the third Go-collision class hit on svc/walle.
+    """
+    callback_source = """package monetix
+
+type CallbackOperation struct{}
+"""
+    responses_source = """package monetix
+
+func callback() string { return "ok" }
+"""
+    parser = GraphParser()
+    extractor = GraphExtractor()
+
+    parsed_callback = parser.parse_source(
+        file_path="domain/payments/monetix/callback.go",
+        source_text=callback_source,
+    )
+    parsed_responses = parser.parse_source(
+        file_path="domain/payments/monetix/responses.go",
+        source_text=responses_source,
+    )
+
+    cb_nodes = {n.qualified_name for n in extractor.extract(parsed_callback).nodes}
+    rs_nodes = {n.qualified_name for n in extractor.extract(parsed_responses).nodes}
+
+    pkg = "domain.payments.monetix"
+    assert f"{pkg}.callback#module" in cb_nodes
+    assert f"{pkg}.callback" in rs_nodes
+    # The unsuffixed `<pkg>.callback` from the module node was the
+    # collision — must not be emitted anymore.
+    assert f"{pkg}.callback" not in cb_nodes
+
+
+def test_graph_extractor_always_suffixes_go_module_qn():
+    """Symbolic invariant: every MODULE node from a Go file uses the
+    `#module` suffix, regardless of whether the file stem collides with
+    a same-package symbol. Removes a whole class of cross-file
+    collision bugs by construction.
+    """
+    source = """package foo
+
+type Bar struct{}
+"""
+    parsed = GraphParser().parse_source(
+        file_path="some/pkg/foo.go",
+        source_text=source,
+    )
+    extracted = GraphExtractor().extract(parsed)
+    module_nodes = [n for n in extracted.nodes if n.node_type is GraphNodeType.MODULE]
+    assert len(module_nodes) == 1
+    assert module_nodes[0].qualified_name.endswith("#module")

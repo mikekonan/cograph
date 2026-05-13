@@ -203,7 +203,7 @@ async def test_graph_ingest_service_indexes_go_types_fixture_repo_shape(
         ).all()
     }
 
-    module_node = persisted_nodes["bcp47_language.bcp47_language"]
+    module_node = persisted_nodes["bcp47_language.bcp47_language#module"]
     base_language_node = persisted_nodes["bcp47_language.Language.BaseISO639Language"]
     lookup_node = persisted_nodes["language.ByAlpha2CodeStrErr"]
     subdivision_unmarshal = persisted_nodes["country.subdivision.Code.UnmarshalJSON"]
