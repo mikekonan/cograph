@@ -323,16 +323,14 @@ def _extract_go_graph(
 ) -> ExtractedGraph:
     package_name = _go_package_name(parsed_file)
     package_qualified_name = _go_package_qualified_name(parsed_file, package_name=package_name)
-    raw_module_name = _module_qualified_name(parsed_file)
-    module_name = (
-        f"{raw_module_name}{_GO_MODULE_QN_SUFFIX}"
-        if _go_module_name_collides(
-            parsed_file=parsed_file,
-            module_name=raw_module_name,
-            package_qualified_name=package_qualified_name,
-        )
-        else raw_module_name
-    )
+    # Always suffix Go module QNs with `#module`. The package-symbol
+    # namespace and the per-file module namespace must stay disjoint —
+    # cross-file collisions (e.g. `callback.go` whose package also
+    # contains `func callback` in `responses.go`) cannot be detected
+    # from a single ParsedFile, so we resolve it by construction
+    # instead. The suffix is opaque to queries, MCP retrieval, and the
+    # web UI.
+    module_name = f"{_module_qualified_name(parsed_file)}{_GO_MODULE_QN_SUFFIX}"
     source_byte_len = len(parsed_file.source_bytes)
     module_metadata = {
         "package_name": package_name,
@@ -402,27 +400,6 @@ def _extract_go_graph(
             edges.extend(declaration_edges)
 
     return ExtractedGraph(nodes=nodes, edges=edges)
-
-
-def _go_module_name_collides(
-    *,
-    parsed_file: ParsedFile,
-    module_name: str,
-    package_qualified_name: str,
-) -> bool:
-    for child in parsed_file.root_node.named_children:
-        if child.type == "function_declaration":
-            function_name = _node_text(parsed_file, child.child_by_field_name("name")).strip()
-            if function_name and f"{package_qualified_name}.{function_name}" == module_name:
-                return True
-            continue
-        if child.type != "type_declaration":
-            continue
-        for declaration in child.named_children:
-            declared_name = _node_text(parsed_file, declaration.child_by_field_name("name")).strip()
-            if declared_name and f"{package_qualified_name}.{declared_name}" == module_name:
-                return True
-    return False
 
 
 def _extract_go_function(
