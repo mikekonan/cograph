@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.graph._chunking import chunked
 from backend.app.graph.extractor import ExtractedEdge, ExtractedGraph, ExtractedNode, GraphEdgeType, GraphNodeType
+from backend.app.graph.ingest_cache import GraphIngestCache
 from backend.app.graph.temporal import NodeTemporalMetadata
 from backend.app.models.code_edge import CodeEdge
 from backend.app.models.code_node import CodeNode
@@ -34,6 +35,7 @@ class GraphBuilder:
         extracted_graph: ExtractedGraph,
         commit_sha: str | None = None,
         temporal_by_key: dict[tuple[str, str], NodeTemporalMetadata] | None = None,
+        cache: GraphIngestCache | None = None,
     ) -> GraphBuildResult:
         if not extracted_graph.nodes:
             return GraphBuildResult(
@@ -105,6 +107,7 @@ class GraphBuilder:
             )
 
             if existing is not None:
+                old_qualified_name = existing.qualified_name
                 existing.qualified_name = extracted_node.qualified_name
                 existing.node_type = _to_model_node_type(extracted_node.node_type)
                 existing.name = extracted_node.name
@@ -131,6 +134,8 @@ class GraphBuilder:
                 nodes_by_qualified_name[extracted_node.qualified_name] = existing
                 preserved_node_ids.append(existing.id)
                 kept_existing_ids.add(existing.id)
+                if cache is not None:
+                    cache.rename(existing, old_qualified_name)
                 continue
 
             pending_inserts.append((extracted_node, content_hash, source_file_id))
@@ -140,8 +145,16 @@ class GraphBuilder:
                 continue
             replaced_or_removed_qns.add(existing.qualified_name)
             await session.delete(existing)
+            if cache is not None:
+                cache.remove(existing)
 
-        await session.flush()
+        # Flush deletes before inserts so a freshly-rotated symbol_key
+        # (with the same qualified_name as the row we just deleted)
+        # doesn't trip the UNIQUE (repository_id, qualified_name) index.
+        # SQLAlchemy doesn't reorder DELETE-then-INSERT for us when both
+        # are queued in the same flush.
+        if existing_nodes_for_files:
+            await session.flush()
 
         for extracted_node, content_hash, source_file_id in pending_inserts:
             temporal = (temporal_by_key or {}).get(
@@ -182,6 +195,13 @@ class GraphBuilder:
             nodes_by_qualified_name[extracted_node.qualified_name] = new_node
 
         await session.flush()
+
+        if cache is not None:
+            # Add new nodes to the cache only after `flush()` has populated
+            # the server-side default for `id` — the cache is keyed by id,
+            # and pre-flush ids are None.
+            for extracted_node, *_ in pending_inserts:
+                cache.add(nodes_by_qualified_name[extracted_node.qualified_name])
 
         for extracted_node in deduped_nodes:
             db_node = nodes_by_qualified_name[extracted_node.qualified_name]
@@ -243,24 +263,35 @@ class GraphBuilder:
                     delete(CodeEdge).where(CodeEdge.source_node_id.in_(batch))
                 )
 
-        repository_nodes = list(
-            (
-                await session.scalars(
-                    select(CodeNode).where(CodeNode.repository_id == repository_id)
-                )
-            ).all()
-        )
-        node_by_id = {node.id: node for node in repository_nodes}
-        nodes_by_qn_full = {node.qualified_name: node for node in repository_nodes}
+        # The cache (when provided by the ingest loop) mirrors every CodeNode
+        # in the repository and has been mutated in-place above by the
+        # insert/update/delete branches. When no cache is passed in (test
+        # call sites, single-shot callers) fall back to the historical
+        # repo-wide SELECT so behaviour stays identical.
+        if cache is None:
+            repository_nodes = list(
+                (
+                    await session.scalars(
+                        select(CodeNode).where(CodeNode.repository_id == repository_id)
+                    )
+                ).all()
+            )
+            node_by_id = {node.id: node for node in repository_nodes}
+            nodes_by_qn_full = {node.qualified_name: node for node in repository_nodes}
+            module_nodes_by_file_path = {
+                node.file_path: node
+                for node in repository_nodes
+                if node.node_type is CodeNodeType.MODULE
+            }
+        else:
+            repository_nodes = cache.repository_nodes()
+            node_by_id = cache.node_by_id
+            nodes_by_qn_full = cache.nodes_by_qn
+            module_nodes_by_file_path = cache.module_nodes_by_file_path
         _refresh_method_parents(
             repository_nodes=repository_nodes,
             nodes_by_qualified_name=nodes_by_qn_full,
         )
-        module_nodes_by_file_path = {
-            node.file_path: node
-            for node in repository_nodes
-            if node.node_type is CodeNodeType.MODULE
-        }
 
         new_edges: list[CodeEdge] = []
         seen_edges: set[tuple[UUID, str, str]] = set()
@@ -344,8 +375,12 @@ class GraphBuilder:
                     edge.target_node_id = resolved_target.id
                     if edge.edge_type == GraphEdgeType.CALLS.value:
                         source_nodes_to_refresh_unresolved.add(source_node.id)
-
-        await session.flush()
+                        # A previously-dangling CALLS edge just got bound to
+                        # a real target. The accumulated per-file deltas
+                        # need this so they match the post-rebuild repo
+                        # totals callers expect.
+                        resolved_calls_count += 1
+                        unresolved_calls_count -= 1
 
         if source_nodes_to_refresh_unresolved:
             # Chunked to keep the IN-list under the asyncpg 32767-placeholder
@@ -380,8 +415,6 @@ class GraphBuilder:
                     source_node.node_metadata = _without_metadata_key(
                         source_node.node_metadata, "unresolved_calls"
                     )
-
-        await session.flush()
 
         # Scope the back-compat rebuild to touched nodes only: the previous
         # whole-repo SELECT + UPDATE loop was O(N) per file ingest and was
@@ -429,14 +462,18 @@ class GraphBuilder:
         *,
         session: AsyncSession,
         repository_id: UUID,
+        cache: GraphIngestCache | None = None,
     ) -> None:
-        repository_nodes = list(
-            (
-                await session.scalars(
-                    select(CodeNode).where(CodeNode.repository_id == repository_id)
-                )
-            ).all()
-        )
+        if cache is not None:
+            repository_nodes = cache.repository_nodes()
+        else:
+            repository_nodes = list(
+                (
+                    await session.scalars(
+                        select(CodeNode).where(CodeNode.repository_id == repository_id)
+                    )
+                ).all()
+            )
         await self._rebuild_back_compat_arrays(
             session=session,
             repository_id=repository_id,

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import event, select
 
 from backend.app.graph.ingest import GraphIngestService
 from backend.app.models.code_node import CodeNode
@@ -332,3 +332,137 @@ async def test_graph_ingest_service_skips_unchanged_files_on_reingest(
     assert second_result.processed_files == 0
     assert second_result.inserted_nodes == 0
     assert second_result.replaced_files == ()
+
+
+async def test_graph_ingest_runs_single_repo_wide_select(db_session, tmp_path, app):
+    """Pin the O(F+N) win: the whole repo-wide CodeNode SELECT must fire
+    exactly once for an entire full-walk ingest, not once per file.
+
+    Before the cache refactor this query was inside `persist_graph` and
+    fired F times per ingest — the root cause of the parse-step hang on
+    large monorepos.
+    """
+
+    repository = Repository(
+        host="example.com",
+        git_url="git@github.com:mikekonan/cograph.git",
+        name="cograph",
+        owner="mikekonan",
+        branch="main",
+        status=RepositoryStatus.PENDING,
+        sync_schedule=SyncSchedule.MANUAL,
+    )
+    db_session.add(repository)
+    await db_session.flush()
+
+    checkout_path = tmp_path / "checkout"
+    package_path = checkout_path / "pkg"
+    package_path.mkdir(parents=True)
+    for index in range(4):
+        (package_path / f"mod{index}.py").write_text(
+            f"def helper_{index}() -> int:\n    return {index}\n",
+            encoding="utf-8",
+        )
+
+    repo_wide_select_count = 0
+    engine = app.state.session_manager.engine
+
+    matched_sql: list[str] = []
+
+    def _on_execute(_conn, clauseelement, _multiparams, _params, _execution_options):
+        nonlocal repo_wide_select_count
+        try:
+            sql = str(clauseelement).lower()
+        except Exception:
+            return
+        if not sql.startswith("select") or "from code_nodes" not in sql:
+            return
+        if "where" not in sql:
+            return
+        where_clause = sql.split("where", 1)[1]
+        # The full-repo CodeNode fetch: WHERE filters *only* by
+        # repository_id. Per-file scans add `file_path`, scoped fetches
+        # add `id IN (...)`, and the existing_module_hashes scan adds a
+        # `node_type` predicate. Anything that narrows further is not
+        # the smoking-gun query we're trying to keep at exactly one.
+        if (
+            "repository_id" in where_clause
+            and "file_path" not in where_clause
+            and "node_type" not in where_clause
+            and " in " not in where_clause
+            and ".id" not in where_clause
+        ):
+            repo_wide_select_count += 1
+            matched_sql.append(sql)
+
+    event.listen(engine.sync_engine, "before_execute", _on_execute)
+    try:
+        result = await GraphIngestService().ingest_checkout(
+            session=db_session,
+            repository_id=repository.id,
+            checkout_path=checkout_path,
+        )
+        await db_session.commit()
+    finally:
+        event.remove(engine.sync_engine, "before_execute", _on_execute)
+
+    assert result.processed_files == 4
+    # One SELECT at the top of `_ingest_full_walk` to seed the cache; the
+    # per-file path no longer issues this query.
+    assert repo_wide_select_count == 1, "\n---\n".join(matched_sql)
+
+
+async def test_graph_ingest_full_walk_counter_parity_with_repo_total(
+    db_session, tmp_path
+):
+    """Sanity: deltas accumulated in the loop match what a final repo-wide
+    SELECT would have computed (the path we just removed).
+    """
+
+    repository = Repository(
+        host="example.com",
+        git_url="git@github.com:mikekonan/cograph.git",
+        name="cograph",
+        owner="mikekonan",
+        branch="main",
+        status=RepositoryStatus.PENDING,
+        sync_schedule=SyncSchedule.MANUAL,
+    )
+    db_session.add(repository)
+    await db_session.flush()
+
+    checkout_path = tmp_path / "checkout"
+    package_path = checkout_path / "pkg"
+    package_path.mkdir(parents=True)
+    (package_path / "utils.py").write_text(
+        "def helper() -> int:\n    return 1\n",
+        encoding="utf-8",
+    )
+    (package_path / "service.py").write_text(
+        "from .utils import helper\n\ndef call() -> int:\n    return helper()\n",
+        encoding="utf-8",
+    )
+
+    result = await GraphIngestService().ingest_checkout(
+        session=db_session,
+        repository_id=repository.id,
+        checkout_path=checkout_path,
+    )
+    await db_session.commit()
+
+    persisted_nodes = list(
+        (
+            await db_session.scalars(
+                select(CodeNode).where(CodeNode.repository_id == repository.id)
+            )
+        ).all()
+    )
+    total_resolved = sum(len(node.callees) for node in persisted_nodes)
+    total_unresolved = 0
+    for node in persisted_nodes:
+        unresolved = node.node_metadata.get("unresolved_calls")
+        if isinstance(unresolved, list):
+            total_unresolved += len(unresolved)
+
+    assert result.resolved_calls == total_resolved
+    assert result.unresolved_calls == total_unresolved
