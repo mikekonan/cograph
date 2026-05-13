@@ -25,6 +25,18 @@ class SessionManager:
                 cursor = dbapi_connection.cursor()
                 cursor.execute("PRAGMA foreign_keys=ON")
                 cursor.close()
+        elif settings.database.url.startswith(("postgresql", "postgres")):
+
+            @event.listens_for(self._engine.sync_engine, "connect")
+            def _set_statement_timeout(dbapi_connection, _connection_record) -> None:
+                # Surface any single statement that hangs >5min as a
+                # QueryCanceledError instead of letting it eat the whole
+                # 60-minute step deadline. 5min is ~10× the slowest known
+                # legitimate batch query (the repo-wide CodeNode SELECT
+                # on the largest monorepos).
+                cursor = dbapi_connection.cursor()
+                cursor.execute("SET statement_timeout = '300s'")
+                cursor.close()
 
     @property
     def engine(self) -> AsyncEngine:

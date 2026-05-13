@@ -4,6 +4,7 @@ from sqlalchemy import select
 
 from backend.app.graph.builder import GraphBuilder
 from backend.app.graph.extractor import GraphExtractor
+from backend.app.graph.ingest_cache import GraphIngestCache
 from backend.app.graph.parser import GraphParser
 from backend.app.models.code_node import CodeNode
 from backend.app.models.enums import CodeNodeType, RepositoryStatus, SyncSchedule
@@ -141,8 +142,14 @@ async def test_graph_builder_resolves_cross_file_calls_independent_of_ingest_ord
 
     assert first_result.resolved_calls == 0
     assert first_result.unresolved_calls == 1
-    assert second_result.resolved_calls == 0
-    assert second_result.unresolved_calls == 0
+    # The second call doesn't add new edges, but it re-resolves the
+    # dangling `b.call → a.helper` edge inserted by the first call. The
+    # accumulated deltas across both calls (resolved=1, unresolved=0)
+    # match the final repo-wide totals.
+    assert second_result.resolved_calls == 1
+    assert second_result.unresolved_calls == -1
+    assert first_result.resolved_calls + second_result.resolved_calls == 1
+    assert first_result.unresolved_calls + second_result.unresolved_calls == 0
     assert caller_node.callees == [str(helper_node.id)]
     assert helper_node.callers == [str(caller_node.id)]
     assert "unresolved_calls" not in caller_node.node_metadata
@@ -757,3 +764,125 @@ async def test_rebuild_relationships_scoped_survives_id_set_larger_than_chunk_si
     assert set(hub_node.callees) == helper_ids
     for i in range(10):
         assert persisted_nodes[f"mod.helper_{i}"].callers == [str(hub_node.id)]
+
+
+async def test_graph_builder_shared_cache_resolves_cross_file_calls(db_session):
+    """A second `persist_graph` call sharing the cache from the first must
+    resolve into nodes the first call inserted without re-running the
+    repo-wide CodeNode SELECT.
+    """
+
+    repository = Repository(
+        host="example.com",
+        git_url="git@github.com:mikekonan/cograph.git",
+        name="cograph",
+        owner="mikekonan",
+        branch="main",
+        status=RepositoryStatus.PENDING,
+        sync_schedule=SyncSchedule.MANUAL,
+    )
+    db_session.add(repository)
+    await db_session.flush()
+
+    parser = GraphParser()
+    extractor = GraphExtractor()
+    builder = GraphBuilder()
+
+    helper_graph = extractor.extract(
+        parser.parse_source(
+            file_path="a.py",
+            source_text="def helper() -> int:\n    return 1\n",
+        )
+    )
+    caller_graph = extractor.extract(
+        parser.parse_source(
+            file_path="b.py",
+            source_text="import a\n\ndef call() -> int:\n    return a.helper()\n",
+        )
+    )
+
+    cache = GraphIngestCache()
+
+    first = await builder.persist_graph(
+        session=db_session,
+        repository_id=repository.id,
+        extracted_graph=helper_graph,
+        cache=cache,
+    )
+    second = await builder.persist_graph(
+        session=db_session,
+        repository_id=repository.id,
+        extracted_graph=caller_graph,
+        cache=cache,
+    )
+    await db_session.commit()
+
+    persisted = {
+        node.qualified_name: node
+        for node in (
+            await db_session.scalars(
+                select(CodeNode).where(CodeNode.repository_id == repository.id)
+            )
+        ).all()
+    }
+    caller_node = persisted["b.call"]
+    helper_node = persisted["a.helper"]
+
+    assert first.resolved_calls == 0
+    # Critical bit: the second call's edge resolver sees the helper that
+    # the first call added — *via the cache*, not via a re-read from the
+    # database.
+    assert second.resolved_calls == 1
+    assert caller_node.callees == [str(helper_node.id)]
+    # And the cache reflects both inserts.
+    assert helper_node.id in cache.node_by_id
+    assert caller_node.id in cache.node_by_id
+    assert cache.nodes_by_qn["a.helper"] is helper_node
+    assert cache.nodes_by_qn["b.call"] is caller_node
+
+
+async def test_graph_builder_persist_graph_flush_budget(db_session, monkeypatch):
+    """Pin the flush budget for `persist_graph` so a future change can't
+    silently re-introduce a per-step flush.
+    """
+
+    repository = Repository(
+        host="example.com",
+        git_url="git@github.com:mikekonan/cograph.git",
+        name="cograph",
+        owner="mikekonan",
+        branch="main",
+        status=RepositoryStatus.PENDING,
+        sync_schedule=SyncSchedule.MANUAL,
+    )
+    db_session.add(repository)
+    await db_session.flush()
+
+    extracted = GraphExtractor().extract(
+        GraphParser().parse_source(
+            file_path="m.py",
+            source_text="def helper() -> int:\n    return 1\n",
+        )
+    )
+
+    flush_count = 0
+    original_flush = db_session.flush
+
+    async def _counting_flush(*args, **kwargs):
+        nonlocal flush_count
+        flush_count += 1
+        return await original_flush(*args, **kwargs)
+
+    monkeypatch.setattr(db_session, "flush", _counting_flush)
+
+    await GraphBuilder().persist_graph(
+        session=db_session,
+        repository_id=repository.id,
+        extracted_graph=extracted,
+    )
+
+    # On a fresh repo (no `existing_nodes_for_files`) persist_graph runs
+    # 4 flushes: post-insert PK assignment, post-metadata write,
+    # post-new-edge add_all, and the final commit-prep. Add one flush
+    # per new SourceFile in `_upsert_source_files` (one here).
+    assert flush_count <= 5

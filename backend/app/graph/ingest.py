@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.graph._chunking import chunked
 from backend.app.graph.builder import GraphBuilder
 from backend.app.graph.extractor import ExtractedGraph, GraphExtractor
+from backend.app.graph.ingest_cache import GraphIngestCache
 from backend.app.graph.go_variants import (
     GoBuildVariantConflictError,
     GoIndexProfile,
@@ -162,9 +163,27 @@ class GraphIngestService:
         )
         pruned_files = set(relative_paths) != set(existing_module_hashes)
 
+        # Build a per-ingest cache from a single repo-wide SELECT. Each
+        # `persist_graph` call mutates the cache in-place so subsequent
+        # files see the freshest state without re-hitting the database.
+        # Before this we did the same full SELECT inside `persist_graph`
+        # itself, which scaled O(F × N) on monorepos and was the root
+        # cause of the parse-step hang on bookkeeping.
+        cache = GraphIngestCache.from_nodes(
+            list(
+                (
+                    await session.scalars(
+                        select(CodeNode).where(CodeNode.repository_id == repository_id)
+                    )
+                ).all()
+            )
+        )
+
         inserted_nodes = 0
         replaced_files: list[str] = []
         processed_files = 0
+        resolved_calls = 0
+        unresolved_calls = 0
 
         for source_file in non_go_files:
             relative_path = source_file.relative_to(root_path)
@@ -181,9 +200,12 @@ class GraphIngestService:
                 commit_sha=commit_sha,
                 go_module_path=go_module_path,
                 go_profile=None,
+                cache=cache,
             )
             inserted_nodes += build_result.inserted_nodes
             replaced_files.extend(build_result.replaced_files)
+            resolved_calls += build_result.resolved_calls
+            unresolved_calls += build_result.unresolved_calls
             processed_files += 1
 
         for package in go_package_selections:
@@ -209,30 +231,20 @@ class GraphIngestService:
                     relative_path=Path(selected_file.relative_path),
                     extracted_graph=parsed_graphs[selected_file.relative_path],
                     commit_sha=commit_sha,
+                    cache=cache,
                 )
                 inserted_nodes += build_result.inserted_nodes
                 replaced_files.extend(build_result.replaced_files)
+                resolved_calls += build_result.resolved_calls
+                unresolved_calls += build_result.unresolved_calls
                 processed_files += 1
 
         if pruned_files:
             await self._builder.rebuild_relationships(
                 session=session,
                 repository_id=repository_id,
+                cache=cache,
             )
-
-        persisted_nodes = list(
-            (
-                await session.scalars(
-                    select(CodeNode).where(CodeNode.repository_id == repository_id)
-                )
-            ).all()
-        )
-        resolved_calls = sum(len(node.callees) for node in persisted_nodes)
-        unresolved_calls = 0
-        for node in persisted_nodes:
-            _uc = node.node_metadata.get("unresolved_calls")
-            if isinstance(_uc, list):
-                unresolved_calls += len(_uc)
 
         return GraphIngestResult(
             processed_files=processed_files,
@@ -488,6 +500,7 @@ class GraphIngestService:
         commit_sha: str | None,
         go_module_path: str | None,
         go_profile: GoIndexProfile | None,
+        cache: GraphIngestCache | None = None,
     ):
         extracted_graph = await self._parse_source_graph(
             relative_path=relative_path,
@@ -502,6 +515,7 @@ class GraphIngestService:
             relative_path=relative_path,
             extracted_graph=extracted_graph,
             commit_sha=commit_sha,
+            cache=cache,
         )
 
     async def _parse_source_graph(
@@ -542,6 +556,7 @@ class GraphIngestService:
         relative_path: Path,
         extracted_graph: ExtractedGraph,
         commit_sha: str | None,
+        cache: GraphIngestCache | None = None,
     ):
         temporal_by_key = (
             await asyncio.to_thread(
@@ -559,6 +574,7 @@ class GraphIngestService:
             extracted_graph=extracted_graph,
             commit_sha=commit_sha,
             temporal_by_key=temporal_by_key,
+            cache=cache,
         )
 
     async def _parse_go_package_graphs(
