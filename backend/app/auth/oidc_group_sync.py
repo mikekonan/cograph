@@ -46,53 +46,67 @@ async def sync_oidc_group_memberships(
     rows (especially manual ones) are never touched. We chose this
     over an INSERT ... ON CONFLICT to keep the path dialect-agnostic
     (the test suite runs on SQLite while prod is PG).
+
+    Always emits one INFO log line per login — including when the
+    claim is missing/empty or no cograph group maps the claim. This
+    is the only realtime signal an operator has to debug "why does
+    user X have no OIDC groups on /admin/users?" without poking the
+    DB; an empty claim and a misnamed mapping look identical on the
+    UI side, but very different in the log.
     """
 
-    if not claim_groups:
-        return []
+    claim_list = sorted({g for g in (claim_groups or []) if g})
 
-    claim_set = {g for g in claim_groups if g}
-    if not claim_set:
-        return []
-
-    matched_group_ids: list[UUID] = list(
-        (
-            await session.scalars(
-                select(Group.id)
-                .where(Group.oidc_provider_id == provider.id)
-                .where(Group.oidc_group_name.in_(claim_set))
-            )
-        ).all()
-    )
-    if not matched_group_ids:
-        return []
-
-    already_member: set[UUID] = set(
-        (
-            await session.scalars(
-                select(GroupMember.group_id)
-                .where(GroupMember.user_id == user_id)
-                .where(GroupMember.group_id.in_(matched_group_ids))
-            )
-        ).all()
-    )
-
-    inserted: list[UUID] = []
-    for gid in matched_group_ids:
-        if gid in already_member:
-            continue
-        session.add(
-            GroupMember(group_id=gid, user_id=user_id, source="oidc")
-        )
-        inserted.append(gid)
-
-    if inserted:
-        await session.flush()
+    if not claim_list:
         _log.info(
-            "oidc_group_sync: user=%s provider=%s added=%s",
+            "oidc_group_sync user=%s provider=%s claim=[] matched=[] "
+            "unmatched=[] inserted=0",
             user_id,
             provider.slug,
-            len(inserted),
         )
+        return []
+
+    matched_rows = (
+        await session.execute(
+            select(Group.id, Group.oidc_group_name)
+            .where(Group.oidc_provider_id == provider.id)
+            .where(Group.oidc_group_name.in_(claim_list))
+        )
+    ).all()
+    matched_ids: list[UUID] = [row[0] for row in matched_rows]
+    matched_names: set[str] = {row[1] for row in matched_rows if row[1]}
+    unmatched_names: list[str] = sorted(set(claim_list) - matched_names)
+
+    inserted: list[UUID] = []
+    if matched_ids:
+        already_member: set[UUID] = set(
+            (
+                await session.scalars(
+                    select(GroupMember.group_id)
+                    .where(GroupMember.user_id == user_id)
+                    .where(GroupMember.group_id.in_(matched_ids))
+                )
+            ).all()
+        )
+        for gid in matched_ids:
+            if gid in already_member:
+                continue
+            session.add(
+                GroupMember(group_id=gid, user_id=user_id, source="oidc")
+            )
+            inserted.append(gid)
+        if inserted:
+            await session.flush()
+
+    _log.info(
+        "oidc_group_sync user=%s provider=%s claim=%s matched=%s "
+        "unmatched=%s inserted=%d",
+        user_id,
+        provider.slug,
+        claim_list,
+        sorted(matched_names),
+        unmatched_names,
+        len(inserted),
+    )
 
     return inserted

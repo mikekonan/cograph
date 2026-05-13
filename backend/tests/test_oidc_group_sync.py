@@ -9,6 +9,7 @@ provenance is stamped on ``group_members.source``.
 
 from __future__ import annotations
 
+import logging
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -244,3 +245,68 @@ async def test_sync_with_empty_or_none_claims_is_noop(db_session) -> None:
     # we care about is "no real claim names => no membership added",
     # which is satisfied below by no group having that name.
     assert only_blank == []
+
+
+async def test_sync_logs_claim_matched_unmatched_on_login(
+    db_session, caplog
+) -> None:
+    """Every login emits one structured INFO line so an operator can
+    debug "why is this user's OIDC groups empty?" from `kubectl logs`
+    alone, without touching the DB. The line names the claim list, the
+    matched cograph mappings, and the unmatched leftovers.
+    """
+    user = await _make_user(db_session)
+    provider = await _make_provider(db_session, slug="okta-prod")
+    await _make_group(
+        db_session,
+        name="Back-end engineers",
+        provider=provider,
+        oidc_group_name="cograph-backend",
+    )
+
+    caplog.set_level(logging.INFO, logger="backend.app.auth.oidc_group_sync")
+    await sync_oidc_group_memberships(
+        session=db_session,
+        user_id=user.id,
+        provider=provider,
+        claim_groups=["cograph-backend", "stale-old-group"],
+    )
+
+    records = [
+        r for r in caplog.records if r.name == "backend.app.auth.oidc_group_sync"
+    ]
+    assert len(records) == 1
+    msg = records[0].getMessage()
+    assert f"user={user.id}" in msg
+    assert "provider=okta-prod" in msg
+    assert "claim=['cograph-backend', 'stale-old-group']" in msg
+    assert "matched=['cograph-backend']" in msg
+    assert "unmatched=['stale-old-group']" in msg
+    assert "inserted=1" in msg
+
+
+async def test_sync_logs_empty_claim_on_login(db_session, caplog) -> None:
+    """An empty/missing `groups` claim still emits the diagnostic line so
+    the operator can tell "claim was empty" apart from "mapping is wrong"
+    when the user shows no groups on /admin/users.
+    """
+    user = await _make_user(db_session)
+    provider = await _make_provider(db_session, slug="okta")
+
+    caplog.set_level(logging.INFO, logger="backend.app.auth.oidc_group_sync")
+    await sync_oidc_group_memberships(
+        session=db_session,
+        user_id=user.id,
+        provider=provider,
+        claim_groups=None,
+    )
+
+    records = [
+        r for r in caplog.records if r.name == "backend.app.auth.oidc_group_sync"
+    ]
+    assert len(records) == 1
+    msg = records[0].getMessage()
+    assert "claim=[]" in msg
+    assert "matched=[]" in msg
+    assert "unmatched=[]" in msg
+    assert "inserted=0" in msg
