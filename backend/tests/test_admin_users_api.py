@@ -533,3 +533,131 @@ async def test_transfer_owner_endpoint_removed(client, db_session, settings):
     )
 
     assert response.status_code == 404
+
+
+async def test_list_users_includes_groups_and_linked_providers(
+    client, db_session, settings
+):
+    """Admin Users page chips: groups (with source) + linked OIDC providers."""
+    from backend.app.models.group import Group, GroupMember
+    from backend.app.models.identity_provider import IdentityProvider
+    from backend.app.models.user_identity import UserIdentity
+
+    owner = await _make_user(
+        db_session,
+        email="owner@example.com",
+        role=UserRole.OWNER,
+    )
+    member = await _make_user(db_session, email="member@example.com")
+    await _make_user(db_session, email="bystander@example.com")
+
+    provider = IdentityProvider(
+        slug="okta-prod",
+        display_name="Okta",
+        kind="oidc",
+        issuer_url="https://okta.example.com",
+        client_id="cograph",
+        scopes=["openid", "profile", "email", "groups"],
+        response_mode="query",
+        auto_provision=True,
+        admin_group_mode="ignore",
+        enabled=True,
+    )
+    db_session.add(provider)
+    await db_session.commit()
+
+    manual_group = Group(name="Site reliability engineers")
+    oidc_group = Group(
+        name="Back-end engineers",
+        oidc_provider_id=provider.id,
+        oidc_group_name="cograph-backend",
+    )
+    db_session.add_all([manual_group, oidc_group])
+    await db_session.commit()
+
+    db_session.add_all(
+        [
+            GroupMember(group_id=manual_group.id, user_id=member.id, source="manual"),
+            GroupMember(group_id=oidc_group.id, user_id=member.id, source="oidc"),
+            UserIdentity(
+                user_id=member.id,
+                provider_id=provider.id,
+                subject="okta|member",
+                email_at_link="member@example.com",
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    await _authenticate(client, settings, owner)
+    response = await client.get("/api/admin/users")
+    assert response.status_code == 200
+    items = response.json()["items"]
+
+    member_row = next(row for row in items if row["email"] == "member@example.com")
+    group_names_by_source = {g["source"]: g["name"] for g in member_row["groups"]}
+    assert group_names_by_source == {
+        "manual": "Site reliability engineers",
+        "oidc": "Back-end engineers",
+    }
+    oidc_chip = next(g for g in member_row["groups"] if g["source"] == "oidc")
+    assert oidc_chip["oidc_provider_display_name"] == "Okta"
+    assert [p["slug"] for p in member_row["linked_providers"]] == ["okta-prod"]
+    assert member_row["linked_providers"][0]["display_name"] == "Okta"
+
+    bystander_row = next(
+        row for row in items if row["email"] == "bystander@example.com"
+    )
+    assert bystander_row["groups"] == []
+    assert bystander_row["linked_providers"] == []
+
+
+async def test_list_users_emits_oidc_provider_for_synced_group(
+    client, db_session, settings
+):
+    """An OIDC-sourced membership carries the provider display name."""
+    from backend.app.models.group import Group, GroupMember
+    from backend.app.models.identity_provider import IdentityProvider
+
+    owner = await _make_user(
+        db_session,
+        email="owner@example.com",
+        role=UserRole.OWNER,
+    )
+    member = await _make_user(db_session, email="dual@example.com")
+
+    provider = IdentityProvider(
+        slug="okta",
+        display_name="Okta",
+        kind="oidc",
+        issuer_url="https://okta.example.com",
+        client_id="cograph",
+        scopes=["openid"],
+        response_mode="query",
+        auto_provision=True,
+        admin_group_mode="ignore",
+        enabled=True,
+    )
+    db_session.add(provider)
+    await db_session.commit()
+
+    group = Group(
+        name="QA engineers",
+        oidc_provider_id=provider.id,
+        oidc_group_name="qa",
+    )
+    db_session.add(group)
+    await db_session.commit()
+
+    db_session.add(
+        GroupMember(group_id=group.id, user_id=member.id, source="oidc")
+    )
+    await db_session.commit()
+
+    await _authenticate(client, settings, owner)
+    response = await client.get("/api/admin/users")
+    items = response.json()["items"]
+    row = next(r for r in items if r["email"] == "dual@example.com")
+    assert len(row["groups"]) == 1
+    assert row["groups"][0]["source"] == "oidc"
+    assert row["groups"][0]["oidc_provider_display_name"] == "Okta"

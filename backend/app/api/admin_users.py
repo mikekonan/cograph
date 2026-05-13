@@ -31,7 +31,10 @@ from backend.app.core.deps import (
 )
 from backend.app.core.errors import ApiError
 from backend.app.models.enums import UserRole
+from backend.app.models.group import Group, GroupMember
+from backend.app.models.identity_provider import IdentityProvider
 from backend.app.models.user import User
+from backend.app.models.user_identity import UserIdentity
 
 _ADMIN_ROLES = (UserRole.OWNER, UserRole.ADMIN)
 
@@ -54,6 +57,35 @@ async def _would_leave_no_admins(session: AsyncSession, user: User) -> bool:
 router = APIRouter(prefix="/admin/users", tags=["admin", "users"])
 
 
+class UserGroupSummary(BaseModel):
+    """A group the user belongs to, with the membership origin.
+
+    `source` mirrors `group_members.source` — `'oidc'` when the row was
+    added by an OIDC login (group sync), `'manual'` when an admin added
+    it. If a user happens to have both a manual and an oidc row for the
+    same group (rare but legal), the response emits a single entry with
+    source='oidc' so the UI can label the group as IdP-synced.
+    """
+
+    id: UUID
+    name: str
+    source: str
+    # OIDC provider that mapped this group, if any. Useful for the UI
+    # tooltip "Synced from <provider>". None for purely-manual groups.
+    oidc_provider_display_name: str | None = None
+
+
+class LinkedProviderSummary(BaseModel):
+    """An OIDC IdP the user has at least one UserIdentity link with.
+
+    Multiple linked accounts under the same provider collapse into one
+    summary entry — the FE only needs the provider, not each `sub`.
+    """
+
+    slug: str
+    display_name: str
+
+
 class AdminUserResponse(BaseModel):
     id: UUID
     email: str
@@ -65,6 +97,8 @@ class AdminUserResponse(BaseModel):
     deactivated_reason: str | None
     last_login_at: datetime | None
     created_at: datetime
+    groups: list[UserGroupSummary] = Field(default_factory=list)
+    linked_providers: list[LinkedProviderSummary] = Field(default_factory=list)
 
 
 class AdminUserListResponse(BaseModel):
@@ -101,7 +135,12 @@ class DisableUserRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=128)
 
 
-def _to_response(user: User) -> AdminUserResponse:
+def _to_response(
+    user: User,
+    *,
+    groups: list[UserGroupSummary] | None = None,
+    linked_providers: list[LinkedProviderSummary] | None = None,
+) -> AdminUserResponse:
     return AdminUserResponse(
         id=user.id,
         email=user.email,
@@ -113,7 +152,93 @@ def _to_response(user: User) -> AdminUserResponse:
         deactivated_reason=user.deactivated_reason,
         last_login_at=user.last_login_at,
         created_at=user.created_at,
+        groups=groups or [],
+        linked_providers=linked_providers or [],
     )
+
+
+async def _load_groups_by_user(
+    session: AsyncSession,
+) -> dict[UUID, list[UserGroupSummary]]:
+    """One scan over group_members + groups + identity_providers.
+
+    Returns a {user_id -> [UserGroupSummary, …]} map keyed by user.
+    Groups are returned sorted by name (case-insensitive) so the UI
+    shows a stable order.
+
+    When a user has both `manual` and `oidc` rows for the same group
+    (legal — admin can add a manual row before/after OIDC sync), we
+    keep a single entry tagged `oidc` so the chip is labelled as
+    IdP-synced and shows the provider tooltip.
+    """
+    rows = (
+        await session.execute(
+            select(
+                GroupMember.user_id,
+                Group.id,
+                Group.name,
+                GroupMember.source,
+                IdentityProvider.display_name,
+            )
+            .join(Group, Group.id == GroupMember.group_id)
+            .outerjoin(
+                IdentityProvider,
+                IdentityProvider.id == Group.oidc_provider_id,
+            )
+        )
+    ).all()
+
+    grouped: dict[UUID, dict[UUID, UserGroupSummary]] = {}
+    for user_id, group_id, group_name, source, provider_display_name in rows:
+        bucket = grouped.setdefault(user_id, {})
+        existing = bucket.get(group_id)
+        # oidc wins over manual when both rows exist for the same group.
+        if existing is None or (existing.source == "manual" and source == "oidc"):
+            bucket[group_id] = UserGroupSummary(
+                id=group_id,
+                name=group_name,
+                source=source,
+                oidc_provider_display_name=provider_display_name,
+            )
+
+    return {
+        user_id: sorted(bucket.values(), key=lambda g: g.name.casefold())
+        for user_id, bucket in grouped.items()
+    }
+
+
+async def _load_providers_by_user(
+    session: AsyncSession,
+) -> dict[UUID, list[LinkedProviderSummary]]:
+    """{user_id -> [LinkedProviderSummary, …]} — distinct per provider.
+
+    A user may have multiple UserIdentity rows under the same provider
+    (rare — different `sub`s on the same IdP), but the UI only cares
+    that the provider is linked. Collapse to one entry per provider.
+    """
+    rows = (
+        await session.execute(
+            select(
+                UserIdentity.user_id,
+                IdentityProvider.id,
+                IdentityProvider.slug,
+                IdentityProvider.display_name,
+            ).join(IdentityProvider, IdentityProvider.id == UserIdentity.provider_id)
+        )
+    ).all()
+
+    by_user: dict[UUID, dict[UUID, LinkedProviderSummary]] = {}
+    for user_id, provider_id, slug, display_name in rows:
+        bucket = by_user.setdefault(user_id, {})
+        bucket.setdefault(
+            provider_id,
+            LinkedProviderSummary(slug=slug, display_name=display_name),
+        )
+
+    return {
+        user_id: sorted(bucket.values(), key=lambda p: p.display_name.casefold())
+        for user_id, bucket in by_user.items()
+    }
 
 
 @router.get("", response_model=AdminUserListResponse)
@@ -125,7 +250,20 @@ async def list_users(
     rows = (
         await session.scalars(select(User).order_by(User.created_at.asc()))
     ).all()
-    return AdminUserListResponse(items=[_to_response(row) for row in rows])
+
+    groups_by_user = await _load_groups_by_user(session)
+    providers_by_user = await _load_providers_by_user(session)
+
+    return AdminUserListResponse(
+        items=[
+            _to_response(
+                row,
+                groups=groups_by_user.get(row.id, []),
+                linked_providers=providers_by_user.get(row.id, []),
+            )
+            for row in rows
+        ]
+    )
 
 
 @router.post(

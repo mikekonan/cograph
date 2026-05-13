@@ -1,5 +1,5 @@
 import { ApiError } from "@/api/errors";
-import type { AdminUser } from "@/api/users";
+import type { AdminLinkedProvider, AdminUser, AdminUserGroup } from "@/api/users";
 import { Skeleton } from "@/components/shared/Skeleton";
 import { StateBoundary } from "@/components/shared/StateBoundary";
 import { Button } from "@/components/ui/Button";
@@ -28,8 +28,11 @@ import {
   useUpdateAdminUser,
 } from "@/hooks/useUsers";
 import { cn } from "@/lib/utils";
-import { Crown, KeyRound, Pencil, Plus, Trash2, Users } from "lucide-react";
+import { Crown, KeyRound, Link2, Pencil, Plus, Shield, Trash2, Users } from "lucide-react";
 import { useMemo, useState } from "react";
+
+/** Max number of group chips rendered inline before the "+N" overflow chip kicks in. */
+const GROUP_CHIP_VISIBLE_LIMIT = 3;
 
 /**
  * AdminUsersPage — `/admin/users`. Manage the user list (create, edit role,
@@ -158,36 +161,43 @@ function UsersTable({
                 className="border-t border-[color:var(--color-border-subtle)] last:border-b-0"
               >
                 <td className="px-4 py-3 font-medium text-[color:var(--color-fg)]">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate">{user.email}</span>
-                    {user.is_owner && (
-                      <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--color-accent)]/30 bg-[color:var(--color-accent)]/10 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wide text-[color:var(--color-accent)]">
-                        <Crown className="h-3 w-3" aria-hidden="true" />
-                        Owner
-                      </span>
-                    )}
-                    {isSelf && !user.is_owner && (
-                      <span className="rounded-full bg-[color:var(--color-bg-subtle)] px-2 py-0.5 text-2xs font-medium uppercase tracking-wide text-[color:var(--color-fg-muted)]">
-                        You
-                      </span>
-                    )}
-                    {!user.is_active && (
-                      <span
-                        className={cn(
-                          "rounded-full px-2 py-0.5 text-2xs font-medium uppercase tracking-wide",
-                          user.deactivated_reason === "scim"
-                            ? "bg-[color:var(--color-warning)]/15 text-[color:var(--color-warning)]"
-                            : "bg-[color:var(--color-danger)]/15 text-[color:var(--color-danger)]",
-                        )}
-                        title={
-                          user.deactivated_reason === "scim"
-                            ? "Disabled by IdP via SCIM — re-enable in your IdP"
-                            : `Disabled${user.deactivated_reason ? ` (${user.deactivated_reason})` : ""}`
-                        }
-                      >
-                        {user.deactivated_reason === "scim" ? "SCIM disabled" : "disabled"}
-                      </span>
-                    )}
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate">{user.email}</span>
+                      {user.is_owner && (
+                        <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--color-accent)]/30 bg-[color:var(--color-accent)]/10 px-2 py-0.5 text-2xs font-semibold uppercase tracking-wide text-[color:var(--color-accent)]">
+                          <Crown className="h-3 w-3" aria-hidden="true" />
+                          Owner
+                        </span>
+                      )}
+                      {isSelf && !user.is_owner && (
+                        <span className="rounded-full bg-[color:var(--color-bg-subtle)] px-2 py-0.5 text-2xs font-medium uppercase tracking-wide text-[color:var(--color-fg-muted)]">
+                          You
+                        </span>
+                      )}
+                      {!user.is_active && (
+                        <span
+                          className={cn(
+                            "rounded-full px-2 py-0.5 text-2xs font-medium uppercase tracking-wide",
+                            user.deactivated_reason === "scim"
+                              ? "bg-[color:var(--color-warning)]/15 text-[color:var(--color-warning)]"
+                              : "bg-[color:var(--color-danger)]/15 text-[color:var(--color-danger)]",
+                          )}
+                          title={
+                            user.deactivated_reason === "scim"
+                              ? "Disabled by IdP via SCIM — re-enable in your IdP"
+                              : `Disabled${user.deactivated_reason ? ` (${user.deactivated_reason})` : ""}`
+                          }
+                        >
+                          {user.deactivated_reason === "scim" ? "SCIM disabled" : "disabled"}
+                        </span>
+                      )}
+                    </div>
+                    <UserChips
+                      authSource={user.auth_source}
+                      providers={user.linked_providers ?? []}
+                      groups={user.groups ?? []}
+                    />
                   </div>
                 </td>
                 <td className="px-4 py-3 text-[color:var(--color-fg-muted)]">{user.name ?? "—"}</td>
@@ -257,6 +267,79 @@ function RoleBadge({ role }: { role: UserRole }) {
       )}
     >
       {variant.label}
+    </span>
+  );
+}
+
+function UserChips({
+  authSource,
+  providers,
+  groups,
+}: {
+  authSource: "password" | "oidc";
+  providers: AdminLinkedProvider[];
+  groups: AdminUserGroup[];
+}) {
+  const hasSso = authSource === "oidc" || providers.length > 0;
+  if (!hasSso && groups.length === 0) return null;
+
+  const visibleGroups = groups.slice(0, GROUP_CHIP_VISIBLE_LIMIT);
+  const overflowGroups = groups.slice(GROUP_CHIP_VISIBLE_LIMIT);
+
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {hasSso && (
+        <span
+          className="inline-flex items-center gap-1 rounded-full border border-[color:var(--color-info)]/30 bg-[color:var(--color-info)]/10 px-2 py-0.5 text-2xs font-medium uppercase tracking-wide text-[color:var(--color-info)]"
+          title="Signs in via single sign-on"
+        >
+          <Shield className="h-3 w-3" aria-hidden="true" />
+          SSO
+        </span>
+      )}
+      {providers.map((p) => (
+        <span
+          key={p.slug}
+          className="inline-flex items-center gap-1 rounded-full border border-[color:var(--color-info)]/30 bg-[color:var(--color-info)]/5 px-2 py-0.5 text-2xs font-medium text-[color:var(--color-info)]"
+          title={`Linked identity from ${p.display_name}`}
+        >
+          {p.display_name}
+        </span>
+      ))}
+      {visibleGroups.map((g) => (
+        <GroupChip key={g.id} group={g} />
+      ))}
+      {overflowGroups.length > 0 && (
+        <span
+          className="inline-flex items-center rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-bg-subtle)] px-2 py-0.5 text-2xs font-medium text-[color:var(--color-fg-muted)]"
+          title={overflowGroups.map((g) => g.name).join(", ")}
+        >
+          +{overflowGroups.length}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function GroupChip({ group }: { group: AdminUserGroup }) {
+  const isOidc = group.source === "oidc";
+  const title = isOidc
+    ? group.oidc_provider_display_name
+      ? `Synced from ${group.oidc_provider_display_name}`
+      : "Synced from IdP"
+    : "Added manually";
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-2xs font-medium",
+        isOidc
+          ? "border-[color:var(--color-accent)]/30 bg-[color:var(--color-accent)]/10 text-[color:var(--color-accent)]"
+          : "border-[color:var(--color-border)] bg-[color:var(--color-bg-subtle)] text-[color:var(--color-fg-muted)]",
+      )}
+      title={title}
+    >
+      {isOidc && <Link2 className="h-3 w-3" aria-hidden="true" />}
+      {group.name}
     </span>
   );
 }
