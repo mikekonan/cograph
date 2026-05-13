@@ -202,6 +202,24 @@ cp config.example.yaml config.yaml
 
 `config.yaml` is ignored by Git because it can contain local credentials.
 
+## MCP / Agent Clients
+
+Cograph ships an MCP installer that wires a local stdio proxy into
+Claude Desktop, Cursor, and Codex. Create a personal access token in the
+UI (Account → Tokens) with scopes `mcp` and `api:read`, then:
+
+```bash
+npx -y cograph-connect setup
+```
+
+The installer stores the URL/token outside client configs
+(`~/.config/cograph-connect/config.json`, `0600`), writes per-client
+config blocks, and installs a Codex skill at
+`~/.codex/skills/cograph-connect/` so an agent can pick the right tool
+(`cograph.retrieve`, `cograph.search_code`, `cograph.read_node`, …)
+without prompting. Source and documentation:
+<https://github.com/mikekonan/cograph-connect>.
+
 ## Frontend-Only Development
 
 The web UI can run against MSW mocks without the backend stack:
