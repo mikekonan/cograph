@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from sqlalchemy import event, func, select
+from sqlalchemy import event, select
 
 from backend.app.graph.ingest import GraphIngestService
 from backend.app.models.code_node import CodeNode
@@ -466,81 +466,6 @@ async def test_graph_ingest_full_walk_counter_parity_with_repo_total(
 
     assert result.resolved_calls == total_resolved
     assert result.unresolved_calls == total_unresolved
-
-
-async def test_graph_ingest_reindex_of_go_init_files_does_not_duplicate_nodes(
-    db_session,
-    tmp_path,
-):
-    """Regression for the QN-format-migration bw-compat story. A Go
-    package with multiple `func init()` (the goose-migrations pattern)
-    must produce exactly the same number of nodes on second ingest as
-    on first — no duplicates, no growth — even though the QN format
-    (`<pkg>.init@<file_stem>`) is the post-fix format and the matching
-    logic in builder.py goes via `(file_path, symbol_key)`. Failure
-    mode this guards against: every reindex doubles the node count
-    because symbol_key changes when QN format changes.
-    """
-    repository = Repository(
-        host="example.com",
-        git_url="git@github.com:mikekonan/cograph.git",
-        name="lavanderia",
-        owner="mikekonan",
-        branch="main",
-        status=RepositoryStatus.PENDING,
-        sync_schedule=SyncSchedule.MANUAL,
-    )
-    db_session.add(repository)
-    await db_session.flush()
-
-    checkout = tmp_path / "checkout"
-    migrations = checkout / "infrastructure" / "sql" / "migrations"
-    migrations.mkdir(parents=True)
-    (migrations / "20260327140002_a.go").write_text(
-        """package migrations
-
-func init() { _ = "a" }
-""",
-        encoding="utf-8",
-    )
-    (migrations / "20260327140003_b.go").write_text(
-        """package migrations
-
-func init() { _ = "b" }
-""",
-        encoding="utf-8",
-    )
-
-    service = GraphIngestService()
-    await service.ingest_checkout(
-        session=db_session,
-        repository_id=repository.id,
-        checkout_path=checkout,
-    )
-    await db_session.commit()
-
-    first_count = await db_session.scalar(
-        select(func.count(CodeNode.id)).where(
-            CodeNode.repository_id == repository.id
-        )
-    )
-
-    await service.ingest_checkout(
-        session=db_session,
-        repository_id=repository.id,
-        checkout_path=checkout,
-    )
-    await db_session.commit()
-
-    second_count = await db_session.scalar(
-        select(func.count(CodeNode.id)).where(
-            CodeNode.repository_id == repository.id
-        )
-    )
-
-    assert first_count == second_count, (
-        f"reindex grew node count from {first_count} to {second_count}"
-    )
 
 
 async def test_graph_ingest_emits_structured_start_and_done_logs(

@@ -9,6 +9,7 @@ from backend.app.graph.builder import GraphBuilder
 from backend.app.graph.extractor import ExtractedGraph, ExtractedNode, GraphNodeType
 from backend.app.graph.go_variants import (
     GoBuildConstraintUnsupportedError,
+    GoBuildVariantConflictError,
 )
 from backend.app.graph.ingest import GraphIngestResult
 from backend.app.graph.languages import GraphLanguage
@@ -235,43 +236,28 @@ async def test_repo_sync_processor_marks_unsupported_go_constraints_with_termina
     )
 
 
-async def test_repo_sync_processor_softens_go_variant_collisions_to_warning(
-    caplog,
+async def test_repo_sync_processor_marks_go_variant_conflicts_with_terminal_failure_state(
     db_session,
     tmp_path,
 ):
-    """Fail-soft contract. The three known Go QN collision classes are
-    disambiguated upstream by the extractor (init/_, module, _test
-    package). Any *unknown* fourth class — e.g. two same-package files
-    that legitimately declare the same method (broken cross-platform
-    build-tag setup) — must NOT abort the entire repository ingest.
-    Auto-disambiguate by appending `@<file_stem>` to the colliding QN
-    and emit a WARNING with provenance so operators can investigate.
-    The repo finishes the sync run in a non-terminal state.
-    """
-    import logging
-
     repository = await _create_repo(db_session, name="go-variant-conflict")
     checkout = tmp_path / "checkout"
     _write_conflict_fixture(checkout)
 
-    with caplog.at_level(logging.WARNING, logger="backend.app.graph.ingest"):
+    with pytest.raises(GoBuildVariantConflictError):
         await RepoSyncProcessor().process_checkout(
             session=db_session,
             repository_id=repository.id,
             checkout_path=checkout,
         )
 
-    softened = [
-        record for record in caplog.records
-        if record.__dict__.get("event") == "go_variant_collision_softened"
-    ]
-    assert softened, "expected a go_variant_collision_softened WARNING"
-    record = softened[0]
-    assert record.levelno == logging.WARNING
-    assert record.__dict__["file_a"] != record.__dict__["file_b"]
-    assert record.__dict__["rewritten_qn"].endswith("@conflict_linux") or \
-           record.__dict__["rewritten_qn"].endswith("@conflict")
-
-    repository = await db_session.get(Repository, repository.id)
-    assert repository.status is not RepositoryStatus.ERROR
+    repository, sync_run, batch, parse_job = await _load_failure_state(
+        db_session, repository.id
+    )
+    _assert_terminal_failure_state(
+        repository=repository,
+        sync_run=sync_run,
+        batch=batch,
+        parse_job=parse_job,
+        error_code="go_build_variant_conflict",
+    )
