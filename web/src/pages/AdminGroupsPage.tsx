@@ -410,15 +410,29 @@ function AddMembersDialog({
   const addMembers = useAddGroupMembers(groupId);
   const [selected, setSelected] = useState<Set<UUID>>(new Set());
   const [topError, setTopError] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
 
   const candidates = useMemo(() => {
     const all = usersQuery.data ?? [];
     return all.filter((u) => !existingUserIds.has(u.id));
   }, [usersQuery.data, existingUserIds]);
 
+  const filteredCandidates = useMemo(() => {
+    const needle = filter.trim().toLowerCase();
+    if (!needle) return candidates;
+    return candidates.filter(
+      (u) =>
+        u.email.toLowerCase().includes(needle) || (u.name?.toLowerCase().includes(needle) ?? false),
+    );
+  }, [candidates, filter]);
+
+  const allFilteredSelected =
+    filteredCandidates.length > 0 && filteredCandidates.every((u) => selected.has(u.id));
+
   function reset() {
     setSelected(new Set());
     setTopError(null);
+    setFilter("");
   }
 
   function toggle(id: UUID) {
@@ -426,6 +440,18 @@ function AddMembersDialog({
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAllFiltered() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allFilteredSelected) {
+        for (const u of filteredCandidates) next.delete(u.id);
+      } else {
+        for (const u of filteredCandidates) next.add(u.id);
+      }
       return next;
     });
   }
@@ -468,50 +494,79 @@ function AddMembersDialog({
             {topError}
           </div>
         )}
-        <div className="max-h-72 overflow-auto rounded-[var(--radius)] border border-[color:var(--color-border-subtle)]">
-          {usersQuery.isPending ? (
-            <div className="p-3">
-              <Skeleton className="h-24" />
+        <div className="flex flex-col gap-2">
+          <Input
+            type="search"
+            placeholder="Filter by email or name…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            aria-label="Filter users"
+          />
+          {candidates.length > 0 && (
+            <div className="flex items-center justify-between text-xs text-[color:var(--color-fg-muted)]">
+              <button
+                type="button"
+                onClick={toggleAllFiltered}
+                disabled={filteredCandidates.length === 0}
+                className="font-medium text-[color:var(--color-fg)] hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {allFilteredSelected ? "Deselect all" : "Select all"}
+                {filter.trim() && filteredCandidates.length !== candidates.length
+                  ? ` (${filteredCandidates.length} filtered)`
+                  : ""}
+              </button>
+              <span>{selected.size} selected</span>
             </div>
-          ) : candidates.length === 0 ? (
-            <p className="p-4 text-sm text-[color:var(--color-fg-muted)]">
-              No other users available. Create a user first under Users.
-            </p>
-          ) : (
-            <ul className="divide-y divide-[color:var(--color-border-subtle)]">
-              {candidates.map((u) => {
-                const isChecked = selected.has(u.id);
-                return (
-                  <li key={u.id}>
-                    <label
-                      className={cn(
-                        "flex cursor-pointer items-center gap-3 px-3 py-2 text-sm",
-                        "hover:bg-[color:var(--color-bg-hover)]",
-                        isChecked && "bg-[color:var(--color-bg-subtle)]",
-                      )}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={isChecked}
-                        onChange={() => toggle(u.id)}
-                        className="h-4 w-4"
-                      />
-                      <div className="min-w-0">
-                        <p className="truncate font-medium text-[color:var(--color-fg)]">
-                          {u.email}
-                        </p>
-                        {u.name && (
-                          <p className="truncate text-xs text-[color:var(--color-fg-muted)]">
-                            {u.name}
-                          </p>
-                        )}
-                      </div>
-                    </label>
-                  </li>
-                );
-              })}
-            </ul>
           )}
+          <div className="max-h-72 overflow-auto rounded-[var(--radius)] border border-[color:var(--color-border-subtle)]">
+            {usersQuery.isPending ? (
+              <div className="p-3">
+                <Skeleton className="h-24" />
+              </div>
+            ) : candidates.length === 0 ? (
+              <p className="p-4 text-sm text-[color:var(--color-fg-muted)]">
+                No other users available. Create a user first under Users.
+              </p>
+            ) : filteredCandidates.length === 0 ? (
+              <p className="p-4 text-sm text-[color:var(--color-fg-muted)]">
+                No users match this filter.
+              </p>
+            ) : (
+              <ul className="divide-y divide-[color:var(--color-border-subtle)]">
+                {filteredCandidates.map((u) => {
+                  const isChecked = selected.has(u.id);
+                  return (
+                    <li key={u.id}>
+                      <label
+                        className={cn(
+                          "flex cursor-pointer items-center gap-3 px-3 py-2 text-sm",
+                          "hover:bg-[color:var(--color-bg-hover)]",
+                          isChecked && "bg-[color:var(--color-bg-subtle)]",
+                        )}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => toggle(u.id)}
+                          className="h-4 w-4"
+                        />
+                        <div className="min-w-0">
+                          <p className="truncate font-medium text-[color:var(--color-fg)]">
+                            {u.email}
+                          </p>
+                          {u.name && (
+                            <p className="truncate text-xs text-[color:var(--color-fg-muted)]">
+                              {u.name}
+                            </p>
+                          )}
+                        </div>
+                      </label>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
         </div>
         <DialogFooter>
           <Button
@@ -633,33 +688,88 @@ function AddRepositoryGrantDialog({
   });
   const putGrant = usePutGroupRepositoryGrant(groupId);
 
-  const [repositoryId, setRepositoryId] = useState<string>("");
+  const [selected, setSelected] = useState<Set<UUID>>(new Set());
   const [level, setLevel] = useState<GrantLevel>("read");
   const [topError, setTopError] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
   const existingIds = useMemo(() => new Set(existing.map((g) => g.repository_id)), [existing]);
   const candidates = useMemo(
     () => (reposQuery.data?.items ?? []).filter((r) => !existingIds.has(r.id)),
     [reposQuery.data, existingIds],
   );
+  const filteredCandidates = useMemo(() => {
+    const needle = filter.trim().toLowerCase();
+    if (!needle) return candidates;
+    return candidates.filter((r) =>
+      `${r.host}/${r.owner}/${r.name}`.toLowerCase().includes(needle),
+    );
+  }, [candidates, filter]);
+
+  const allFilteredSelected =
+    filteredCandidates.length > 0 && filteredCandidates.every((r) => selected.has(r.id));
 
   function reset() {
-    setRepositoryId("");
+    setSelected(new Set());
     setLevel("read");
     setTopError(null);
+    setFilter("");
+  }
+
+  function toggle(id: UUID) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAllFiltered() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allFilteredSelected) {
+        for (const r of filteredCandidates) next.delete(r.id);
+      } else {
+        for (const r of filteredCandidates) next.add(r.id);
+      }
+      return next;
+    });
   }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!repositoryId) return;
+    if (selected.size === 0) {
+      onOpenChange(false);
+      return;
+    }
     setTopError(null);
-    try {
-      await putGrant.mutateAsync({ repository_id: repositoryId, level });
+    setSubmitting(true);
+    // Bulk grant: run all puts in parallel; surface partial failure
+    // inline and keep only failed ids checked so the user can retry
+    // without re-picking the successful subset.
+    const ids = Array.from(selected);
+    const outcomes = await Promise.allSettled(
+      ids.map((id) => putGrant.mutateAsync({ repository_id: id, level }).then(() => id)),
+    );
+    const failed: UUID[] = [];
+    for (let i = 0; i < outcomes.length; i++) {
+      if (outcomes[i].status === "rejected") failed.push(ids[i]);
+    }
+    setSubmitting(false);
+    if (failed.length === 0) {
       reset();
       onOpenChange(false);
-    } catch (err) {
-      setTopError(err instanceof ApiError ? err.message : "Could not grant access.");
+      return;
     }
+    setSelected(new Set(failed));
+    const sampleErr = outcomes.find((o) => o.status === "rejected") as
+      | PromiseRejectedResult
+      | undefined;
+    const reason =
+      sampleErr?.reason instanceof ApiError ? sampleErr.reason.message : "Could not grant access.";
+    setTopError(`${failed.length} of ${ids.length} repositories failed: ${reason}`);
   }
 
   return (
@@ -674,7 +784,7 @@ function AddRepositoryGrantDialog({
         <DialogHeader>
           <DialogTitle>Grant repository access</DialogTitle>
           <DialogDescription>
-            Pick a repository and the access level to grant this group.
+            Pick one or more repositories. The chosen level applies to all.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
@@ -686,25 +796,74 @@ function AddRepositoryGrantDialog({
               {topError}
             </div>
           )}
-          <Field label="Repository">
-            <Select value={repositoryId} onValueChange={setRepositoryId}>
-              <SelectTrigger aria-label="Repository">
-                <SelectValue placeholder="Choose a repository" />
-              </SelectTrigger>
-              <SelectContent>
-                {candidates.length === 0 ? (
-                  <div className="px-3 py-2 text-sm text-[color:var(--color-fg-muted)]">
-                    No more repositories available.
+          <Field label="Repositories">
+            <div className="flex flex-col gap-2">
+              <Input
+                type="search"
+                placeholder="Filter by host/owner/name…"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                aria-label="Filter repositories"
+              />
+              {candidates.length > 0 && (
+                <div className="flex items-center justify-between text-xs text-[color:var(--color-fg-muted)]">
+                  <button
+                    type="button"
+                    onClick={toggleAllFiltered}
+                    disabled={filteredCandidates.length === 0}
+                    className="font-medium text-[color:var(--color-fg)] hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {allFilteredSelected ? "Deselect all" : "Select all"}
+                    {filter.trim() && filteredCandidates.length !== candidates.length
+                      ? ` (${filteredCandidates.length} filtered)`
+                      : ""}
+                  </button>
+                  <span>{selected.size} selected</span>
+                </div>
+              )}
+              <div className="max-h-72 overflow-auto rounded-[var(--radius)] border border-[color:var(--color-border-subtle)]">
+                {reposQuery.isPending ? (
+                  <div className="p-3">
+                    <Skeleton className="h-24" />
                   </div>
+                ) : candidates.length === 0 ? (
+                  <p className="p-4 text-sm text-[color:var(--color-fg-muted)]">
+                    No more repositories available.
+                  </p>
+                ) : filteredCandidates.length === 0 ? (
+                  <p className="p-4 text-sm text-[color:var(--color-fg-muted)]">
+                    No repositories match this filter.
+                  </p>
                 ) : (
-                  candidates.map((r) => (
-                    <SelectItem key={r.id} value={r.id}>
-                      {r.host}/{r.owner}/{r.name}
-                    </SelectItem>
-                  ))
+                  <ul className="divide-y divide-[color:var(--color-border-subtle)]">
+                    {filteredCandidates.map((r) => {
+                      const isChecked = selected.has(r.id);
+                      return (
+                        <li key={r.id}>
+                          <label
+                            className={cn(
+                              "flex cursor-pointer items-center gap-3 px-3 py-2 text-sm",
+                              "hover:bg-[color:var(--color-bg-hover)]",
+                              isChecked && "bg-[color:var(--color-bg-subtle)]",
+                            )}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => toggle(r.id)}
+                              className="h-4 w-4"
+                            />
+                            <span className="truncate font-mono text-xs text-[color:var(--color-fg)]">
+                              {r.host}/{r.owner}/{r.name}
+                            </span>
+                          </label>
+                        </li>
+                      );
+                    })}
+                  </ul>
                 )}
-              </SelectContent>
-            </Select>
+              </div>
+            </div>
           </Field>
           <Field label="Level">
             <LevelSelect value={level} onChange={setLevel} />
@@ -714,12 +873,14 @@ function AddRepositoryGrantDialog({
               type="button"
               variant="secondary"
               onClick={() => onOpenChange(false)}
-              disabled={putGrant.isPending}
+              disabled={submitting}
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={putGrant.isPending || !repositoryId}>
-              {putGrant.isPending ? "Granting…" : "Grant access"}
+            <Button type="submit" disabled={submitting || selected.size === 0}>
+              {submitting
+                ? `Granting ${selected.size}…`
+                : `Grant ${selected.size || ""} access`.replace("  ", " ").trim()}
             </Button>
           </DialogFooter>
         </form>
@@ -822,33 +983,83 @@ function AddCollectionGrantDialog({
   });
   const putGrant = usePutGroupCollectionGrant(groupId);
 
-  const [collectionId, setCollectionId] = useState<string>("");
+  const [selected, setSelected] = useState<Set<UUID>>(new Set());
   const [level, setLevel] = useState<GrantLevel>("read");
   const [topError, setTopError] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
   const existingIds = useMemo(() => new Set(existing.map((g) => g.collection_id)), [existing]);
   const candidates = useMemo(
     () => (collectionsQuery.data?.items ?? []).filter((c) => !existingIds.has(c.id)),
     [collectionsQuery.data, existingIds],
   );
+  const filteredCandidates = useMemo(() => {
+    const needle = filter.trim().toLowerCase();
+    if (!needle) return candidates;
+    return candidates.filter((c) => c.name.toLowerCase().includes(needle));
+  }, [candidates, filter]);
+
+  const allFilteredSelected =
+    filteredCandidates.length > 0 && filteredCandidates.every((c) => selected.has(c.id));
 
   function reset() {
-    setCollectionId("");
+    setSelected(new Set());
     setLevel("read");
     setTopError(null);
+    setFilter("");
+  }
+
+  function toggle(id: UUID) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAllFiltered() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allFilteredSelected) {
+        for (const c of filteredCandidates) next.delete(c.id);
+      } else {
+        for (const c of filteredCandidates) next.add(c.id);
+      }
+      return next;
+    });
   }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!collectionId) return;
+    if (selected.size === 0) {
+      onOpenChange(false);
+      return;
+    }
     setTopError(null);
-    try {
-      await putGrant.mutateAsync({ collection_id: collectionId, level });
+    setSubmitting(true);
+    const ids = Array.from(selected);
+    const outcomes = await Promise.allSettled(
+      ids.map((id) => putGrant.mutateAsync({ collection_id: id, level }).then(() => id)),
+    );
+    const failed: UUID[] = [];
+    for (let i = 0; i < outcomes.length; i++) {
+      if (outcomes[i].status === "rejected") failed.push(ids[i]);
+    }
+    setSubmitting(false);
+    if (failed.length === 0) {
       reset();
       onOpenChange(false);
-    } catch (err) {
-      setTopError(err instanceof ApiError ? err.message : "Could not grant access.");
+      return;
     }
+    setSelected(new Set(failed));
+    const sampleErr = outcomes.find((o) => o.status === "rejected") as
+      | PromiseRejectedResult
+      | undefined;
+    const reason =
+      sampleErr?.reason instanceof ApiError ? sampleErr.reason.message : "Could not grant access.";
+    setTopError(`${failed.length} of ${ids.length} collections failed: ${reason}`);
   }
 
   return (
@@ -863,7 +1074,7 @@ function AddCollectionGrantDialog({
         <DialogHeader>
           <DialogTitle>Grant collection access</DialogTitle>
           <DialogDescription>
-            Pick a markdown collection and the access level to grant this group.
+            Pick one or more markdown collections. The chosen level applies to all.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
@@ -875,25 +1086,74 @@ function AddCollectionGrantDialog({
               {topError}
             </div>
           )}
-          <Field label="Collection">
-            <Select value={collectionId} onValueChange={setCollectionId}>
-              <SelectTrigger aria-label="Collection">
-                <SelectValue placeholder="Choose a collection" />
-              </SelectTrigger>
-              <SelectContent>
-                {candidates.length === 0 ? (
-                  <div className="px-3 py-2 text-sm text-[color:var(--color-fg-muted)]">
-                    No more collections available.
+          <Field label="Collections">
+            <div className="flex flex-col gap-2">
+              <Input
+                type="search"
+                placeholder="Filter by name…"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                aria-label="Filter collections"
+              />
+              {candidates.length > 0 && (
+                <div className="flex items-center justify-between text-xs text-[color:var(--color-fg-muted)]">
+                  <button
+                    type="button"
+                    onClick={toggleAllFiltered}
+                    disabled={filteredCandidates.length === 0}
+                    className="font-medium text-[color:var(--color-fg)] hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {allFilteredSelected ? "Deselect all" : "Select all"}
+                    {filter.trim() && filteredCandidates.length !== candidates.length
+                      ? ` (${filteredCandidates.length} filtered)`
+                      : ""}
+                  </button>
+                  <span>{selected.size} selected</span>
+                </div>
+              )}
+              <div className="max-h-72 overflow-auto rounded-[var(--radius)] border border-[color:var(--color-border-subtle)]">
+                {collectionsQuery.isPending ? (
+                  <div className="p-3">
+                    <Skeleton className="h-24" />
                   </div>
+                ) : candidates.length === 0 ? (
+                  <p className="p-4 text-sm text-[color:var(--color-fg-muted)]">
+                    No more collections available.
+                  </p>
+                ) : filteredCandidates.length === 0 ? (
+                  <p className="p-4 text-sm text-[color:var(--color-fg-muted)]">
+                    No collections match this filter.
+                  </p>
                 ) : (
-                  candidates.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.name}
-                    </SelectItem>
-                  ))
+                  <ul className="divide-y divide-[color:var(--color-border-subtle)]">
+                    {filteredCandidates.map((c) => {
+                      const isChecked = selected.has(c.id);
+                      return (
+                        <li key={c.id}>
+                          <label
+                            className={cn(
+                              "flex cursor-pointer items-center gap-3 px-3 py-2 text-sm",
+                              "hover:bg-[color:var(--color-bg-hover)]",
+                              isChecked && "bg-[color:var(--color-bg-subtle)]",
+                            )}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => toggle(c.id)}
+                              className="h-4 w-4"
+                            />
+                            <span className="truncate font-medium text-[color:var(--color-fg)]">
+                              {c.name}
+                            </span>
+                          </label>
+                        </li>
+                      );
+                    })}
+                  </ul>
                 )}
-              </SelectContent>
-            </Select>
+              </div>
+            </div>
           </Field>
           <Field label="Level">
             <LevelSelect value={level} onChange={setLevel} />
@@ -903,12 +1163,14 @@ function AddCollectionGrantDialog({
               type="button"
               variant="secondary"
               onClick={() => onOpenChange(false)}
-              disabled={putGrant.isPending}
+              disabled={submitting}
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={putGrant.isPending || !collectionId}>
-              {putGrant.isPending ? "Granting…" : "Grant access"}
+            <Button type="submit" disabled={submitting || selected.size === 0}>
+              {submitting
+                ? `Granting ${selected.size}…`
+                : `Grant ${selected.size || ""} access`.replace("  ", " ").trim()}
             </Button>
           </DialogFooter>
         </form>
