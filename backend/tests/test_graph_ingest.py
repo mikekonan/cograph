@@ -466,3 +466,63 @@ async def test_graph_ingest_full_walk_counter_parity_with_repo_total(
 
     assert result.resolved_calls == total_resolved
     assert result.unresolved_calls == total_unresolved
+
+
+async def test_graph_ingest_emits_structured_start_and_done_logs(
+    caplog,
+    db_session,
+    tmp_path,
+):
+    """Operator-facing observability: every ingest run must emit a
+    structured `ingest_start` and `ingest_done` INFO log with
+    machine-parseable `extra={...}` fields. Without this, a parse-step
+    hang on a large monorepo is invisible until the step-timeout fires.
+    """
+    import logging
+
+    repository = Repository(
+        host="example.com",
+        git_url="git@github.com:mikekonan/cograph.git",
+        name="cograph",
+        owner="mikekonan",
+        branch="main",
+        status=RepositoryStatus.PENDING,
+        sync_schedule=SyncSchedule.MANUAL,
+    )
+    db_session.add(repository)
+    await db_session.flush()
+
+    checkout_path = tmp_path / "checkout"
+    pkg = checkout_path / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "a.py").write_text("def f(): return 1\n", encoding="utf-8")
+
+    with caplog.at_level(logging.INFO, logger="backend.app.graph.ingest"):
+        await GraphIngestService().ingest_checkout(
+            session=db_session,
+            repository_id=repository.id,
+            checkout_path=checkout_path,
+        )
+
+    events = {
+        record.__dict__.get("event")
+        for record in caplog.records
+        if record.name == "backend.app.graph.ingest"
+    }
+    assert "ingest_start" in events
+    assert "ingest_done" in events
+
+    start_record = next(
+        record for record in caplog.records
+        if record.__dict__.get("event") == "ingest_start"
+    )
+    assert start_record.__dict__["mode"] == "full"
+    assert start_record.__dict__["repository_id"] == str(repository.id)
+
+    done_record = next(
+        record for record in caplog.records
+        if record.__dict__.get("event") == "ingest_done"
+    )
+    assert done_record.__dict__["mode"] == "full"
+    assert done_record.__dict__["files_processed"] >= 1
+    assert "duration_s" in done_record.__dict__

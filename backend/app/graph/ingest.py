@@ -6,6 +6,7 @@ import hashlib
 import logging
 import re
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
@@ -35,6 +36,37 @@ from backend.app.models.source_file import SourceFile
 logger = logging.getLogger(__name__)
 
 _SHA_PATTERN = re.compile(r"^[0-9a-fA-F]{7,64}$")
+
+# Periodic progress every N files. 50 keeps log volume sane on
+# 10k-file monorepos (≈200 lines per parse) while still giving
+# users a heartbeat every few seconds in practice.
+_PROGRESS_LOG_EVERY = 50
+
+
+def _log_ingest_progress(
+    *,
+    repository_id: UUID,
+    mode: str,
+    processed: int,
+    total: int,
+    current_file: str,
+) -> None:
+    logger.info(
+        "ingest_progress repo=%s mode=%s files_done=%d/%d current=%s",
+        repository_id,
+        mode,
+        processed,
+        total,
+        current_file,
+        extra={
+            "event": "ingest_progress",
+            "repository_id": str(repository_id),
+            "mode": mode,
+            "files_done": processed,
+            "files_total": total,
+            "current_file": current_file,
+        },
+    )
 
 
 @dataclass(slots=True, kw_only=True)
@@ -85,8 +117,24 @@ class GraphIngestService:
                 _detect_git_changes_safely, root_path, last_commit
             )
 
+        mode = "incremental" if git_changes is not None else "full"
+        start = time.monotonic()
+        logger.info(
+            "ingest_start repo=%s mode=%s commit=%s",
+            repository_id,
+            mode,
+            commit_sha or "n/a",
+            extra={
+                "event": "ingest_start",
+                "repository_id": str(repository_id),
+                "mode": mode,
+                "commit_sha": commit_sha,
+                "git_changes": len(git_changes) if git_changes is not None else None,
+            },
+        )
+
         if git_changes is not None:
-            return await self._ingest_incremental_from_git(
+            result = await self._ingest_incremental_from_git(
                 session=session,
                 repository_id=repository_id,
                 root_path=root_path,
@@ -95,15 +143,41 @@ class GraphIngestService:
                 go_module_path=go_module_path,
                 go_profile=go_profile,
             )
+        else:
+            result = await self._ingest_full_walk(
+                session=session,
+                repository_id=repository_id,
+                root_path=root_path,
+                commit_sha=commit_sha,
+                go_module_path=go_module_path,
+                go_profile=go_profile,
+            )
 
-        return await self._ingest_full_walk(
-            session=session,
-            repository_id=repository_id,
-            root_path=root_path,
-            commit_sha=commit_sha,
-            go_module_path=go_module_path,
-            go_profile=go_profile,
+        duration_s = time.monotonic() - start
+        logger.info(
+            "ingest_done repo=%s mode=%s files=%d inserted=%d replaced=%d "
+            "resolved=%d unresolved=%d duration_s=%.1f",
+            repository_id,
+            mode,
+            result.processed_files,
+            result.inserted_nodes,
+            len(result.replaced_files),
+            result.resolved_calls,
+            result.unresolved_calls,
+            duration_s,
+            extra={
+                "event": "ingest_done",
+                "repository_id": str(repository_id),
+                "mode": mode,
+                "files_processed": result.processed_files,
+                "inserted_nodes": result.inserted_nodes,
+                "replaced_files": len(result.replaced_files),
+                "resolved_calls": result.resolved_calls,
+                "unresolved_calls": result.unresolved_calls,
+                "duration_s": round(duration_s, 1),
+            },
         )
+        return result
 
     async def _ingest_full_walk(
         self,
@@ -184,6 +258,21 @@ class GraphIngestService:
         processed_files = 0
         resolved_calls = 0
         unresolved_calls = 0
+        total_files = len(relative_paths)
+        logger.info(
+            "ingest_full_walk_plan repo=%s files=%d packages=%d existing_modules=%d",
+            repository_id,
+            total_files,
+            len(go_package_selections),
+            len(existing_module_hashes),
+            extra={
+                "event": "ingest_full_walk_plan",
+                "repository_id": str(repository_id),
+                "files_total": total_files,
+                "packages": len(go_package_selections),
+                "existing_modules": len(existing_module_hashes),
+            },
+        )
 
         for source_file in non_go_files:
             relative_path = source_file.relative_to(root_path)
@@ -207,6 +296,14 @@ class GraphIngestService:
             resolved_calls += build_result.resolved_calls
             unresolved_calls += build_result.unresolved_calls
             processed_files += 1
+            if processed_files % _PROGRESS_LOG_EVERY == 0:
+                _log_ingest_progress(
+                    repository_id=repository_id,
+                    mode="full",
+                    processed=processed_files,
+                    total=total_files,
+                    current_file=relative_path.as_posix(),
+                )
 
         for package in go_package_selections:
             changed_selected_files = [
@@ -238,6 +335,14 @@ class GraphIngestService:
                 resolved_calls += build_result.resolved_calls
                 unresolved_calls += build_result.unresolved_calls
                 processed_files += 1
+                if processed_files % _PROGRESS_LOG_EVERY == 0:
+                    _log_ingest_progress(
+                        repository_id=repository_id,
+                        mode="full",
+                        processed=processed_files,
+                        total=total_files,
+                        current_file=selected_file.relative_path,
+                    )
 
         if pruned_files:
             await self._builder.rebuild_relationships(
@@ -300,6 +405,19 @@ class GraphIngestService:
         delete_peer_ids: set[UUID] = set()
         go_package_keys: set[str] = set()
         non_go_changes: list[GitFileChange] = []
+        total_changes = len(git_changes)
+        logger.info(
+            "ingest_incremental_plan repo=%s git_changes=%d existing_modules=%d",
+            repository_id,
+            total_changes,
+            len(existing_module_hashes),
+            extra={
+                "event": "ingest_incremental_plan",
+                "repository_id": str(repository_id),
+                "git_changes": total_changes,
+                "existing_modules": len(existing_module_hashes),
+            },
+        )
 
         for change in git_changes:
             if _change_touches_go_package(change):
@@ -361,6 +479,14 @@ class GraphIngestService:
             resolved_delta += build_result.resolved_calls
             unresolved_delta += build_result.unresolved_calls
             processed_files += 1
+            if processed_files % _PROGRESS_LOG_EVERY == 0:
+                _log_ingest_progress(
+                    repository_id=repository_id,
+                    mode="incremental",
+                    processed=processed_files,
+                    total=total_changes,
+                    current_file=change.file_path,
+                )
 
         go_package_selections = await asyncio.to_thread(
             _select_go_packages_from_keys,
@@ -421,6 +547,14 @@ class GraphIngestService:
                 resolved_delta += build_result.resolved_calls
                 unresolved_delta += build_result.unresolved_calls
                 processed_files += 1
+                if processed_files % _PROGRESS_LOG_EVERY == 0:
+                    _log_ingest_progress(
+                        repository_id=repository_id,
+                        mode="incremental",
+                        processed=processed_files,
+                        total=total_changes,
+                        current_file=selected_file.relative_path,
+                    )
 
         if delete_peer_ids:
             await self._builder.rebuild_relationships_scoped(
