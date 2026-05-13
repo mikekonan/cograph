@@ -19,6 +19,7 @@ from backend.app.graph.builder import GraphBuilder
 from backend.app.graph.extractor import ExtractedGraph, GraphExtractor, GraphNodeType
 from backend.app.graph.ingest_cache import GraphIngestCache
 from backend.app.graph.go_variants import (
+    GoBuildVariantConflictError,
     GoIndexProfile,
     GoPackageSelection,
     resolve_go_index_profile,
@@ -748,31 +749,10 @@ class GraphIngestService:
                     continue
                 if existing_path == node.file_path:
                     continue
-                # Fail-soft. The three known collision classes are already
-                # disambiguated upstream (init/_ → `@<stem>`, module →
-                # `#module`, `*_test.go` package → `_test` suffix). Anything
-                # that still collides here is a fourth class we haven't seen.
-                # Auto-disambiguate it by appending `@<file_stem>` to the QN
-                # and log a WARNING so we can investigate without aborting
-                # the entire repository ingest.
-                file_stem = Path(node.file_path).stem
-                disambiguated = f"{node.qualified_name}@{file_stem}"
-                logger.warning(
-                    "go_variant_collision_softened qn=%s file_a=%s file_b=%s rewritten=%s",
-                    node.qualified_name,
-                    existing_path,
-                    node.file_path,
-                    disambiguated,
-                    extra={
-                        "event": "go_variant_collision_softened",
-                        "qualified_name": node.qualified_name,
-                        "file_a": existing_path,
-                        "file_b": node.file_path,
-                        "rewritten_qn": disambiguated,
-                    },
+                raise GoBuildVariantConflictError(
+                    f"Go variant collision for {node.qualified_name}: "
+                    f"{existing_path} vs {node.file_path}"
                 )
-                node.qualified_name = disambiguated
-                seen_qualified_names[disambiguated] = node.file_path
             parsed_graphs[selected_file.relative_path] = extracted_graph
         return parsed_graphs
 
