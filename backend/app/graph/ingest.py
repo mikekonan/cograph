@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.graph._chunking import chunked
 from backend.app.graph.builder import GraphBuilder
-from backend.app.graph.extractor import ExtractedGraph, GraphExtractor
+from backend.app.graph.extractor import ExtractedGraph, GraphExtractor, GraphNodeType
 from backend.app.graph.ingest_cache import GraphIngestCache
 from backend.app.graph.go_variants import (
     GoBuildVariantConflictError,
@@ -595,6 +595,20 @@ class GraphIngestService:
                 go_profile=go_profile,
             )
             for node in extracted_graph.nodes:
+                # `func init()` and `func _()` are legitimately allowed to
+                # appear once per file in a Go package (migrations, registry
+                # self-registration). The extractor already pins each one to
+                # the file stem (`<pkg>.init@<file_stem>`), so QNs are unique
+                # by construction — the collision guard below is for genuine
+                # build-tag conflicts on regular symbols (e.g. two files
+                # defining `type Config struct` that the build profile
+                # failed to disambiguate). Skip init/blank here so the
+                # guard doesn't trip on the per-file disambiguator.
+                if (
+                    node.node_type is GraphNodeType.FUNCTION
+                    and node.name in {"init", "_"}
+                ):
+                    continue
                 existing_path = seen_qualified_names.get(node.qualified_name)
                 if existing_path is None:
                     seen_qualified_names[node.qualified_name] = node.file_path

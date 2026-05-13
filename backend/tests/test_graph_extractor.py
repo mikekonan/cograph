@@ -365,3 +365,75 @@ def test_graph_extractor_builds_go_types_fixture_type_alias_calls_and_imports(
         "country.subdivision.Code.ValidateForCountry",
         "country.ByAlpha2CodeErr",
     ) in edges
+
+
+def test_graph_extractor_disambiguates_go_init_with_file_stem():
+    """Two `func init()` in different files of the same Go package each
+    get their own QN suffixed with the file stem, so they survive the
+    `UNIQUE(repository_id, qualified_name)` constraint and the build-
+    variant collision guard. This is the goose-migrations pattern in
+    real repos (e.g. svc/lavanderia).
+    """
+    file_a_source = """package migrations
+
+import "github.com/pressly/goose/v3"
+
+func init() {
+    goose.AddMigrationNoTxContext(up_a, down_a)
+}
+
+func up_a()   {}
+func down_a() {}
+"""
+    file_b_source = """package migrations
+
+import "github.com/pressly/goose/v3"
+
+func init() {
+    goose.AddMigrationNoTxContext(up_b, down_b)
+}
+
+func up_b()   {}
+func down_b() {}
+"""
+    parser = GraphParser()
+    extractor = GraphExtractor()
+
+    parsed_a = parser.parse_source(
+        file_path="infrastructure/sql/migrations/20260327140002_add_idx_a.go",
+        source_text=file_a_source,
+    )
+    parsed_b = parser.parse_source(
+        file_path="infrastructure/sql/migrations/20260327140003_add_idx_b.go",
+        source_text=file_b_source,
+    )
+
+    nodes_a = {n.qualified_name for n in extractor.extract(parsed_a).nodes}
+    nodes_b = {n.qualified_name for n in extractor.extract(parsed_b).nodes}
+
+    pkg = "infrastructure.sql.migrations"
+    assert f"{pkg}.init@20260327140002_add_idx_a" in nodes_a
+    assert f"{pkg}.init@20260327140003_add_idx_b" in nodes_b
+    # The bare `<pkg>.init` form must not be emitted anymore — that was
+    # the source of the collision.
+    assert f"{pkg}.init" not in nodes_a
+    assert f"{pkg}.init" not in nodes_b
+
+
+def test_graph_extractor_disambiguates_go_blank_function_with_file_stem():
+    """`func _()` is also legal in Go (compile-time side-effect helpers).
+    Same treatment as init — file-stem suffix on the QN.
+    """
+    source = """package compiletime
+
+func _() {
+    _ = "registers something at link time"
+}
+"""
+    parsed = GraphParser().parse_source(
+        file_path="compiletime/register_a.go",
+        source_text=source,
+    )
+    nodes = {n.qualified_name for n in GraphExtractor().extract(parsed).nodes}
+    assert "compiletime._@register_a" in nodes
+    assert "compiletime._" not in nodes
