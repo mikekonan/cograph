@@ -433,7 +433,17 @@ def _extract_go_function(
     function_node: Node,
 ) -> tuple[ExtractedNode, list[ExtractedEdge]]:
     function_name = _node_text(parsed_file, function_node.child_by_field_name("name")).strip()
-    qualified_name = f"{package_qualified_name}.{function_name}"
+    # Go allows multiple `func init()` (and `func _()`) per package — one per
+    # file is the standard pattern for migrations and registry self-registration
+    # (`goose.AddMigrationNoTxContext` in init, `database/sql.Register` in init,
+    # etc.). Sharing `<pkg>.init` across all of them would collide on the
+    # `UNIQUE (repository_id, qualified_name)` constraint and on the
+    # build-variant collision guard in `_parse_go_package_graphs`. Pin them to
+    # the file stem so each file's init/blank gets its own stable QN.
+    if function_name in {"init", "_"}:
+        qualified_name = f"{package_qualified_name}.{function_name}@{parsed_file.path.stem}"
+    else:
+        qualified_name = f"{package_qualified_name}.{function_name}"
     node = ExtractedNode(
         node_type=GraphNodeType.FUNCTION,
         name=function_name,
