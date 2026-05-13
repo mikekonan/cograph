@@ -437,3 +437,44 @@ func _() {
     nodes = {n.qualified_name for n in GraphExtractor().extract(parsed).nodes}
     assert "compiletime._@register_a" in nodes
     assert "compiletime._" not in nodes
+
+
+def test_graph_extractor_separates_go_external_test_package():
+    """`package foo_test` (external test package) is a logically distinct
+    Go package from `package foo` that happens to share a directory. They
+    compile separately, so a lowercase helper like `func config(...)` in
+    `checkout_test` must not share a QN with anything in `checkout`. The
+    package-QN suffixes `_test` for the external test package — matching
+    Go's own semantics.
+    """
+    prod_source = """package checkout
+
+type Config struct{}
+
+func (c Config) Validate() error { return nil }
+"""
+    test_source = """package checkout_test
+
+func config(s string) []byte { return []byte(s) }
+"""
+    parser = GraphParser()
+    extractor = GraphExtractor()
+
+    parsed_prod = parser.parse_source(
+        file_path="domain/processing/integrations/checkout/config.go",
+        source_text=prod_source,
+    )
+    parsed_test = parser.parse_source(
+        file_path="domain/processing/integrations/checkout/config_test.go",
+        source_text=test_source,
+    )
+
+    prod_nodes = {n.qualified_name for n in extractor.extract(parsed_prod).nodes}
+    test_nodes = {n.qualified_name for n in extractor.extract(parsed_test).nodes}
+
+    prod_pkg = "domain.processing.integrations.checkout"
+    test_pkg = "domain.processing.integrations.checkout_test"
+    assert f"{prod_pkg}.Config" in prod_nodes
+    assert f"{test_pkg}.config" in test_nodes
+    # The two packages live in disjoint QN namespaces — no overlap.
+    assert prod_nodes.isdisjoint(test_nodes)

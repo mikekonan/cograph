@@ -1073,8 +1073,18 @@ def _go_package_qualified_name(
     *,
     package_name: str,
 ) -> str:
+    # Go allows two distinct packages to share one directory: `package foo`
+    # and `package foo_test` (external test package). Both are valid and
+    # compile as separate units. If we ignore the `package` clause, the
+    # directory-derived QN collides for any identically named symbol — e.g.
+    # `func config(...)` in `checkout_test` would share a QN with anything
+    # in `checkout`. Suffix `_test` packages so they live in their own
+    # namespace, matching Go's own semantics.
     parts = [part for part in parsed_file.path.parent.parts if part]
+    suffix = "_test" if package_name.endswith("_test") else ""
     if parts:
+        if suffix:
+            parts = [*parts[:-1], f"{parts[-1]}{suffix}"]
         return ".".join(parts)
     return package_name or parsed_file.path.stem
 
