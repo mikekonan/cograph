@@ -3,6 +3,7 @@ import AdminGitHostsPage from "@/pages/AdminGitHostsPage";
 import AdminGroupsPage from "@/pages/AdminGroupsPage";
 import AdminIdentityProvidersPage from "@/pages/AdminIdentityProvidersPage";
 import AdminLLMRuntimePage from "@/pages/AdminLLMRuntimePage";
+import AdminQueryLogsPage from "@/pages/AdminQueryLogsPage";
 import AdminScimClientsPage from "@/pages/AdminScimClientsPage";
 import AdminUsersPage from "@/pages/AdminUsersPage";
 import {
@@ -10,6 +11,7 @@ import {
   Globe,
   type LucideIcon,
   Plug,
+  Search,
   Settings2,
   ShieldCheck,
   Users,
@@ -18,7 +20,14 @@ import {
 import { type ComponentType, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router";
 
-type TabId = "llm-runtime" | "users" | "groups" | "identity-providers" | "scim" | "git-hosts";
+type TabId =
+  | "llm-runtime"
+  | "users"
+  | "groups"
+  | "identity-providers"
+  | "scim"
+  | "git-hosts"
+  | "query-logs";
 
 interface TabSpec {
   id: TabId;
@@ -39,6 +48,7 @@ const TABS: TabSpec[] = [
   },
   { id: "scim", label: "SCIM", icon: Plug, Component: AdminScimClientsPage },
   { id: "git-hosts", label: "Git hosts", icon: Globe, Component: AdminGitHostsPage },
+  { id: "query-logs", label: "Query logs", icon: Search, Component: AdminQueryLogsPage },
 ];
 
 const DEFAULT_TAB: TabId = "llm-runtime";
