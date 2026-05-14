@@ -1,0 +1,433 @@
+"""Read/write endpoints for the `query_logs` table.
+
+Three surfaces:
+
+- `GET /api/admin/query-logs` — admin-only, paginated browse of all
+  user queries with filters (user, repo, tool, status, zero-results,
+  text-search, date range). Powers the admin "Activity / Queries"
+  page.
+- `GET /api/admin/query-logs/stats` — admin-only aggregates over a
+  date range (totals, top queries, top repos, zero-result count,
+  latency percentiles).
+- `GET /api/me/query-logs` — current user only, lists own history.
+- `DELETE /api/me/query-logs` — current user only, drops *all* of the
+  caller's logged queries on demand. Privacy "forget my history"
+  button on the account page.
+
+Writes are not exposed here — they happen via the arq job
+`record_query_log` and are only callable from the backend.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, Field
+from sqlalchemy import delete, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.app.core.deps import (
+    get_db_session,
+    require_admin_or_owner,
+    require_current_user,
+)
+from backend.app.models.query_log import QueryLog
+from backend.app.models.user import User
+
+router = APIRouter(tags=["query-logs"])
+
+_MAX_PAGE_SIZE = 200
+_DEFAULT_PAGE_SIZE = 50
+
+
+class QueryLogItem(BaseModel):
+    id: UUID
+    created_at: datetime
+    user_id: UUID | None
+    user_email: str | None
+    source: str
+    tool_name: str
+    repository_id: UUID | None
+    collection_id: UUID | None
+    query_text: str
+    query_truncated: bool
+    top_k: int | None
+    result_count: int | None
+    duration_ms: int
+    status: str
+    error_code: str | None
+    client_label: str | None
+
+
+class QueryLogPage(BaseModel):
+    items: list[QueryLogItem]
+    total: int
+    page: int
+    per_page: int
+    total_pages: int
+
+
+class TopQueryItem(BaseModel):
+    query_text: str
+    count: int
+
+
+class TopRepoItem(BaseModel):
+    repository_id: UUID
+    count: int
+
+
+class QueryLogStats(BaseModel):
+    total_count: int
+    zero_result_count: int
+    error_count: int
+    p50_duration_ms: int | None
+    p95_duration_ms: int | None
+    top_queries: list[TopQueryItem]
+    top_repos: list[TopRepoItem]
+
+
+def _to_item(row: QueryLog) -> QueryLogItem:
+    return QueryLogItem(
+        id=row.id,
+        created_at=row.created_at,
+        user_id=row.user_id,
+        user_email=row.user_email_snapshot,
+        source=str(row.source),
+        tool_name=row.tool_name,
+        repository_id=row.repository_id,
+        collection_id=row.collection_id,
+        query_text=row.query_text,
+        query_truncated=row.query_truncated,
+        top_k=row.top_k,
+        result_count=row.result_count,
+        duration_ms=row.duration_ms,
+        status=str(row.status),
+        error_code=row.error_code,
+        client_label=row.client_label,
+    )
+
+
+def _apply_filters(
+    stmt,
+    *,
+    user_id: UUID | None,
+    repository_id: UUID | None,
+    tool_name: str | None,
+    status: str | None,
+    zero_results: bool | None,
+    q: str | None,
+    since: datetime | None,
+    until: datetime | None,
+):
+    if user_id is not None:
+        stmt = stmt.where(QueryLog.user_id == user_id)
+    if repository_id is not None:
+        stmt = stmt.where(QueryLog.repository_id == repository_id)
+    if tool_name:
+        stmt = stmt.where(QueryLog.tool_name == tool_name)
+    if status:
+        stmt = stmt.where(QueryLog.status == status)
+    if zero_results is True:
+        stmt = stmt.where(QueryLog.result_count == 0)
+    if q:
+        # `ilike` matches across postgres and sqlite-aiosqlite; the
+        # admin page is admin-only so case-insensitive substring is the
+        # expected UX without pulling in fts.
+        stmt = stmt.where(QueryLog.query_text.ilike(f"%{q}%"))
+    if since is not None:
+        stmt = stmt.where(QueryLog.created_at >= since)
+    if until is not None:
+        stmt = stmt.where(QueryLog.created_at <= until)
+    return stmt
+
+
+async def _paginate(
+    session: AsyncSession,
+    *,
+    page: int,
+    per_page: int,
+    user_id: UUID | None,
+    repository_id: UUID | None,
+    tool_name: str | None,
+    status: str | None,
+    zero_results: bool | None,
+    q: str | None,
+    since: datetime | None,
+    until: datetime | None,
+) -> QueryLogPage:
+    base = _apply_filters(
+        select(QueryLog),
+        user_id=user_id,
+        repository_id=repository_id,
+        tool_name=tool_name,
+        status=status,
+        zero_results=zero_results,
+        q=q,
+        since=since,
+        until=until,
+    )
+
+    total = (
+        await session.scalar(
+            _apply_filters(
+                select(func.count(QueryLog.id)),
+                user_id=user_id,
+                repository_id=repository_id,
+                tool_name=tool_name,
+                status=status,
+                zero_results=zero_results,
+                q=q,
+                since=since,
+                until=until,
+            )
+        )
+        or 0
+    )
+
+    rows = (
+        await session.scalars(
+            base.order_by(QueryLog.created_at.desc())
+            .offset((page - 1) * per_page)
+            .limit(per_page)
+        )
+    ).all()
+
+    total_pages = (total + per_page - 1) // per_page if per_page else 0
+    return QueryLogPage(
+        items=[_to_item(r) for r in rows],
+        total=int(total),
+        page=page,
+        per_page=per_page,
+        total_pages=int(total_pages),
+    )
+
+
+@router.get("/admin/query-logs", response_model=QueryLogPage)
+async def admin_list_query_logs(
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=_DEFAULT_PAGE_SIZE, ge=1, le=_MAX_PAGE_SIZE),
+    user_id: UUID | None = Query(default=None),
+    repository_id: UUID | None = Query(default=None),
+    tool_name: str | None = Query(default=None, max_length=64),
+    status: str | None = Query(default=None, pattern="^(ok|empty|error)$"),
+    zero_results: bool | None = Query(default=None),
+    q: str | None = Query(default=None, max_length=200),
+    since: datetime | None = Query(default=None),
+    until: datetime | None = Query(default=None),
+    _admin: User = Depends(require_admin_or_owner),
+    session: AsyncSession = Depends(get_db_session),
+) -> QueryLogPage:
+    return await _paginate(
+        session,
+        page=page,
+        per_page=per_page,
+        user_id=user_id,
+        repository_id=repository_id,
+        tool_name=tool_name,
+        status=status,
+        zero_results=zero_results,
+        q=q,
+        since=since,
+        until=until,
+    )
+
+
+@router.get("/admin/query-logs/stats", response_model=QueryLogStats)
+async def admin_query_logs_stats(
+    since: datetime | None = Query(default=None),
+    until: datetime | None = Query(default=None),
+    top_n: int = Query(default=20, ge=1, le=100),
+    _admin: User = Depends(require_admin_or_owner),
+    session: AsyncSession = Depends(get_db_session),
+) -> QueryLogStats:
+    where = _apply_filters(
+        select(QueryLog.id),
+        user_id=None,
+        repository_id=None,
+        tool_name=None,
+        status=None,
+        zero_results=None,
+        q=None,
+        since=since,
+        until=until,
+    ).subquery()
+
+    total = await session.scalar(select(func.count()).select_from(where)) or 0
+
+    zero_results = (
+        await session.scalar(
+            _apply_filters(
+                select(func.count(QueryLog.id)),
+                user_id=None,
+                repository_id=None,
+                tool_name=None,
+                status=None,
+                zero_results=True,
+                q=None,
+                since=since,
+                until=until,
+            )
+        )
+        or 0
+    )
+
+    error_count = (
+        await session.scalar(
+            _apply_filters(
+                select(func.count(QueryLog.id)),
+                user_id=None,
+                repository_id=None,
+                tool_name=None,
+                status="error",
+                zero_results=None,
+                q=None,
+                since=since,
+                until=until,
+            )
+        )
+        or 0
+    )
+
+    # Latency percentiles. PG has `percentile_cont`; sqlite (used in
+    # unit tests) doesn't, so we sort + index client-side instead.
+    durations = (
+        await session.scalars(
+            _apply_filters(
+                select(QueryLog.duration_ms),
+                user_id=None,
+                repository_id=None,
+                tool_name=None,
+                status=None,
+                zero_results=None,
+                q=None,
+                since=since,
+                until=until,
+            ).order_by(QueryLog.duration_ms.asc())
+        )
+    ).all()
+
+    def _pct(values: list[int], p: float) -> int | None:
+        if not values:
+            return None
+        idx = max(0, min(len(values) - 1, int(round((p / 100.0) * (len(values) - 1)))))
+        return int(values[idx])
+
+    duration_values = [int(v) for v in durations]
+    p50 = _pct(duration_values, 50.0)
+    p95 = _pct(duration_values, 95.0)
+
+    top_queries_rows = (
+        await session.execute(
+            _apply_filters(
+                select(
+                    QueryLog.query_text,
+                    func.count(QueryLog.id).label("cnt"),
+                ),
+                user_id=None,
+                repository_id=None,
+                tool_name=None,
+                status=None,
+                zero_results=None,
+                q=None,
+                since=since,
+                until=until,
+            )
+            .where(QueryLog.query_text != "")
+            .group_by(QueryLog.query_text)
+            .order_by(func.count(QueryLog.id).desc())
+            .limit(top_n)
+        )
+    ).all()
+
+    top_repos_rows = (
+        await session.execute(
+            _apply_filters(
+                select(
+                    QueryLog.repository_id,
+                    func.count(QueryLog.id).label("cnt"),
+                ),
+                user_id=None,
+                repository_id=None,
+                tool_name=None,
+                status=None,
+                zero_results=None,
+                q=None,
+                since=since,
+                until=until,
+            )
+            .where(QueryLog.repository_id.is_not(None))
+            .group_by(QueryLog.repository_id)
+            .order_by(func.count(QueryLog.id).desc())
+            .limit(top_n)
+        )
+    ).all()
+
+    return QueryLogStats(
+        total_count=int(total),
+        zero_result_count=int(zero_results),
+        error_count=int(error_count),
+        p50_duration_ms=p50,
+        p95_duration_ms=p95,
+        top_queries=[
+            TopQueryItem(query_text=row[0], count=int(row[1]))
+            for row in top_queries_rows
+        ],
+        top_repos=[
+            TopRepoItem(repository_id=row[0], count=int(row[1]))
+            for row in top_repos_rows
+        ],
+    )
+
+
+@router.get("/me/query-logs", response_model=QueryLogPage)
+async def me_list_query_logs(
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=_DEFAULT_PAGE_SIZE, ge=1, le=_MAX_PAGE_SIZE),
+    repository_id: UUID | None = Query(default=None),
+    tool_name: str | None = Query(default=None, max_length=64),
+    status: str | None = Query(default=None, pattern="^(ok|empty|error)$"),
+    q: str | None = Query(default=None, max_length=200),
+    since: datetime | None = Query(default=None),
+    until: datetime | None = Query(default=None),
+    current_user: User = Depends(require_current_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> QueryLogPage:
+    return await _paginate(
+        session,
+        page=page,
+        per_page=per_page,
+        user_id=current_user.id,
+        repository_id=repository_id,
+        tool_name=tool_name,
+        status=status,
+        zero_results=None,
+        q=q,
+        since=since,
+        until=until,
+    )
+
+
+class ForgetResponse(BaseModel):
+    deleted: int = Field(ge=0)
+
+
+@router.delete("/me/query-logs", response_model=ForgetResponse)
+async def me_forget_query_logs(
+    current_user: User = Depends(require_current_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> ForgetResponse:
+    """Drop *every* query_log row belonging to the caller.
+
+    Privacy-side button — the user opts out of having their search
+    history retained even before the daily retention sweep runs. Does
+    NOT delete other users' rows; admins read query_logs as a
+    separate channel (admin_list_query_logs above).
+    """
+    result = await session.execute(
+        delete(QueryLog).where(QueryLog.user_id == current_user.id)
+    )
+    await session.commit()
+    return ForgetResponse(deleted=int(result.rowcount or 0))

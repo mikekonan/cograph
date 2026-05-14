@@ -173,6 +173,34 @@ class GrantLevel(StrEnum):
     WRITE = "write"
 
 
+class QueryLogSource(StrEnum):
+    """Channel a user-facing query arrived through.
+
+    `REST` covers POST /retrieve, POST /md_collections/{id}/search and
+    any future REST search endpoint. `MCP` covers tool calls from MCP
+    clients (Claude Desktop, Cursor, Codex, etc.) — those go through
+    backend/app/mcp/services.py payload builders.
+    """
+
+    REST = "rest"
+    MCP = "mcp"
+
+
+class QueryLogStatus(StrEnum):
+    """Outcome of a single user-facing query.
+
+    `OK` — the query returned at least one result.
+    `EMPTY` — the query succeeded but returned zero results. Separated
+    from OK so admins can find gaps in the index / wiki without
+    grepping for `result_count = 0`.
+    `ERROR` — the query raised. `error_code` carries the short slug.
+    """
+
+    OK = "ok"
+    EMPTY = "empty"
+    ERROR = "error"
+
+
 class SyncErrorCode(StrEnum):
     CHECKOUT_NOT_FOUND = "checkout_not_found"
     CHECKOUT_INVALID = "checkout_invalid"

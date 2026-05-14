@@ -248,9 +248,7 @@ async def _sweep_stale_md_jobs(
             for job in stale:
                 if job.kind is MdJobKind.UPLOAD:
                     job.status = MdJobStatus.ERROR
-                    job.error_message = (
-                        "Upload abandoned: no progress for 4+ hours."
-                    )
+                    job.error_message = "Upload abandoned: no progress for 4+ hours."
                     job.finished_at = now
                     errored += 1
                     continue
@@ -463,6 +461,112 @@ async def run_stale_run_sweep(ctx: dict[str, Any]) -> dict[str, object]:
     }
 
 
+async def record_query_log(
+    ctx: dict[str, Any], payload: dict[str, Any]
+) -> dict[str, int]:
+    """Persist one user-facing query observation.
+
+    Enqueued by `backend.app.query_logs.recorder.enqueue_query_log`
+    from REST/MCP entry points; the user has already received their
+    response by the time we run. A failure here logs and is swallowed
+    — the original query already completed.
+    """
+
+    from datetime import UTC, datetime
+    from uuid import UUID
+
+    from backend.app.models.query_log import QueryLog
+
+    session_manager = ctx.get("session_manager")
+    assert isinstance(session_manager, SessionManager)
+
+    def _opt_uuid(value: Any) -> UUID | None:
+        if value is None:
+            return None
+        try:
+            return UUID(str(value))
+        except (TypeError, ValueError):
+            return None
+
+    try:
+        async with session_manager.session() as session:
+            row = QueryLog(
+                user_id=_opt_uuid(payload.get("user_id")),
+                user_email_snapshot=payload.get("user_email_snapshot"),
+                source=payload["source"],
+                tool_name=payload["tool_name"],
+                repository_id=_opt_uuid(payload.get("repository_id")),
+                collection_id=_opt_uuid(payload.get("collection_id")),
+                query_text=payload.get("query_text") or "",
+                query_truncated=bool(payload.get("query_truncated")),
+                top_k=payload.get("top_k"),
+                result_count=payload.get("result_count"),
+                duration_ms=int(payload.get("duration_ms") or 0),
+                status=payload["status"],
+                error_code=payload.get("error_code"),
+                client_label=payload.get("client_label"),
+                created_at=datetime.now(UTC),
+            )
+            session.add(row)
+            await session.commit()
+        logger.debug(
+            "query_log recorded",
+            extra={
+                "tool_name": payload.get("tool_name"),
+                "source": payload.get("source"),
+                "status": payload.get("status"),
+                "user_id": payload.get("user_id"),
+                "repository_id": payload.get("repository_id"),
+            },
+        )
+        return {"recorded": 1}
+    except Exception:
+        logger.warning(
+            "record_query_log failed",
+            exc_info=True,
+            extra={"tool_name": payload.get("tool_name")},
+        )
+        return {"recorded": 0}
+
+
+async def prune_query_logs(ctx: dict[str, Any]) -> dict[str, int]:
+    """Delete query_log rows older than `query_log.retention_days`.
+
+    Runs once a day. The `ix_query_logs_created_at` index makes the
+    DELETE cheap even at 100k rows/day after the first month.
+    """
+
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import delete
+
+    from backend.app.models.query_log import QueryLog
+
+    settings = ctx.get("settings")
+    session_manager = ctx.get("session_manager")
+    assert isinstance(settings, Settings)
+    assert isinstance(session_manager, SessionManager)
+
+    cutoff = datetime.now(UTC) - timedelta(days=settings.query_log.retention_days)
+
+    async with session_manager.session() as session:
+        result = await session.execute(
+            delete(QueryLog).where(QueryLog.created_at < cutoff)
+        )
+        await session.commit()
+
+    rows_deleted = result.rowcount or 0
+    logger.info(
+        "query_logs retention sweep completed",
+        extra={
+            "rows_deleted": rows_deleted,
+            "cutoff": cutoff.isoformat(),
+            "retention_days": settings.query_log.retention_days,
+        },
+    )
+    return {"rows_deleted": int(rows_deleted)}
+
+
 async def _get_repo_sync_scheduler(ctx: dict[str, Any]) -> RepoSyncScheduler:
     scheduler = ctx.get("repo_sync_scheduler")
     if isinstance(scheduler, RepoSyncScheduler):
@@ -500,6 +604,8 @@ class WorkerSettings:
         embed_md_collection,
         resolve_md_links,
         purge_repository,
+        record_query_log,
+        prune_query_logs,
     ]
     on_startup = worker_startup
     on_shutdown = worker_shutdown
@@ -519,6 +625,16 @@ class WorkerSettings:
             second=0,
             microsecond=0,
             job_id="repo-sync-stale-sweep",
+        ),
+        cron(
+            prune_query_logs,
+            # Daily at 03:15 UTC — well off any business-hours sync
+            # spike and gives the previous day's tail a clean cutoff.
+            hour=3,
+            minute=15,
+            second=0,
+            microsecond=0,
+            job_id="query-logs-retention-prune",
         ),
     ]
     # Dropped 10→4 after a 2026-05-12 OOMKill: ten concurrent wiki-gen

@@ -115,6 +115,7 @@ async def _require_repository_for_mutation(
         raise ApiError(403, "FORBIDDEN", "Repository access denied")
     return repository
 
+
 # Regex patterns for accepted git URL forms:
 # 1. https://<host>/<owner>/<repo>[.git]
 _HTTPS_GIT_URL_RE = re.compile(
@@ -174,6 +175,7 @@ class RepositoryResponse(BaseModel):
     stats: RepoStatsResponse
     visibility: RepositoryVisibility
     sync_schedule: SyncSchedule
+    log_queries: bool
     last_synced_at: datetime | None
     next_sync_at: datetime | None
     readme: str | None = None
@@ -193,6 +195,7 @@ class UpdateRepositoryRequest(BaseModel):
 
     sync_schedule: SyncSchedule | None = None
     visibility: RepositoryVisibility | None = None
+    log_queries: bool | None = None
 
     @model_validator(mode="after")
     def _validate_non_empty_patch(self) -> "UpdateRepositoryRequest":
@@ -1009,6 +1012,7 @@ async def update_repository(
     host: str,
     owner: str,
     name: str,
+    request: Request,
     payload: UpdateRepositoryRequest,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_current_user),
@@ -1053,10 +1057,22 @@ async def update_repository(
     if payload.visibility is not None:
         repository.visibility = payload.visibility
         should_commit = True
+    if payload.log_queries is not None:
+        repository.log_queries = payload.log_queries
+        should_commit = True
 
     if should_commit:
         await session.commit()
         await session.refresh(repository)
+        # Bust the recorder's flag cache so the operator's privacy
+        # toggle takes effect immediately instead of after the
+        # `query_log.repo_flag_cache_ttl_seconds` window.
+        from backend.app.query_logs.recorder import invalidate_repo_log_flag_cache
+
+        invalidate_repo_log_flag_cache(
+            app_state=request.app.state,
+            repository_id=repository.id,
+        )
 
     return await _build_repository_response(session=session, repository=repository)
 
@@ -1365,6 +1381,7 @@ async def _build_repository_response(
         ),
         visibility=repository.visibility,
         sync_schedule=repository.sync_schedule,
+        log_queries=repository.log_queries,
         last_synced_at=repository.last_synced_at,
         next_sync_at=repository.next_sync_at,
         readme=readme_content,
@@ -1499,6 +1516,7 @@ async def _build_repository_list_items(
                 ),
                 visibility=repo.visibility,
                 sync_schedule=repo.sync_schedule,
+                log_queries=repo.log_queries,
                 last_synced_at=repo.last_synced_at,
                 next_sync_at=repo.next_sync_at,
                 readme=None,

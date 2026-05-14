@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any, AsyncIterator
 from uuid import UUID
 
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.app.models.enums import QueryLogSource, QueryLogStatus
+from backend.app.query_logs import enqueue_query_log
 
 from backend.app.config import Settings
 from backend.app.core.errors import ApiError
@@ -100,6 +106,119 @@ def _mcp_error(exc: ApiError) -> ValueError:
     return ValueError(f"{exc.code}: {exc.message}")
 
 
+def _app_state_from_context(ctx: object | None) -> Any | None:
+    """Reach FastAPI `app.state` through the MCP request context.
+
+    Mirrors `current_user_from_context` — same traversal, different
+    attribute. We need this to pass to `enqueue_query_log` so the
+    helper can reuse the arq pool initialised at app startup instead
+    of opening a fresh connection on every MCP call.
+    """
+    request_context = None
+    if ctx is not None:
+        try:
+            request_context = getattr(ctx, "request_context", None)
+        except ValueError:
+            request_context = None
+    if request_context is None:
+        try:
+            from mcp.server.lowlevel.server import request_ctx
+
+            request_context = request_ctx.get(None)
+        except LookupError:
+            request_context = None
+        except Exception:
+            request_context = None
+    request = getattr(request_context, "request", None)
+    app = getattr(request, "app", None)
+    return getattr(app, "state", None)
+
+
+def _mcp_client_label(ctx: object | None) -> str | None:
+    """Best-effort client identifier — MCP doesn't standardise this so
+    we lift whatever the client sent in headers / clientInfo.
+
+    Returns short label like 'Claude Desktop' or 'cursor' when known,
+    else None. Logged into `query_logs.client_label` so admins can
+    see which tools their team is using.
+    """
+    request_context = None
+    if ctx is not None:
+        try:
+            request_context = getattr(ctx, "request_context", None)
+        except ValueError:
+            request_context = None
+    if request_context is None:
+        return None
+    session = getattr(request_context, "session", None)
+    client_info = getattr(session, "client_info", None) if session else None
+    name = getattr(client_info, "name", None) if client_info else None
+    if name:
+        return str(name)[:128]
+    request = getattr(request_context, "request", None)
+    if request is None:
+        return None
+    headers = getattr(request, "headers", None)
+    if headers is None:
+        return None
+    ua = headers.get("user-agent") if hasattr(headers, "get") else None
+    return ua[:128] if ua else None
+
+
+@asynccontextmanager
+async def mcp_query_log_scope(
+    *,
+    ctx: object | None,
+    tool_name: str,
+    query_text: str,
+    repository_id: UUID | None = None,
+    collection_id: UUID | None = None,
+    top_k: int | None = None,
+) -> AsyncIterator[dict[str, Any]]:
+    """Context manager that records one query_log row per MCP tool call.
+
+    The body mutates `bucket["result_count"]` if it can measure the
+    result-set size — we default to None when the response shape
+    doesn't expose a meaningful count. Status auto-derives from
+    exceptions raised inside the `with`, and the row is enqueued in
+    the `finally` so duration is always recorded.
+    """
+    started = time.perf_counter()
+    bucket: dict[str, Any] = {"result_count": None}
+    status = QueryLogStatus.ERROR
+    error_code: str | None = None
+    try:
+        yield bucket
+        rc = bucket.get("result_count")
+        status = QueryLogStatus.OK if (rc is None or rc > 0) else QueryLogStatus.EMPTY
+        if rc is None:
+            # No measurable count — treat as OK rather than EMPTY so
+            # admin's "zero results" filter doesn't fill with these.
+            status = QueryLogStatus.OK
+    except Exception as exc:
+        error_code = type(exc).__name__
+        raise
+    finally:
+        user = current_user_from_context(ctx)
+        if user is not None:
+            await enqueue_query_log(
+                app_state=_app_state_from_context(ctx),
+                user_id=user.id,
+                user_email=user.email,
+                source=QueryLogSource.MCP,
+                tool_name=tool_name,
+                query_text=query_text,
+                repository_id=repository_id,
+                collection_id=collection_id,
+                top_k=top_k,
+                result_count=bucket.get("result_count"),
+                duration_ms=int((time.perf_counter() - started) * 1000),
+                status=status,
+                error_code=error_code,
+                client_label=_mcp_client_label(ctx),
+            )
+
+
 async def retrieve_payload(
     *,
     services: MCPServices,
@@ -178,7 +297,10 @@ async def node_payload(
                 "end_line": node.end_line,
             },
         )
-        requested_layers: set[RetrievalLayer] = {RetrievalLayer.CODE, RetrievalLayer.AST}
+        requested_layers: set[RetrievalLayer] = {
+            RetrievalLayer.CODE,
+            RetrievalLayer.AST,
+        }
         if with_summary:
             requested_layers.add(RetrievalLayer.AST_SUMMARY)
         return await services.context_builder.build(
@@ -281,9 +403,9 @@ async def repositories_payload(
         total = await session.scalar(select(func.count()).select_from(query.subquery()))
         rows = (
             await session.scalars(
-                query.order_by(Repository.updated_at.desc(), Repository.id.desc()).limit(
-                    limit
-                )
+                query.order_by(
+                    Repository.updated_at.desc(), Repository.id.desc()
+                ).limit(limit)
             )
         ).all()
         return {
@@ -327,9 +449,9 @@ async def collections_payload(
         total = await session.scalar(select(func.count()).select_from(query.subquery()))
         rows = (
             await session.scalars(
-                query.order_by(MdCollection.updated_at.desc(), MdCollection.id.desc()).limit(
-                    limit
-                )
+                query.order_by(
+                    MdCollection.updated_at.desc(), MdCollection.id.desc()
+                ).limit(limit)
             )
         ).all()
         collection_ids = [collection.id for collection in rows]
@@ -341,8 +463,7 @@ async def collections_payload(
                 .group_by(MdDocument.collection_id)
             )
             doc_counts = {
-                collection_id: int(count)
-                for collection_id, count in count_rows.all()
+                collection_id: int(count) for collection_id, count in count_rows.all()
             }
         return {
             "total": total or 0,
@@ -387,9 +508,7 @@ async def collection_document_payload(
             raise ValueError("NOT_FOUND: Document not found")
         chunk_count = (
             await session.scalar(
-                select(func.count(MdChunk.id)).where(
-                    MdChunk.document_id == document.id
-                )
+                select(func.count(MdChunk.id)).where(MdChunk.document_id == document.id)
             )
             or 0
         )
@@ -451,9 +570,7 @@ async def collection_search_payload(
         terms = extract_query_terms(query)
         results: list[dict[str, object]] = []
         for chunk in chunks:
-            snippet, truncated = make_snippet(
-                chunk.content, terms, chars=snippet_chars
-            )
+            snippet, truncated = make_snippet(chunk.content, terms, chars=snippet_chars)
             results.append(
                 {
                     "chunk_id": chunk.chunk_id,
@@ -469,9 +586,9 @@ async def collection_search_payload(
                     "rerank_score": chunk.metadata.get("rerank_score"),
                 }
             )
-        total_tokens_estimate = sum(
-            len(str(r.get("snippet") or "")) for r in results
-        ) // 4
+        total_tokens_estimate = (
+            sum(len(str(r.get("snippet") or "")) for r in results) // 4
+        )
         return {
             "collection_id": collection.id,
             "collection_name": collection.name,

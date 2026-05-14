@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime
 from uuid import UUID
 
@@ -25,9 +26,16 @@ from backend.app.llm.md_chunk_embedder import MdChunkEmbedderService
 from backend.app.llm.runtime_providers import build_runtime_providers
 from backend.app.md_rag.indexer import MdDocumentInput, MdIndexer
 from backend.app.md_rag.queries import MdQueryService
+from backend.app.models.enums import (
+    GrantLevel,
+    MdCollectionVisibility,
+    QueryLogSource,
+    QueryLogStatus,
+    UserRole,
+)
 from backend.app.models.md_collection import MdChunk, MdCollection, MdDocument, MdJob
-from backend.app.models.enums import GrantLevel, MdCollectionVisibility, UserRole
 from backend.app.models.user import User
+from backend.app.query_logs import enqueue_query_log
 from backend.app.rag.hybrid import HybridRetriever
 from backend.app.rag.runtime import build_hybrid_retriever
 
@@ -717,6 +725,7 @@ async def get_md_collection_embed_status(
 @router.post("/{collection_id}/search", response_model=MdCollectionSearchResponse)
 async def search_md_collection(
     collection_id: UUID,
+    request: Request,
     payload: MdCollectionSearchRequest,
     session: AsyncSession = Depends(get_db_session),
     current_user: User | None = Depends(get_current_user_optional),
@@ -727,48 +736,79 @@ async def search_md_collection(
         session=session, collection_id=collection_id, current_user=current_user
     )
 
-    if embed_provider is None:
-        raise ApiError(
-            503,
-            "RETRIEVAL_UNAVAILABLE",
-            "Search requires an embedding provider to be configured",
-        )
-
+    started = time.perf_counter()
+    status = QueryLogStatus.ERROR
+    error_code: str | None = None
+    result_count: int | None = None
     try:
-        query_embedding = (await embed_provider.embed([payload.query]))[0]
-    except Exception as exc:
-        raise ApiError(
-            503,
-            "EMBEDDING_PROVIDER_FAILED",
-            "Embedding provider unavailable",
-        ) from exc
-
-    chunks = await retriever.retrieve(
-        session,
-        query_text=payload.query,
-        query_embedding=query_embedding,
-        collection_id=collection_id,
-        top_k=payload.top_k,
-        stores={"md_collections"},
-    )
-
-    return MdCollectionSearchResponse(
-        results=[
-            MdSearchResult(
-                chunk_id=chunk.chunk_id,
-                document_id=chunk.metadata.get("document_id"),
-                source_key=chunk.metadata.get("source_key", ""),
-                title=chunk.metadata.get("title"),
-                heading_path=chunk.metadata.get("heading_path", []),
-                content=chunk.content,
-                score=chunk.score,
-                vector_rank=chunk.metadata.get("vector_rank"),
-                lexical_rank=chunk.metadata.get("lexical_rank"),
-                rerank_score=chunk.metadata.get("rerank_score"),
+        if embed_provider is None:
+            error_code = "RETRIEVAL_UNAVAILABLE"
+            raise ApiError(
+                503,
+                "RETRIEVAL_UNAVAILABLE",
+                "Search requires an embedding provider to be configured",
             )
-            for chunk in chunks
-        ]
-    )
+
+        try:
+            query_embedding = (await embed_provider.embed([payload.query]))[0]
+        except Exception as exc:
+            error_code = "EMBEDDING_PROVIDER_FAILED"
+            raise ApiError(
+                503,
+                "EMBEDDING_PROVIDER_FAILED",
+                "Embedding provider unavailable",
+            ) from exc
+
+        chunks = await retriever.retrieve(
+            session,
+            query_text=payload.query,
+            query_embedding=query_embedding,
+            collection_id=collection_id,
+            top_k=payload.top_k,
+            stores={"md_collections"},
+        )
+        result_count = len(chunks)
+        status = QueryLogStatus.OK if result_count > 0 else QueryLogStatus.EMPTY
+
+        return MdCollectionSearchResponse(
+            results=[
+                MdSearchResult(
+                    chunk_id=chunk.chunk_id,
+                    document_id=chunk.metadata.get("document_id"),
+                    source_key=chunk.metadata.get("source_key", ""),
+                    title=chunk.metadata.get("title"),
+                    heading_path=chunk.metadata.get("heading_path", []),
+                    content=chunk.content,
+                    score=chunk.score,
+                    vector_rank=chunk.metadata.get("vector_rank"),
+                    lexical_rank=chunk.metadata.get("lexical_rank"),
+                    rerank_score=chunk.metadata.get("rerank_score"),
+                )
+                for chunk in chunks
+            ]
+        )
+    except Exception as exc:
+        if error_code is None:
+            error_code = type(exc).__name__
+        raise
+    finally:
+        if current_user is not None:
+            ua = request.headers.get("user-agent")
+            await enqueue_query_log(
+                app_state=request.app.state,
+                user_id=current_user.id,
+                user_email=current_user.email,
+                source=QueryLogSource.REST,
+                tool_name="rest.collection_search",
+                query_text=payload.query,
+                collection_id=collection_id,
+                top_k=payload.top_k,
+                result_count=result_count,
+                duration_ms=int((time.perf_counter() - started) * 1000),
+                status=status,
+                error_code=error_code,
+                client_label=ua[:128] if ua else None,
+            )
 
 
 class MdJobResponse(BaseModel):
@@ -1257,9 +1297,7 @@ async def _require_collection_for_mutation(
         return collection
     if collection.owner_id == current_user.id:
         return collection
-    if await has_collection_permission(
-        session, current_user, collection, required
-    ):
+    if await has_collection_permission(session, current_user, collection, required):
         return collection
     raise ApiError(403, "FORBIDDEN", "Collection access denied")
 

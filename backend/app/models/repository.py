@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Enum,
     ForeignKey,
@@ -125,6 +126,18 @@ class Repository(TimestampMixin, Base):
     language_bytes: Mapped[dict[str, int] | None] = mapped_column(
         JSONB().with_variant(JSON(), "sqlite"),
         nullable=True,
+    )
+    # Per-repo privacy opt-out for the query-visibility log (added in
+    # migration 0054). When False, the recorder skips writing any
+    # `query_logs` row whose `repository_id` points at this repo —
+    # useful for sensitive internal repos whose query stream should
+    # not be retained even for 30 days. Default True preserves the
+    # prior logging behaviour.
+    log_queries: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default=text("true"),
     )
 
     sync_runs = relationship(

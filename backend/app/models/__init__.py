@@ -7,6 +7,8 @@ from backend.app.models.enums import (
     MdJobKind,
     MdJobStatus,
     MdLinkType,
+    QueryLogSource,
+    QueryLogStatus,
     RepoSyncRunStatus,
     RepoSyncTriggerKind,
     RepositoryStatus,
@@ -43,6 +45,7 @@ from backend.app.models.llm_model_assignment import (
 )
 from backend.app.models.llm_secret import LLMSecret
 from backend.app.models.personal_access_token import PersonalAccessToken
+from backend.app.models.query_log import QueryLog
 from backend.app.models.md_collection import (
     MdChunk,
     MdCollection,
@@ -100,6 +103,9 @@ __all__ = [
     "MdLink",
     "MdLinkType",
     "PersonalAccessToken",
+    "QueryLog",
+    "QueryLogSource",
+    "QueryLogStatus",
     "ModuleEmbedding",
     "OIDCLoginState",
     "RefreshTokenFamily",

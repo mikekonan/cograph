@@ -16,7 +16,10 @@ from backend.app.api.graph import router as graph_router
 from backend.app.api.health import router as health_router
 from backend.app.api.jobs import router as jobs_router
 from backend.app.api.me_identities import router as me_identities_router
-from backend.app.api.personal_access_tokens import router as personal_access_tokens_router
+from backend.app.api.personal_access_tokens import (
+    router as personal_access_tokens_router,
+)
+from backend.app.api.query_logs import router as query_logs_router
 from backend.app.api.retrieval import router as retrieval_router
 from backend.app.api.repo_documents import router as repo_documents_router
 from backend.app.api.repos import router as repos_router
@@ -39,6 +42,7 @@ api_router.include_router(graph_router)
 api_router.include_router(jobs_router)
 api_router.include_router(me_identities_router)
 api_router.include_router(personal_access_tokens_router)
+api_router.include_router(query_logs_router)
 api_router.include_router(md_collections_router)
 api_router.include_router(retrieval_router)
 api_router.include_router(repo_documents_router)
