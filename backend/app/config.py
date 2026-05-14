@@ -224,6 +224,29 @@ class PipelineTimeoutsSettings(BaseModel):
     stale_run_sweep_limit: int = 50
 
 
+class QueryLogSettings(BaseModel):
+    """User-facing query logging — observability over what cograph is
+    actually asked.
+
+    Off-by-default `disabled` is the kill switch — if logging causes a
+    production issue, operators can flip it without redeploying. Text
+    is hard-capped at 200 bytes (UTF-8) before insert; the column is
+    sized 256 to leave headroom for the truncated-marker glyph the UI
+    may append. Retention is enforced by the daily
+    `prune_query_logs` arq cron — see worker.py.
+    """
+
+    disabled: bool = False
+    query_text_max_bytes: int = Field(default=200, ge=16, le=4096)
+    retention_days: int = Field(default=30, ge=1, le=365)
+    # TTL for the in-memory `Repository.log_queries` cache the recorder
+    # uses to skip-write rows for opted-out repos. 0 disables caching
+    # (every recorded query hits the DB). The default 30 s bounds how
+    # long an operator's flag-flip can take to propagate; staleness
+    # here only ever causes one extra (or one too-few) logged row.
+    repo_flag_cache_ttl_seconds: int = Field(default=30, ge=0, le=3600)
+
+
 class McpSettings(BaseModel):
     """DNS-rebinding protection for the mounted MCP transport.
 
@@ -266,6 +289,7 @@ class Settings(BaseSettings):
         default_factory=PipelineTimeoutsSettings
     )
     mcp: McpSettings = Field(default_factory=McpSettings)
+    query_log: QueryLogSettings = Field(default_factory=QueryLogSettings)
 
     @model_validator(mode="after")
     def _enforce_production_auth_secret(self) -> "Settings":

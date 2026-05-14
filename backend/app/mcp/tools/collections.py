@@ -10,6 +10,7 @@ from backend.app.mcp.services import (
     collections_payload,
     current_user_from_context,
     encode_payload,
+    mcp_query_log_scope,
     read_chunk_payload,
 )
 from backend.app.rag.snippet import (
@@ -131,15 +132,23 @@ def register(server: FastMCP, services: MCPServices) -> None:
             top_k=top_k,
             snippet_chars=snippet_chars,
         )
-        response = await collection_search_payload(
-            services=services,
-            current_user=current_user_from_context(ctx),
+        async with mcp_query_log_scope(
+            ctx=ctx,
+            tool_name="cograph.collection_search",
+            query_text=args.query,
             collection_id=args.collection_id,
-            query=args.query,
             top_k=args.top_k,
-            snippet_chars=args.snippet_chars,
-        )
-        return encode_payload(response)
+        ) as log_bucket:
+            response = await collection_search_payload(
+                services=services,
+                current_user=current_user_from_context(ctx),
+                collection_id=args.collection_id,
+                query=args.query,
+                top_k=args.top_k,
+                snippet_chars=args.snippet_chars,
+            )
+            log_bucket["result_count"] = len(getattr(response, "chunks", None) or [])
+            return encode_payload(response)
 
     @server.tool(
         name="cograph.read_chunk",

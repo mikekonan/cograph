@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from datetime import datetime
 from uuid import UUID
 
@@ -15,7 +16,9 @@ from backend.app.core.deps import (
 )
 from backend.app.core.repository_access import get_readable_repository
 from backend.app.llm.runtime_providers import build_runtime_providers
+from backend.app.models.enums import QueryLogSource, QueryLogStatus
 from backend.app.models.user import User
+from backend.app.query_logs import enqueue_query_log
 from backend.app.rag.context_builder import (
     ContextBuilder,
     RetrievalLayer,
@@ -29,6 +32,19 @@ from backend.app.rag.snippet import (
     MAX_SNIPPET_CHARS,
     MIN_SNIPPET_CHARS,
 )
+
+
+def _result_count(response: RetrievalResponse) -> int:
+    chunks = getattr(response, "chunks", None) or []
+    return len(chunks)
+
+
+def _client_label(request: Request) -> str | None:
+    ua = request.headers.get("user-agent")
+    if not ua:
+        return None
+    return ua[:128]
+
 
 router = APIRouter(tags=["retrieval"])
 
@@ -100,6 +116,7 @@ def get_context_builder() -> ContextBuilder:
 
 @router.post("/retrieve", response_model=RetrievalResponse)
 async def retrieve(
+    request: Request,
     payload: RetrievalRequest,
     session: AsyncSession = Depends(get_db_session),
     settings: Settings = Depends(get_settings_dep),
@@ -115,20 +132,52 @@ async def retrieve(
             settings=settings,
             current_user=current_user,
         )
-    return await retrieve_composite(
-        session,
-        query=payload.query,
-        repository_id=payload.repository_id,
-        requested_layers=set(payload.stores) if payload.stores else set(RetrievalLayer),
-        top_k=payload.top_k,
-        as_of=payload.as_of,
-        since=payload.since,
-        until=payload.until,
-        include_chunks=payload.include.chunks,
-        include_graph=payload.include.graph,
-        include_scores=payload.include.scores,
-        embed_provider=embed_provider,
-        retriever=retriever,
-        context_builder=context_builder,
-        snippet_chars=payload.snippet_chars,
-    )
+
+    started = time.perf_counter()
+    status = QueryLogStatus.ERROR
+    error_code: str | None = None
+    result_count: int | None = None
+    response: RetrievalResponse | None = None
+    try:
+        response = await retrieve_composite(
+            session,
+            query=payload.query,
+            repository_id=payload.repository_id,
+            requested_layers=set(payload.stores)
+            if payload.stores
+            else set(RetrievalLayer),
+            top_k=payload.top_k,
+            as_of=payload.as_of,
+            since=payload.since,
+            until=payload.until,
+            include_chunks=payload.include.chunks,
+            include_graph=payload.include.graph,
+            include_scores=payload.include.scores,
+            embed_provider=embed_provider,
+            retriever=retriever,
+            context_builder=context_builder,
+            snippet_chars=payload.snippet_chars,
+        )
+        result_count = _result_count(response)
+        status = QueryLogStatus.OK if result_count > 0 else QueryLogStatus.EMPTY
+        return response
+    except Exception as exc:
+        error_code = type(exc).__name__
+        raise
+    finally:
+        if current_user is not None:
+            await enqueue_query_log(
+                app_state=request.app.state,
+                user_id=current_user.id,
+                user_email=current_user.email,
+                source=QueryLogSource.REST,
+                tool_name="rest.retrieve",
+                query_text=payload.query,
+                repository_id=payload.repository_id,
+                top_k=payload.top_k,
+                result_count=result_count,
+                duration_ms=int((time.perf_counter() - started) * 1000),
+                status=status,
+                error_code=error_code,
+                client_label=_client_label(request),
+            )

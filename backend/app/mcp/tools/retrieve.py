@@ -9,6 +9,7 @@ from backend.app.mcp.services import (
     MCPServices,
     current_user_from_context,
     encode_payload,
+    mcp_query_log_scope,
     resolve_readable_repository_by_slug,
     retrieve_payload,
 )
@@ -68,9 +69,17 @@ class RetrieveToolArgs(BaseModel):
 
     @model_validator(mode="after")
     def _validate_temporal_window(self) -> "RetrieveToolArgs":
-        if self.since is not None and self.until is not None and self.since > self.until:
+        if (
+            self.since is not None
+            and self.until is not None
+            and self.since > self.until
+        ):
             raise ValueError("since must be earlier than or equal to until")
-        if self.since is not None and self.as_of is not None and self.since > self.as_of:
+        if (
+            self.since is not None
+            and self.as_of is not None
+            and self.since > self.as_of
+        ):
             raise ValueError("since must be earlier than or equal to as_of")
         return self
 
@@ -126,20 +135,28 @@ def register(server: FastMCP, services: MCPServices) -> None:
                     current_user=current_user,
                 )
             repository_id = repo.id
-        response = await retrieve_payload(
-            services=services,
-            query=args.query,
+        async with mcp_query_log_scope(
+            ctx=ctx,
+            tool_name="cograph.retrieve",
+            query_text=args.query,
             repository_id=repository_id,
-            requested_layers=args.resolved_layers(),
             top_k=args.top_k,
-            as_of=args.as_of,
-            since=args.since,
-            until=args.until,
-            include_chunks=args.include_chunks,
-            include_graph=args.include_graph,
-            include_scores=args.include_scores,
-            current_user=current_user,
-            snippet_chars=args.snippet_chars,
-            mode=args.mode,
-        )
-        return encode_payload(response)
+        ) as log_bucket:
+            response = await retrieve_payload(
+                services=services,
+                query=args.query,
+                repository_id=repository_id,
+                requested_layers=args.resolved_layers(),
+                top_k=args.top_k,
+                as_of=args.as_of,
+                since=args.since,
+                until=args.until,
+                include_chunks=args.include_chunks,
+                include_graph=args.include_graph,
+                include_scores=args.include_scores,
+                current_user=current_user,
+                snippet_chars=args.snippet_chars,
+                mode=args.mode,
+            )
+            log_bucket["result_count"] = len(getattr(response, "chunks", None) or [])
+            return encode_payload(response)

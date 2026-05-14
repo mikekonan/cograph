@@ -5,6 +5,7 @@ from backend.app.mcp.services import (
     MCPServices,
     current_user_from_context,
     encode_payload,
+    mcp_query_log_scope,
     resolve_readable_repository_by_slug,
     search_code_payload,
 )
@@ -56,10 +57,18 @@ def register(server: FastMCP, services: MCPServices) -> None:
                 services=services,
                 current_user=current_user,
             )
-        response = await search_code_payload(
-            services=services,
+        async with mcp_query_log_scope(
+            ctx=ctx,
+            tool_name="cograph.search_code",
+            query_text=args.query,
             repository_id=repo.id,
-            query=args.query,
             top_k=args.top_k,
-        )
-        return encode_payload(response)
+        ) as log_bucket:
+            response = await search_code_payload(
+                services=services,
+                repository_id=repo.id,
+                query=args.query,
+                top_k=args.top_k,
+            )
+            log_bucket["result_count"] = len(getattr(response, "chunks", None) or [])
+            return encode_payload(response)
