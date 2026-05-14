@@ -1,7 +1,12 @@
 """Add `log_queries` privacy flag to repositories.
 
-Revision ID: 0054_add_repositories_log_queries
+Revision ID: 0054_repos_log_queries
 Revises: 0053_add_query_logs
+
+NB: revision IDs are persisted in `alembic_version.version_num
+VARCHAR(32)`. A 34-char ID reached prod once and broke the UPDATE
+that records the new head — that's why this name is terse. Future
+hands: keep the revision string ≤32 characters.
 
 Per-repo opt-out for the query-visibility log shipped in
 `0053_add_query_logs`. When False, the async recorder
@@ -20,7 +25,7 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0054_add_repositories_log_queries"
+revision = "0054_repos_log_queries"
 down_revision = "0053_add_query_logs"
 branch_labels = None
 depends_on = None
