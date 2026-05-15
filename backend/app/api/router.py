@@ -24,6 +24,7 @@ from backend.app.api.query_logs import router as query_logs_router
 from backend.app.api.retrieval import router as retrieval_router
 from backend.app.api.repo_documents import router as repo_documents_router
 from backend.app.api.repos import router as repos_router
+from backend.app.api.route import router as route_router
 from backend.app.api.webhook_github import router as webhook_github_router
 from backend.app.api.wiki import router as wiki_router
 
@@ -49,6 +50,7 @@ api_router.include_router(md_collections_router)
 api_router.include_router(retrieval_router)
 api_router.include_router(repo_documents_router)
 api_router.include_router(repos_router)
+api_router.include_router(route_router)
 api_router.include_router(webhook_github_router)
 api_router.include_router(wiki_router)
 # Mount health under /api as well so GET /api/health works per FE_CONTRACT §7.
