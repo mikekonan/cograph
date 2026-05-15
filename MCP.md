@@ -106,6 +106,7 @@ Twelve tools (target). Status flags mark migration progress.
 
 | Tool | Status | Returns | Use when |
 |------|--------|---------|----------|
+| `cograph.route(query, top_k=3)` | ✅ | `{repositories: [{slug,score,why}], collections: [{id,score,why}]}` | Question doesn't name a target repo / collection — pick where to look |
 | `cograph.repositories` | ✅ | List of readable repos | Inventory / target a repo by slug |
 | `cograph.collections` | ✅ | List of markdown collections | Inventory / target a collection by id |
 | `cograph.repository_readme(slug)` | ✅ | `{content, source_path, content_truncated, …}` | One-shot "what is repo X about" |
@@ -121,10 +122,23 @@ Twelve tools (target). Status flags mark migration progress.
 | ~~`cograph.search`~~ | 🚫 | — | Replaced by `cograph.retrieve(mode=…)` |
 | ~~`cograph.node`~~ | 🚫 | — | Renamed to `cograph.read_node` |
 
+`cograph.route` is the **lowest-cost** way to figure out where the answer
+lives when the user's question doesn't name a slug. It returns up to
+`top_k` candidate repositories and `top_k` collections, each with a
+`score` in `[0, 1]` and a `why` string explaining which signal (slug,
+display name, README, outline labels for repos; title / description /
+heading paths for collections) it hit. Agents MUST follow up in
+**every** candidate whose `score ≥ 0.7`, not just the top scorer —
+facts often span multiple sources (an API contract owned by one
+service is consumed by another; a glossary in a collection while the
+implementation lives in code). If fewer than two candidates clear
+`0.7`, take the top two anyway. See "Decision tree" below.
+
 ## Decision tree
 
 | Question shape | First call |
 |---|---|
+| Target repo / collection unclear (no slug in the question) | `cograph.route(query)` — then run the ladder against every candidate with `score ≥ 0.7` |
 | "What repos / collections are there?" | `cograph.repositories` / `cograph.collections` |
 | "What is repo X about?" | `cograph.repository_readme(slug)` |
 | "What's in repo / collection X?" | `cograph.outline(...)` |
@@ -151,6 +165,46 @@ question routed through `cograph.retrieve` typically takes 3-4.
 | `total_tokens_estimate > 8000` | Drop `top_k`, narrow the query, or set `include_chunks=false`. |
 | Tool name not found | Server is older than the client; surface the version mismatch instead of silently retrying with the legacy name. |
 
+## Server-side prompt surface
+
+Beyond the per-tool description, Cograph ships **three** server-side
+prompt layers an MCP client receives without any client-side wiring:
+
+1. **`instructions=` payload** (sent on every `initialize`). Rendered
+   server-side by `backend/app/mcp/instructions.py::render_instructions`
+   and bound to FastMCP via the dynamic-property hook in
+   `backend/app/mcp/server.py`. Composition:
+   - the **English playbook** (static): cite-or-bust, the retry ladder
+     (`route → outline → retrieve(mode=code) → retrieve(mode=mixed) →
+     search_code`), the "at least three distinct approaches before
+     giving up" rule, and the 8-call upper cap.
+   - the **operator briefing** (DB-backed, singleton): deployment-
+     specific prose written by an admin — team focus, glossary, "ask me
+     first" rules. Edited at `/admin?tab=mcp`. Falls back to the
+     `DEFAULT_BRIEFING` cite-or-bust stub when empty.
+   - hard caps: `briefing_max_length=8000` chars (configurable via
+     `McpSettings`), enforced at the column, the Pydantic schema, and
+     the textarea.
+2. **`cograph://briefing` resource**. Lets the agent re-fetch the
+   briefing after a context compaction without re-running `initialize`.
+   Returns `{content, updated_at, is_default}`.
+3. **`cograph://my-context` resource**. The ACL-aware "where am I"
+   surface — returns the caller's readable repositories and collections
+   (`slug`, `display_name`, `count`). Per-user data lives here, not in
+   `instructions=`, because FastMCP renders `instructions=`
+   synchronously before the per-request context is bound.
+
+**Edit flow** for the operator briefing:
+
+```
+admin → /admin?tab=mcp → PATCH /api/admin/mcp/briefing →
+  commit row → refresh_cached_instructions() → next initialize sees new text
+```
+
+The in-process cache (`_RENDERED_CACHE`) is refreshed by both the
+lifespan boot and the PATCH endpoint so a save propagates without
+restarting the process.
+
 ## Implementation references
 
 - `backend/app/rag/snippet.py` — `make_snippet` + `extract_query_terms`
@@ -163,10 +217,21 @@ question routed through `cograph.retrieve` typically takes 3-4.
   layer applies `make_snippet` before serialising.
 - `backend/app/api/retrieval.py` — REST mirror of the same envelope so
   `/api/retrieve` and `cograph.retrieve` stay structurally identical.
+- `backend/app/rag/source_router.py` — lexical hybrid over
+  `repository.display_name + slug + README first ~2K chars + outline
+  labels` and `collection.title + description + heading_path`s;
+  scores normalised to `[0, 1]` and ACL-filtered. Powers both
+  `cograph.route` and `POST /api/route`.
+- `backend/app/mcp/instructions.py` — playbook + briefing renderer +
+  the `_RENDERED_CACHE` the dynamic-property hook on the MCP server
+  reads at each `initialize`.
 
 ## See also
 
 - `eval/cograph_mcp_eval/README.md` — eval harness measuring how this
-  envelope affects agent behaviour (H1-H6 hypotheses).
+  envelope affects agent behaviour (H1-H7 hypotheses; H7 covers
+  `too_early_giveup_rate`, the "agent gave up before ≥3 distinct
+  attempts" failure mode the playbook is explicitly designed to
+  prevent).
 - `cograph-connect/templates/codex-skill/SKILL.md` — agent-side prompt
   derived from this catalog.

@@ -44,6 +44,7 @@ from backend.app.models.llm_model_assignment import (
     LLMModelAssignment,
 )
 from backend.app.models.llm_secret import LLMSecret
+from backend.app.models.mcp_operator_briefing import McpOperatorBriefing
 from backend.app.models.personal_access_token import PersonalAccessToken
 from backend.app.models.query_log import QueryLog
 from backend.app.models.md_collection import (
@@ -93,6 +94,7 @@ __all__ = [
     "LLMEmbeddingState",
     "LLMModelAssignment",
     "LLMSecret",
+    "McpOperatorBriefing",
     "MdChunk",
     "MdCollection",
     "MdCollectionVisibility",

@@ -1,4 +1,4 @@
-"""Print baseline ↔ after diff against H1-H6 targets.
+"""Print baseline ↔ after diff against H1-H7 targets.
 
 Usage:
     python -m eval.cograph_mcp_eval.compare \\
@@ -12,13 +12,21 @@ import argparse
 import json
 from pathlib import Path
 
-# Targets per H1-H6 (see plan §"Hypothesis verification").
+# Targets per H1-H7 (see plan §"Hypothesis verification").
+#
+# H7 — too_early_giveup_rate — uses `must_be_zero` rather than
+# `lower_or_equal` because the playbook explicitly forbids giving up
+# before ≥3 distinct attempts; a non-zero value on `after` means the
+# rule isn't landing and the merge should not ship. We also accept a
+# zero baseline (= the prior behavior already didn't bail early) — the
+# constraint isn't "improve" here, it's "stay at zero".
 TARGETS = {
     "median_tool_calls": {"direction": "lower", "min_delta_pct": 30, "label": "tool calls / answer"},
     "median_tokens_estimate": {"direction": "lower", "min_delta_pct": 40, "label": "tokens / answer"},
     "cites_provenance_rate": {"direction": "higher", "min_delta_pp": 10, "min_abs": 0.80, "label": "cites provenance"},
     "correctness_rate": {"direction": "higher_or_equal", "tol_pp": 2, "label": "correctness"},
     "silent_fallback_rate": {"direction": "lower_or_equal", "label": "silent fallback"},
+    "too_early_giveup_rate": {"direction": "must_be_zero", "label": "early give-up (H7)"},
 }
 
 
@@ -53,6 +61,14 @@ def _evaluate(metric: str, baseline: float, after: float) -> tuple[str, str]:
     if direction == "lower_or_equal":
         delta_pp = delta * 100
         passed = after <= baseline + 1e-9
+        return f"{delta_pp:+.1f}pp", "✅" if passed else "❌"
+
+    if direction == "must_be_zero":
+        # Hard zero — any positive rate fails. We still print the delta
+        # so the operator sees whether the change made it worse or
+        # better when both baseline and after are non-zero.
+        delta_pp = delta * 100
+        passed = after < 1e-9
         return f"{delta_pp:+.1f}pp", "✅" if passed else "❌"
 
     return "?", "?"
