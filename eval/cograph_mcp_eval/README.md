@@ -3,7 +3,7 @@
 A frozen question set + recorder + scorer + comparator for measuring how
 well an MCP-aware agent extracts information from the Cograph server.
 
-## What it measures (H1-H6)
+## What it measures (H1-H7)
 
 | # | Claim | Metric | Target |
 |---|-------|--------|--------|
@@ -13,6 +13,13 @@ well an MCP-aware agent extracts information from the Cograph server.
 | H4 | No correctness regression | `correctness_rate` | within ±2pp of baseline |
 | H5 | Truncation doesn't hide answers | `incorrect_rate` on positive Qs | ≤ baseline |
 | H6 | No silent grep/web fallback | `silent_fallback_rate` | 0 |
+| H7 | Agent does not bail early | `too_early_giveup_rate` | 0 |
+
+H7 fires when the agent emits an "I don't have enough information /
+cannot answer" phrase on a **positive** question with `tool_calls_count
+< 3` — the playbook explicitly requires three distinct attempts before
+giving up. `compare.py` uses `direction: must_be_zero` for this row,
+so any non-zero rate on `after` holds the merge.
 
 ## Files
 
