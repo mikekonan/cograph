@@ -10,6 +10,7 @@ from backend.app.api.admin_secrets import router as admin_secrets_router
 from backend.app.api.admin_users import router as admin_users_router
 from backend.app.api.auth import router as auth_router
 from backend.app.api.auth_oidc import router as auth_oidc_router
+from backend.app.api.mcp_admin import router as mcp_admin_router
 from backend.app.api.md_collections import router as md_collections_router
 from backend.app.api.docs import router as docs_router
 from backend.app.api.graph import router as graph_router
@@ -23,6 +24,7 @@ from backend.app.api.query_logs import router as query_logs_router
 from backend.app.api.retrieval import router as retrieval_router
 from backend.app.api.repo_documents import router as repo_documents_router
 from backend.app.api.repos import router as repos_router
+from backend.app.api.route import router as route_router
 from backend.app.api.webhook_github import router as webhook_github_router
 from backend.app.api.wiki import router as wiki_router
 
@@ -43,10 +45,12 @@ api_router.include_router(jobs_router)
 api_router.include_router(me_identities_router)
 api_router.include_router(personal_access_tokens_router)
 api_router.include_router(query_logs_router)
+api_router.include_router(mcp_admin_router)
 api_router.include_router(md_collections_router)
 api_router.include_router(retrieval_router)
 api_router.include_router(repo_documents_router)
 api_router.include_router(repos_router)
+api_router.include_router(route_router)
 api_router.include_router(webhook_github_router)
 api_router.include_router(wiki_router)
 # Mount health under /api as well so GET /api/health works per FE_CONTRACT §7.

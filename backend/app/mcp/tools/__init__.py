@@ -11,12 +11,14 @@ from backend.app.mcp.tools.repository_readme import (
     register as register_repository_readme_tool,
 )
 from backend.app.mcp.tools.retrieve import register as register_retrieve_tool
+from backend.app.mcp.tools.route import register as register_route_tool
 from backend.app.mcp.tools.search_code import register as register_search_code_tool
 
 
 def register_tools(server: FastMCP, services: MCPServices) -> None:
     register_repositories_tool(server, services)
     register_collection_tools(server, services)
+    register_route_tool(server, services)
     register_retrieve_tool(server, services)
     register_read_node_tool(server, services)
     register_search_code_tool(server, services)

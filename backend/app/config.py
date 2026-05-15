@@ -262,6 +262,12 @@ class McpSettings(BaseModel):
     allowed_hosts: list[str] = Field(default_factory=list)
     allowed_origins: list[str] = Field(default_factory=list)
 
+    # Hard cap on the operator briefing — matched by the same constant in
+    # `backend/app/api/mcp_admin.py` and by the `_BRIEFING_MAX_LENGTH` check
+    # in the playbook renderer. An oversized briefing would inflate every
+    # `initialize` payload and crowd out the playbook itself.
+    briefing_max_length: int = Field(default=8000, ge=256, le=32768)
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(

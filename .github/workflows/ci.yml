@@ -282,6 +282,7 @@ jobs:
                   "cograph.repository_readme",
                   "cograph.read_file_range",
                   "cograph.outline",
+                  "cograph.route",
               }
               assert tool_names == expected, f"unexpected MCP tools via packaged web tier: {tool_names}"
 

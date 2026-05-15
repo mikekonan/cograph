@@ -28,6 +28,7 @@ from backend.app.core.middleware import install_middleware
 from backend.app.core.rate_limit import InMemoryRateLimiter, RedisRateLimiter
 from backend.app.db.session import SessionManager
 from backend.app.mcp.auth import wrap_with_mcp_auth
+from backend.app.mcp.instructions import refresh_cached_instructions
 from backend.app.mcp.server import build_mcp_services, create_mcp_server
 from backend.app.models.enums import UserRole
 from backend.app.models.user import User
@@ -262,6 +263,26 @@ async def _probe_oidc_providers(
             await client.aclose()
 
 
+async def _refresh_mcp_instructions(
+    session_manager: SessionManager, settings: Settings
+) -> None:
+    """Load the operator briefing from DB and seed the MCP instructions cache.
+
+    Best-effort — if the table isn't present yet (migration window) we log
+    and move on; the cache already holds the bootstrap default that
+    `create_mcp_server` seeded, so MCP clients keep getting a coherent
+    `instructions=` until the next reboot or admin PATCH.
+    """
+    try:
+        async with session_manager.session() as session:
+            await refresh_cached_instructions(session, settings=settings)
+            logger.info("MCP instructions: refreshed from DB on boot")
+    except OperationalError:
+        logger.warning(
+            "MCP instructions: skipping DB refresh — table not migrated yet"
+        )
+
+
 async def _install_rate_limiter(app: FastAPI, settings: Settings) -> None:
     if settings.environment in (Environment.DEVELOPMENT, Environment.TESTING):
         logger.info(
@@ -366,6 +387,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # (workers, retrieval API, MCP) — first-boot lifespan must
                 # come up cleanly so the admin can configure secrets via UI.
                 await _maybe_emit_bootstrap_token(app, session_manager)
+                await _refresh_mcp_instructions(session_manager, resolved_settings)
 
                 try:
                     yield
@@ -388,6 +410,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # (workers, retrieval API, MCP) — first-boot lifespan must
         # come up cleanly so the admin can configure secrets via UI.
         await _maybe_emit_bootstrap_token(app, session_manager)
+        await _refresh_mcp_instructions(session_manager, resolved_settings)
 
         try:
             yield
