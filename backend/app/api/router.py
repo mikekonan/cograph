@@ -10,6 +10,7 @@ from backend.app.api.admin_secrets import router as admin_secrets_router
 from backend.app.api.admin_users import router as admin_users_router
 from backend.app.api.auth import router as auth_router
 from backend.app.api.auth_oidc import router as auth_oidc_router
+from backend.app.api.mcp_admin import router as mcp_admin_router
 from backend.app.api.md_collections import router as md_collections_router
 from backend.app.api.docs import router as docs_router
 from backend.app.api.graph import router as graph_router
@@ -43,6 +44,7 @@ api_router.include_router(jobs_router)
 api_router.include_router(me_identities_router)
 api_router.include_router(personal_access_tokens_router)
 api_router.include_router(query_logs_router)
+api_router.include_router(mcp_admin_router)
 api_router.include_router(md_collections_router)
 api_router.include_router(retrieval_router)
 api_router.include_router(repo_documents_router)
