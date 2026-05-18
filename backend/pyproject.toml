@@ -44,7 +44,7 @@ dependencies = [
   "tree-sitter>=0.24",
   # 1.6.3 changed the Python wheel layout and dropped the
   # `tree_sitter_language_pack` module our parser imports.
-  "tree-sitter-language-pack==1.6.2",
+  "tree-sitter-language-pack==1.8.1",
   "PyYAML>=6.0",
   "uvicorn[standard]>=0.30",
   "uvicorn-worker>=0.3",
