@@ -78,6 +78,39 @@ Picking which sources to dig into:
 
 If the user already named a specific slug, skip step 0.
 
+**Re-route per distinct concept.** `cograph.route` is cheap (~150
+tokens, lexical+vector over repo display_name / README / outline) —
+treat it as a router you can call multiple times in one question, not
+a one-shot. A question that mixes two concepts almost always spans
+two source sets:
+
+* "How does the cashier validate billing addresses?" — route once for
+  `"cashier billing address validation"`, then route again for
+  `"address normalisation"` or `"country code lookup"` if the first
+  pass missed the data source.
+* "Where do we handle 3DS challenges and how is the merchant routing
+  decided?" — route for `"3DS challenge flow"` AND for `"merchant
+  routing rules"`. Two separate route calls, two candidate sets, then
+  ladder through each.
+* "What does `acquirer` mean in the payment system?" — route for
+  `"acquirer glossary definition"` (likely a collection) AND for
+  `"acquirer routing implementation"` (likely a service repo).
+
+The rule of thumb: every distinct domain term or sub-question in the
+user's prompt deserves its own route call. Cheap routing beats one
+expensive global retrieve that returns noise. Aim to re-route, NOT to
+broaden a stale candidate set.
+
+**When NOT to re-route:**
+
+* If you've already routed for the same concept with a paraphrase and
+  the candidates were the same — no value in a third spin.
+* If the user named a slug — skip route entirely (you already know
+  where to look).
+* If you're inside the ladder already and just need another phrasing
+  in the SAME source — that's a `cograph.retrieve` rephrase, not a
+  re-route.
+
 ### Step 1 — bootstrap each candidate
 
 For every slug from step 0, run `cograph.outline(slug)` once. The
