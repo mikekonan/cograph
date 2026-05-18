@@ -82,6 +82,11 @@ export default function AdminQueryLogsPage() {
           </code>{" "}
           (default 30 days).
         </p>
+        <p className="max-w-3xl text-xs text-[color:var(--color-fg-subtle)]">
+          Note: result counts logged before <strong>2026-05-18</strong> are unreliable — a backend
+          bug recorded <code>0</code> regardless of actual hits. Rows after the fix are accurate;
+          the original responses are not stored, so old rows can't be backfilled.
+        </p>
       </header>
 
       <StatsCards
@@ -328,7 +333,7 @@ function QueryLogRow({ row }: { row: QueryLogItem }) {
       </td>
       <td className="px-3 py-2 font-mono text-xs">{row.tool_name}</td>
       <td className="px-3 py-2">
-        <div className="max-w-[420px] truncate" title={row.query_text}>
+        <div className="max-w-[640px] truncate" title={row.query_text}>
           {row.query_text || (
             <span className="italic text-[color:var(--color-fg-muted)]">(empty)</span>
           )}
