@@ -219,6 +219,28 @@ async def mcp_query_log_scope(
             )
 
 
+def count_response_results(response: object) -> int | None:
+    """Best-effort `result_count` for a retrieval-shaped response.
+
+    Handles both `RetrievalResponse`-style Pydantic models (attribute
+    `.results`) and dict payloads (key `"results"`) — the two shapes our
+    MCP tools and the REST `/api/retrieve` happen to return today.
+    Returns `None` if the payload exposes neither, so the query log
+    keeps the column nullable instead of falsely recording 0.
+    """
+    if response is None:
+        return None
+    results = getattr(response, "results", None)
+    if results is None and isinstance(response, dict):
+        results = response.get("results")
+    if results is None:
+        return None
+    try:
+        return len(results)
+    except TypeError:
+        return None
+
+
 async def retrieve_payload(
     *,
     services: MCPServices,

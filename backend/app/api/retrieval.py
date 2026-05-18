@@ -35,8 +35,7 @@ from backend.app.rag.snippet import (
 
 
 def _result_count(response: RetrievalResponse) -> int:
-    chunks = getattr(response, "chunks", None) or []
-    return len(chunks)
+    return len(response.results)
 
 
 def _client_label(request: Request) -> str | None:
