@@ -5,7 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/u
 import { useAuth } from "@/hooks/useAuth";
 import { hasAdminAccess } from "@/lib/auth";
 import { repoApiPath } from "@/lib/repoPath";
-import { cn } from "@/lib/utils";
+import { cn, formatUtcTimestamp } from "@/lib/utils";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Calendar, Check, Clock, Eye, RefreshCw, Webhook } from "lucide-react";
 import type { ComponentType, ReactNode, SVGProps } from "react";
@@ -224,13 +224,4 @@ function nextSyncCopy(repo: Repository): string {
     case "weekly":
       return "Waiting for scheduler";
   }
-}
-
-function formatUtcTimestamp(iso: string): string {
-  const normalized = /(?:Z|[+-]\d{2}:\d{2})$/.test(iso) ? iso : `${iso}Z`;
-  const date = new Date(normalized);
-  if (Number.isNaN(date.getTime())) {
-    return iso;
-  }
-  return `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
 }

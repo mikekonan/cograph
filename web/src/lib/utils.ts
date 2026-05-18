@@ -25,6 +25,22 @@ export function formatRelativeTime(iso: string, now: Date = new Date()): string 
 }
 
 /**
+ * Format an ISO timestamp as "YYYY-MM-DD HH:MM UTC".
+ *
+ * Postgres `timestamp without time zone` sometimes round-trips without a
+ * trailing `Z` even though it's UTC; normalize so the Date constructor
+ * doesn't shift the value by the local offset.
+ */
+export function formatUtcTimestamp(iso: string): string {
+  const normalized = /(?:Z|[+-]\d{2}:\d{2})$/.test(iso) ? iso : `${iso}Z`;
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) {
+    return iso;
+  }
+  return `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
+
+/**
  * Parse "owner/repo" from a git URL. Returns null if the URL doesn't match
  * the common github/gitlab/bitbucket shape.
  */

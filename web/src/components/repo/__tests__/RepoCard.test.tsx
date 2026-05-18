@@ -1,4 +1,5 @@
 import type { Repository } from "@/api/types";
+import { TooltipProvider } from "@/components/ui/Tooltip";
 import { type AuthConfig, AuthContext } from "@/contexts/AuthContext";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
@@ -64,6 +65,18 @@ describe("RepoCard", () => {
 
     expect(screen.getByText(/embedding code/i)).toBeInTheDocument();
   });
+
+  it("shows 'never synced' when last_synced_at is null", () => {
+    renderRepoCard({ ...repo, last_synced_at: null });
+    expect(screen.getByText("never synced")).toBeInTheDocument();
+  });
+
+  it("shows synced recency when last_synced_at is present", () => {
+    renderRepoCard({ ...repo, last_synced_at: "2026-04-22T00:00:00Z" });
+    // The "synced " prefix is the load-bearing claim; the relative value
+    // shifts with the clock so we don't lock its exact wording.
+    expect(screen.getByText(/^synced /)).toBeInTheDocument();
+  });
 });
 
 function renderRepoCard(nextRepo: Repository = repo, config: AuthConfig = authConfig) {
@@ -87,7 +100,9 @@ function renderRepoCard(nextRepo: Repository = repo, config: AuthConfig = authCo
         }}
       >
         <MemoryRouter>
-          <RepoCard repo={nextRepo} />
+          <TooltipProvider>
+            <RepoCard repo={nextRepo} />
+          </TooltipProvider>
         </MemoryRouter>
       </AuthContext.Provider>
     </QueryClientProvider>,
