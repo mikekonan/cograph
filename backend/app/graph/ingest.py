@@ -13,9 +13,10 @@ from uuid import UUID
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.exc import StaleDataError
 
 from backend.app.graph._chunking import chunked
-from backend.app.graph.builder import GraphBuilder
+from backend.app.graph.builder import GraphBuilder, GraphBuildResult
 from backend.app.graph.extractor import ExtractedGraph, GraphExtractor, GraphNodeType
 from backend.app.graph.ingest_cache import GraphIngestCache
 from backend.app.graph.go_variants import (
@@ -67,6 +68,44 @@ def _log_ingest_progress(
             "current_file": current_file,
         },
     )
+
+
+async def _refresh_cache_from_db(
+    *,
+    session: AsyncSession,
+    repository_id: UUID,
+    cache: GraphIngestCache,
+) -> None:
+    """Rebuild the in-place ingest cache from the current DB state.
+
+    Called from the StaleDataError recovery path: after a savepoint
+    rollback, Python-side mutations on cached CodeNode objects
+    (renames, parent_id, node_metadata) outlive the SQL rollback. The
+    cleanest way to get back to a consistent view is to expire the
+    session's identity map for this repo's nodes and rebuild the cache
+    from a fresh SELECT.
+    """
+    # Drop stale Python-side state so the SELECT below returns fresh
+    # objects rather than the same identity-map entries with their
+    # mutated attributes still attached.
+    for stale in list(cache.repository_nodes()):
+        try:
+            session.expunge(stale)
+        except Exception:
+            # Already detached / never in identity map — nothing to do.
+            pass
+    fresh_nodes = list(
+        (
+            await session.scalars(
+                select(CodeNode).where(CodeNode.repository_id == repository_id)
+            )
+        ).all()
+    )
+    cache.node_by_id.clear()
+    cache.nodes_by_qn.clear()
+    cache.module_nodes_by_file_path.clear()
+    for node in fresh_nodes:
+        cache.add(node)
 
 
 @dataclass(slots=True, kw_only=True)
@@ -702,14 +741,52 @@ class GraphIngestService:
             if (root_path / ".git").exists()
             else {}
         )
-        return await self._builder.persist_graph(
-            session=session,
-            repository_id=repository_id,
-            extracted_graph=extracted_graph,
-            commit_sha=commit_sha,
-            temporal_by_key=temporal_by_key,
-            cache=cache,
-        )
+        # Each file gets its own SAVEPOINT. If `persist_graph` raises
+        # `StaleDataError` (or any DB error) the savepoint rolls back
+        # so the outer ingest transaction stays alive and the
+        # remaining files can still be processed. Without this guard,
+        # one bad file kills the whole reindex of a large monorepo.
+        try:
+            async with session.begin_nested():
+                return await self._builder.persist_graph(
+                    session=session,
+                    repository_id=repository_id,
+                    extracted_graph=extracted_graph,
+                    commit_sha=commit_sha,
+                    temporal_by_key=temporal_by_key,
+                    cache=cache,
+                )
+        except StaleDataError as exc:
+            # The in-memory cache holds Python-side mutations
+            # (qualified_name renames, parent_id, node_metadata) that
+            # the savepoint rollback cannot undo. If we kept using it,
+            # the next persist_graph would propagate the divergence.
+            # Refresh from DB so subsequent files see a clean snapshot.
+            logger.warning(
+                "persist_graph_stale_data repo=%s file=%s — skipping file, "
+                "rebuilding cache: %s",
+                repository_id,
+                relative_path.as_posix(),
+                exc,
+                extra={
+                    "event": "persist_graph_stale_data",
+                    "repository_id": str(repository_id),
+                    "file_path": relative_path.as_posix(),
+                    "error": str(exc),
+                },
+            )
+            if cache is not None:
+                await _refresh_cache_from_db(
+                    session=session,
+                    repository_id=repository_id,
+                    cache=cache,
+                )
+            return GraphBuildResult(
+                inserted_nodes=0,
+                replaced_files=(),
+                resolved_calls=0,
+                unresolved_calls=0,
+            )
 
     async def _parse_go_package_graphs(
         self,

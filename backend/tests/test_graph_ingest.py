@@ -526,3 +526,87 @@ async def test_graph_ingest_emits_structured_start_and_done_logs(
     assert done_record.__dict__["mode"] == "full"
     assert done_record.__dict__["files_processed"] >= 1
     assert "duration_s" in done_record.__dict__
+
+
+async def test_one_bad_file_does_not_kill_the_whole_ingest(
+    db_session,
+    tmp_path,
+    monkeypatch,
+):
+    """If `persist_graph` raises `StaleDataError` for one file, the
+    SAVEPOINT must roll that file's writes back and the rest of the
+    ingest must continue. Pre-fix, a single bad file dropped the whole
+    reindex of a large monorepo on the floor."""
+    from sqlalchemy.orm.exc import StaleDataError
+
+    repository = Repository(
+        host="example.com",
+        git_url="git@github.com:mikekonan/cograph.git",
+        name="cograph",
+        owner="mikekonan",
+        branch="main",
+        status=RepositoryStatus.PENDING,
+        sync_schedule=SyncSchedule.MANUAL,
+    )
+    db_session.add(repository)
+    await db_session.flush()
+
+    checkout_path = tmp_path / "checkout"
+    checkout_path.mkdir()
+    (checkout_path / "good_a.py").write_text(
+        "def alpha() -> int:\n    return 1\n", encoding="utf-8"
+    )
+    (checkout_path / "bad.py").write_text(
+        "def beta() -> int:\n    return 2\n", encoding="utf-8"
+    )
+    (checkout_path / "good_b.py").write_text(
+        "def gamma() -> int:\n    return 3\n", encoding="utf-8"
+    )
+
+    # Monkeypatch GraphBuilder.persist_graph to detonate on `bad.py`
+    # by inspecting the file_path of any extracted node.
+    from backend.app.graph.builder import GraphBuilder
+
+    real_persist_graph = GraphBuilder.persist_graph
+
+    async def _maybe_raising_persist_graph(self, *args, **kwargs):
+        extracted = kwargs.get("extracted_graph")
+        if extracted is not None:
+            for node in extracted.nodes:
+                if node.file_path == "bad.py":
+                    raise StaleDataError(
+                        "UPDATE statement on table 'code_nodes' "
+                        "expected to update 1 row(s); 0 were matched.",
+                        None,
+                        None,
+                    )
+        return await real_persist_graph(self, *args, **kwargs)
+
+    monkeypatch.setattr(GraphBuilder, "persist_graph", _maybe_raising_persist_graph)
+
+    result = await GraphIngestService().ingest_checkout(
+        session=db_session,
+        repository_id=repository.id,
+        checkout_path=checkout_path,
+    )
+    await db_session.commit()
+
+    persisted = {
+        node.qualified_name
+        for node in (
+            await db_session.scalars(
+                select(CodeNode).where(CodeNode.repository_id == repository.id)
+            )
+        ).all()
+    }
+
+    # Both "good" files made it through; the bad file's nodes are absent.
+    assert "good_a" in persisted
+    assert "good_a.alpha" in persisted
+    assert "good_b" in persisted
+    assert "good_b.gamma" in persisted
+    assert "bad" not in persisted
+    assert "bad.beta" not in persisted
+
+    # The ingest itself succeeded — no exception propagated out.
+    assert result is not None
