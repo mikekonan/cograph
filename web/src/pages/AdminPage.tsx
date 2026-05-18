@@ -86,7 +86,15 @@ export default function AdminPage() {
   }, [requested, searchParams, setSearchParams]);
 
   return (
-    <main className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-5 py-8">
+    <main
+      className={cn(
+        "mx-auto flex w-full flex-col gap-6 px-5 py-8",
+        // Query Logs is an 8-column table; the other admin tabs are
+        // form/card-shaped and look fine at 6xl. Widen the shell only
+        // for the table tab so cells stop wrapping on 13–15" screens.
+        activeId === "query-logs" ? "max-w-[110rem]" : "max-w-6xl",
+      )}
+    >
       <header className="flex flex-col gap-1">
         <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight md:text-3xl">
           <Settings2 className="h-6 w-6" aria-hidden="true" /> Config
