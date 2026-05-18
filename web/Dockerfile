@@ -8,7 +8,7 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-FROM nginx:1.27-alpine
+FROM nginx:1.31-alpine
 
 ENV NGINX_ENVSUBST_OUTPUT_DIR=/etc/nginx/conf.d
 
