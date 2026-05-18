@@ -610,3 +610,89 @@ async def test_one_bad_file_does_not_kill_the_whole_ingest(
 
     # The ingest itself succeeded — no exception propagated out.
     assert result is not None
+
+
+async def test_one_fk_violation_does_not_kill_the_whole_ingest(
+    db_session,
+    tmp_path,
+    monkeypatch,
+):
+    """An `IntegrityError` (e.g. FK violation when the cache holds a
+    stale parent UUID) must be handled identically to `StaleDataError`:
+    SAVEPOINT rolls the file back, cache is refreshed, the rest of the
+    ingest continues. Prod hit this on a Go monorepo where reparenting
+    a method onto a deleted struct produced an
+    `asyncpg.exceptions.ForeignKeyViolationError`.
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    repository = Repository(
+        host="example.com",
+        git_url="git@github.com:mikekonan/cograph.git",
+        name="cograph",
+        owner="mikekonan",
+        branch="main",
+        status=RepositoryStatus.PENDING,
+        sync_schedule=SyncSchedule.MANUAL,
+    )
+    db_session.add(repository)
+    await db_session.flush()
+
+    checkout_path = tmp_path / "checkout"
+    checkout_path.mkdir()
+    (checkout_path / "good_a.py").write_text(
+        "def alpha() -> int:\n    return 1\n", encoding="utf-8"
+    )
+    (checkout_path / "bad.py").write_text(
+        "def beta() -> int:\n    return 2\n", encoding="utf-8"
+    )
+    (checkout_path / "good_b.py").write_text(
+        "def gamma() -> int:\n    return 3\n", encoding="utf-8"
+    )
+
+    from backend.app.graph.builder import GraphBuilder
+
+    real_persist_graph = GraphBuilder.persist_graph
+
+    async def _maybe_raising_persist_graph(self, *args, **kwargs):
+        extracted = kwargs.get("extracted_graph")
+        if extracted is not None:
+            for node in extracted.nodes:
+                if node.file_path == "bad.py":
+                    raise IntegrityError(
+                        "UPDATE code_nodes SET parent_id=$1 WHERE id=$2",
+                        params=None,
+                        orig=Exception(
+                            "insert or update on table 'code_nodes' violates "
+                            "foreign key constraint "
+                            "'fk_code_nodes_parent_id_code_nodes'"
+                        ),
+                    )
+        return await real_persist_graph(self, *args, **kwargs)
+
+    monkeypatch.setattr(GraphBuilder, "persist_graph", _maybe_raising_persist_graph)
+
+    result = await GraphIngestService().ingest_checkout(
+        session=db_session,
+        repository_id=repository.id,
+        checkout_path=checkout_path,
+    )
+    await db_session.commit()
+
+    persisted = {
+        node.qualified_name
+        for node in (
+            await db_session.scalars(
+                select(CodeNode).where(CodeNode.repository_id == repository.id)
+            )
+        ).all()
+    }
+
+    assert "good_a" in persisted
+    assert "good_a.alpha" in persisted
+    assert "good_b" in persisted
+    assert "good_b.gamma" in persisted
+    assert "bad" not in persisted
+    assert "bad.beta" not in persisted
+
+    assert result is not None
