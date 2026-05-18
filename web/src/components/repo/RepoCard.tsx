@@ -18,7 +18,7 @@ import { useDeleteRepo } from "@/hooks/useRepos";
 import { hasAdminAccess } from "@/lib/auth";
 import { repoPath } from "@/lib/repoPath";
 import { repoInFlightMessage } from "@/lib/repoStatus";
-import { cn, formatCount, formatRelativeTime } from "@/lib/utils";
+import { cn, formatCount, formatRelativeTime, formatUtcTimestamp } from "@/lib/utils";
 import { GitBranch, MoreVertical, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { NavLink } from "react-router";
@@ -165,7 +165,7 @@ export function RepoCard({ repo }: RepoCardProps) {
         </div>
       )}
 
-      {/* ZONE 4 — meta: updated + delete affordance on a tinted half-strip */}
+      {/* ZONE 4 — meta: sync recency + delete affordance on a tinted half-strip */}
       <footer
         className={cn(
           "mt-auto flex items-center justify-between px-4 py-2.5",
@@ -174,7 +174,13 @@ export function RepoCard({ repo }: RepoCardProps) {
           "text-xs text-[color:var(--color-fg-muted)]",
         )}
       >
-        <span>updated {formatRelativeTime(repo.updated_at)}</span>
+        {repo.last_synced_at ? (
+          <Tooltip content={`Last synced ${formatUtcTimestamp(repo.last_synced_at)}`}>
+            <span>synced {formatRelativeTime(repo.last_synced_at)}</span>
+          </Tooltip>
+        ) : (
+          <span>never synced</span>
+        )}
 
         {canDelete && (
           <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
