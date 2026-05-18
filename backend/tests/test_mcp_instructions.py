@@ -76,6 +76,18 @@ def test_playbook_contains_route_step_zero() -> None:
     assert "skip step 0" in text or "Skip step 0" in text
 
 
+def test_playbook_recommends_re_routing_per_concept() -> None:
+    # `cograph.route` is cheap; one prompt that mixes two concepts deserves
+    # two route calls. The playbook must keep this guidance verbatim so the
+    # agent doesn't collapse multi-concept questions to a single candidate
+    # set.
+    text = _render_with_default_settings(None)
+    assert "Re-route per distinct concept" in text
+    assert "every distinct domain term" in text
+    # And the "when not to re-route" guard rail so we don't burn tokens.
+    assert "When NOT to re-route" in text
+
+
 def test_playbook_mentions_acl_resource() -> None:
     # ACL list moved to the `cograph://my-context` resource; the playbook
     # must tell the agent to fetch it on session start.
