@@ -59,6 +59,15 @@ class QueryLogPayload:
     inserts a single row. Keep this dataclass JSON-serialisable —
     arq pickles by default but we stay portable in case the queue is
     switched later.
+
+    `tokens_*` and `*_model` arrived with migration 0056. They are
+    nullable end-to-end: a provider that doesn't return usage logs
+    no cost (column = NULL), distinct from "cost is $0" (impossible
+    for any real chat / embed model — see backend/app/llm/pricing.py).
+    `cost_usd_micros` is computed on the worker side from
+    (model, tokens_input, tokens_output) using the central pricing
+    table, NOT recomputed on read — so a future price update doesn't
+    rewrite historical rows.
     """
 
     user_id: str | None
@@ -75,6 +84,10 @@ class QueryLogPayload:
     status: str
     error_code: str | None
     client_label: str | None
+    tokens_input: int | None = None
+    tokens_output: int | None = None
+    embed_model: str | None = None
+    completion_model: str | None = None
 
     def to_kwargs(self) -> dict[str, Any]:
         return asdict(self)
@@ -263,6 +276,10 @@ async def enqueue_query_log(
     status: QueryLogStatus,
     error_code: str | None = None,
     client_label: str | None = None,
+    tokens_input: int | None = None,
+    tokens_output: int | None = None,
+    embed_model: str | None = None,
+    completion_model: str | None = None,
 ) -> None:
     """Enqueue one query_log row for async insert.
 
@@ -321,6 +338,10 @@ async def enqueue_query_log(
             status=status.value,
             error_code=error_code,
             client_label=client_label,
+            tokens_input=tokens_input,
+            tokens_output=tokens_output,
+            embed_model=embed_model,
+            completion_model=completion_model,
         )
         pool = await _get_pool(app_state)
         await pool.enqueue_job("record_query_log", payload.to_kwargs())

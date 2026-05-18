@@ -77,6 +77,10 @@ def _wire_inline_query_log(monkeypatch, app) -> None:
             else kwargs["status"],
             "error_code": kwargs.get("error_code"),
             "client_label": kwargs.get("client_label"),
+            "tokens_input": kwargs.get("tokens_input"),
+            "tokens_output": kwargs.get("tokens_output"),
+            "embed_model": kwargs.get("embed_model"),
+            "completion_model": kwargs.get("completion_model"),
         }
         ctx = {"session_manager": app.state.session_manager}
         await record_query_log(ctx, payload)
@@ -189,6 +193,64 @@ async def test_retrieve_failure_records_error_status(
     assert len(rows) == 1
     assert rows[0].status == QueryLogStatus.ERROR.value
     assert rows[0].error_code == "RuntimeError"
+
+
+async def test_retrieve_records_token_and_cost_columns(
+    client, db_session, settings, app, monkeypatch
+):
+    """A successful retrieve must persist embed model + token + cost.
+
+    Patches `retrieve_composite` to populate the `usage_sink` (the wire
+    the embed call uses to ferry usage out to the recorder) — this is
+    what a real OpenAIEmbedProvider does in production. The worker
+    then resolves the price from `backend/app/llm/pricing.py` and
+    materialises `cost_usd_micros`.
+    """
+    _wire_inline_query_log(monkeypatch, app)
+
+    from backend.app.rag.context_builder import RetrievalResponse, RetrievalResult
+
+    fake = RetrievalResponse.model_construct(
+        results=[RetrievalResult.model_construct() for _ in range(2)],
+        nodes={},
+        total_tokens_estimate=10,
+        mode=None,
+    )
+
+    async def _stub(*_args, **kwargs):
+        # Mimic what `retrieve_composite` does on the happy path: tell
+        # the caller which embed model ran and how many input tokens
+        # OpenAI billed for.
+        sink = kwargs.get("usage_sink")
+        if sink is not None:
+            sink["embed_model"] = "text-embedding-3-small"
+            sink["tokens_input"] = 42
+        return fake
+
+    monkeypatch.setattr("backend.app.api.retrieval.retrieve_composite", _stub)
+
+    user = await _make_user(db_session, email="cost@example.com")
+    await _authenticate(client, settings, user)
+
+    response = await client.post(
+        "/api/retrieve",
+        json={"query": "cost flow", "top_k": 5},
+    )
+    assert response.status_code == 200, response.text
+
+    rows = (
+        await db_session.scalars(select(QueryLog).where(QueryLog.user_id == user.id))
+    ).all()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.embed_model == "text-embedding-3-small"
+    assert row.tokens_input == 42
+    assert row.tokens_output is None
+    # Embedding price is $0.02 / 1M tokens → 42 * 0.02 = 0.84 micro-USD
+    # → ceil to 1. Hard-coded so a price drift in `pricing.py` flags
+    # this test, prompting an explicit update.
+    assert row.cost_usd_micros == 1
+    assert row.completion_model is None
 
 
 async def test_retrieve_records_result_count_from_results_field(

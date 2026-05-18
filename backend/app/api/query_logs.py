@@ -59,6 +59,11 @@ class QueryLogItem(BaseModel):
     status: str
     error_code: str | None
     client_label: str | None
+    tokens_input: int | None
+    tokens_output: int | None
+    cost_usd_micros: int | None
+    embed_model: str | None
+    completion_model: str | None
 
 
 class QueryLogPage(BaseModel):
@@ -87,6 +92,10 @@ class QueryLogStats(BaseModel):
     p95_duration_ms: int | None
     top_queries: list[TopQueryItem]
     top_repos: list[TopRepoItem]
+    tokens_input_total: int
+    tokens_output_total: int
+    cost_usd_micros_total: int
+    rows_with_cost: int
 
 
 def _to_item(row: QueryLog) -> QueryLogItem:
@@ -107,6 +116,11 @@ def _to_item(row: QueryLog) -> QueryLogItem:
         status=str(row.status),
         error_code=row.error_code,
         client_label=row.client_label,
+        tokens_input=row.tokens_input,
+        tokens_output=row.tokens_output,
+        cost_usd_micros=row.cost_usd_micros,
+        embed_model=row.embed_model,
+        completion_model=row.completion_model,
     )
 
 
@@ -319,6 +333,78 @@ async def admin_query_logs_stats(
     p50 = _pct(duration_values, 50.0)
     p95 = _pct(duration_values, 95.0)
 
+    # Cost + token aggregates. SUMs on nullable columns coerce NULL to
+    # 0 (postgres behaviour), so rows from before migration 0056 don't
+    # poison the total — they simply contribute zero. `rows_with_cost`
+    # lets the UI footer caveat "computed over N of M rows" so an
+    # operator doesn't read a partial total as gospel.
+    tokens_input_total = (
+        await session.scalar(
+            _apply_filters(
+                select(func.coalesce(func.sum(QueryLog.tokens_input), 0)),
+                user_id=None,
+                repository_id=None,
+                tool_name=None,
+                status=None,
+                zero_results=None,
+                q=None,
+                since=since,
+                until=until,
+            )
+        )
+        or 0
+    )
+    tokens_output_total = (
+        await session.scalar(
+            _apply_filters(
+                select(func.coalesce(func.sum(QueryLog.tokens_output), 0)),
+                user_id=None,
+                repository_id=None,
+                tool_name=None,
+                status=None,
+                zero_results=None,
+                q=None,
+                since=since,
+                until=until,
+            )
+        )
+        or 0
+    )
+    cost_total = (
+        await session.scalar(
+            _apply_filters(
+                select(func.coalesce(func.sum(QueryLog.cost_usd_micros), 0)),
+                user_id=None,
+                repository_id=None,
+                tool_name=None,
+                status=None,
+                zero_results=None,
+                q=None,
+                since=since,
+                until=until,
+            )
+        )
+        or 0
+    )
+    rows_with_cost = (
+        await session.scalar(
+            _apply_filters(
+                select(func.count(QueryLog.id)).where(
+                    QueryLog.cost_usd_micros.is_not(None)
+                ),
+                user_id=None,
+                repository_id=None,
+                tool_name=None,
+                status=None,
+                zero_results=None,
+                q=None,
+                since=since,
+                until=until,
+            )
+        )
+        or 0
+    )
+
     top_queries_rows = (
         await session.execute(
             _apply_filters(
@@ -379,6 +465,10 @@ async def admin_query_logs_stats(
             TopRepoItem(repository_id=row[0], count=int(row[1]))
             for row in top_repos_rows
         ],
+        tokens_input_total=int(tokens_input_total),
+        tokens_output_total=int(tokens_output_total),
+        cost_usd_micros_total=int(cost_total),
+        rows_with_cost=int(rows_with_cost),
     )
 
 

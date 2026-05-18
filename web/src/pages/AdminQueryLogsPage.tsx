@@ -17,6 +17,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
+  Coins,
+  DollarSign,
   Filter,
   Search,
   TrendingUp,
@@ -150,16 +152,20 @@ function StatsCards({
 }) {
   if (loading) {
     return (
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        {[0, 1, 2, 3].map((i) => (
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
+        {[0, 1, 2, 3, 4, 5].map((i) => (
           <Skeleton key={i} className="h-20 rounded-[var(--radius-md)]" />
         ))}
       </div>
     );
   }
   if (!stats) return null;
+  const costNote =
+    stats.rows_with_cost < stats.total_count
+      ? `priced rows: ${stats.rows_with_cost.toLocaleString()} / ${stats.total_count.toLocaleString()}`
+      : undefined;
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
       <StatCard label="Queries total" value={stats.total_count.toLocaleString()} icon={Search} />
       <StatCard
         label="Zero-result"
@@ -182,8 +188,36 @@ function StatsCards({
         }
         icon={Clock}
       />
+      <StatCard
+        label="Total cost"
+        value={formatUsdMicros(stats.cost_usd_micros_total)}
+        icon={DollarSign}
+        hint={costNote}
+      />
+      <StatCard
+        label="Tokens (in / out)"
+        value={`${stats.tokens_input_total.toLocaleString()} / ${stats.tokens_output_total.toLocaleString()}`}
+        icon={Coins}
+      />
     </div>
   );
+}
+
+function costTitle(row: QueryLogItem): string | undefined {
+  const parts: string[] = [];
+  if (row.embed_model) parts.push(`embed: ${row.embed_model}`);
+  if (row.completion_model) parts.push(`completion: ${row.completion_model}`);
+  if (row.tokens_input !== null) parts.push(`tokens in: ${row.tokens_input}`);
+  if (row.tokens_output !== null) parts.push(`tokens out: ${row.tokens_output}`);
+  return parts.length ? parts.join(" · ") : undefined;
+}
+
+function formatUsdMicros(micros: number | null | undefined): string {
+  if (micros === null || micros === undefined || micros === 0) return "$0.00";
+  const usd = micros / 1_000_000;
+  if (usd < 0.01) return `$${usd.toFixed(6)}`;
+  if (usd < 1) return `$${usd.toFixed(4)}`;
+  return `$${usd.toFixed(2)}`;
 }
 
 function StatCard({
@@ -191,11 +225,13 @@ function StatCard({
   value,
   icon: Icon,
   tone = "default",
+  hint,
 }: {
   label: string;
   value: string;
   icon: typeof Search;
   tone?: "default" | "warn" | "danger";
+  hint?: string;
 }) {
   return (
     <div
@@ -211,6 +247,7 @@ function StatCard({
         {label}
       </div>
       <div className="text-lg font-semibold tabular-nums">{value}</div>
+      {hint ? <div className="text-[10px] text-[color:var(--color-fg-subtle)]">{hint}</div> : null}
     </div>
   );
 }
@@ -299,6 +336,7 @@ function QueryLogsTable({ items }: { items: QueryLogItem[] }) {
             <th className="px-3 py-2 font-medium">Query</th>
             <th className="px-3 py-2 text-right font-medium">Results</th>
             <th className="px-3 py-2 text-right font-medium">Duration</th>
+            <th className="px-3 py-2 text-right font-medium">Cost</th>
             <th className="px-3 py-2 font-medium">Status</th>
           </tr>
         </thead>
@@ -355,6 +393,13 @@ function QueryLogRow({ row }: { row: QueryLogItem }) {
       </td>
       <td className="px-3 py-2 text-right tabular-nums text-xs text-[color:var(--color-fg-muted)]">
         {row.duration_ms} ms
+      </td>
+      <td className="px-3 py-2 text-right tabular-nums text-xs" title={costTitle(row)}>
+        {row.cost_usd_micros === null ? (
+          <span className="text-[color:var(--color-fg-muted)]">—</span>
+        ) : (
+          formatUsdMicros(row.cost_usd_micros)
+        )}
       </td>
       <td className="px-3 py-2">
         <StatusBadge status={row.status} errorCode={row.error_code} />

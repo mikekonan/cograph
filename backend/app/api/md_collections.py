@@ -740,6 +740,8 @@ async def search_md_collection(
     status = QueryLogStatus.ERROR
     error_code: str | None = None
     result_count: int | None = None
+    embed_model: str | None = None
+    tokens_input: int | None = None
     try:
         if embed_provider is None:
             error_code = "RETRIEVAL_UNAVAILABLE"
@@ -750,7 +752,18 @@ async def search_md_collection(
             )
 
         try:
-            query_embedding = (await embed_provider.embed([payload.query]))[0]
+            # See the matching comment in `retrieve_composite` — usage
+            # is a best-effort metric, and a stub provider that only
+            # implements `.embed` is tolerated.
+            if hasattr(embed_provider, "embed_with_usage"):
+                vectors, embed_usage = await embed_provider.embed_with_usage(
+                    [payload.query]
+                )
+                query_embedding = vectors[0]
+                embed_model = embed_usage.model
+                tokens_input = embed_usage.tokens_input
+            else:
+                query_embedding = (await embed_provider.embed([payload.query]))[0]
         except Exception as exc:
             error_code = "EMBEDDING_PROVIDER_FAILED"
             raise ApiError(
@@ -808,6 +821,8 @@ async def search_md_collection(
                 status=status,
                 error_code=error_code,
                 client_label=ua[:128] if ua else None,
+                tokens_input=tokens_input,
+                embed_model=embed_model,
             )
 
 

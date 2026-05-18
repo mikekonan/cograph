@@ -158,6 +158,7 @@ def register(server: FastMCP, services: MCPServices) -> None:
                 current_user=current_user,
                 snippet_chars=args.snippet_chars,
                 mode=args.mode,
+                usage_sink=log_bucket,
             )
             log_bucket["result_count"] = count_response_results(response)
             return encode_payload(response)
