@@ -75,7 +75,7 @@ dev = [
   "pytest-asyncio>=0.24",
   "pytest-timeout>=2.3",
   "pytest-xdist>=3.6",
-  "ruff>=0.11",
+  "ruff>=0.15.13",
 ]
 # Phase 7d: local cross-encoder reranker. Pulls torch + sentence-transformers
 # (~500 MB CPU-only). Skip this extra to deploy with rerank disabled or with
