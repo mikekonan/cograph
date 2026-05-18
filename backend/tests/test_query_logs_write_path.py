@@ -189,3 +189,50 @@ async def test_retrieve_failure_records_error_status(
     assert len(rows) == 1
     assert rows[0].status == QueryLogStatus.ERROR.value
     assert rows[0].error_code == "RuntimeError"
+
+
+async def test_retrieve_records_result_count_from_results_field(
+    client, db_session, settings, app, monkeypatch
+):
+    """`/api/retrieve` must record `result_count = len(response.results)`.
+
+    Regression for a bug where the count came from `response.chunks` —
+    a field that does not exist on `RetrievalResponse` — so the query
+    log always read 0 even when retrieval returned hits. The admin
+    Query Logs view rendered this as "0 results" for every search.
+    """
+    _wire_inline_query_log(monkeypatch, app)
+
+    from backend.app.rag.context_builder import RetrievalResponse, RetrievalResult
+
+    # `model_construct` skips field validation — we only need an object
+    # whose `.results` has the right length, since the handler turns
+    # around and feeds it back through FastAPI's response_model encoder
+    # (the stubbed downstream isn't doing actual retrieval anyway).
+    fake = RetrievalResponse.model_construct(
+        results=[RetrievalResult.model_construct() for _ in range(3)],
+        nodes={},
+        total_tokens_estimate=10,
+        mode=None,
+    )
+
+    async def _stub(*_args, **_kwargs):
+        return fake
+
+    monkeypatch.setattr("backend.app.api.retrieval.retrieve_composite", _stub)
+
+    user = await _make_user(db_session, email="rc@example.com")
+    await _authenticate(client, settings, user)
+
+    response = await client.post(
+        "/api/retrieve",
+        json={"query": "synthetic", "top_k": 5},
+    )
+    assert response.status_code == 200, response.text
+
+    rows = (
+        await db_session.scalars(select(QueryLog).where(QueryLog.user_id == user.id))
+    ).all()
+    assert len(rows) == 1
+    assert rows[0].result_count == 3
+    assert rows[0].status == QueryLogStatus.OK.value
