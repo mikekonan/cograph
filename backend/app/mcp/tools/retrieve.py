@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from backend.app.mcp.services import (
     MCPServices,
+    count_response_results,
     current_user_from_context,
     encode_payload,
     mcp_query_log_scope,
@@ -158,5 +159,5 @@ def register(server: FastMCP, services: MCPServices) -> None:
                 snippet_chars=args.snippet_chars,
                 mode=args.mode,
             )
-            log_bucket["result_count"] = len(getattr(response, "chunks", None) or [])
+            log_bucket["result_count"] = count_response_results(response)
             return encode_payload(response)
