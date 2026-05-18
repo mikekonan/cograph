@@ -177,14 +177,32 @@ async def mcp_query_log_scope(
 ) -> AsyncIterator[dict[str, Any]]:
     """Context manager that records one query_log row per MCP tool call.
 
-    The body mutates `bucket["result_count"]` if it can measure the
-    result-set size — we default to None when the response shape
-    doesn't expose a meaningful count. Status auto-derives from
-    exceptions raised inside the `with`, and the row is enqueued in
-    the `finally` so duration is always recorded.
+    The body mutates the bucket dict to communicate measurements
+    back to the recorder. Recognised keys:
+
+    - `result_count`     — int | None, drives status=EMPTY vs OK.
+    - `tokens_input`     — int | None, embed prompt tokens (+ any
+                            completion input). Sum across calls if a
+                            single tool dispatches more than one.
+    - `tokens_output`    — int | None, completion tokens only — left
+                            None for embed-only retrieval paths.
+    - `embed_model`      — str | None, model id of the embedding call
+                            (for pricing lookup + UI breakdown).
+    - `completion_model` — str | None, model id of any completion / rerank
+                            call attached to the tool (None for pure
+                            retrieval). Pricing is summed across models.
+
+    Status auto-derives from exceptions raised inside the `with`, and
+    the row is enqueued in the `finally` so duration is always recorded.
     """
     started = time.perf_counter()
-    bucket: dict[str, Any] = {"result_count": None}
+    bucket: dict[str, Any] = {
+        "result_count": None,
+        "tokens_input": None,
+        "tokens_output": None,
+        "embed_model": None,
+        "completion_model": None,
+    }
     status = QueryLogStatus.ERROR
     error_code: str | None = None
     try:
@@ -216,6 +234,10 @@ async def mcp_query_log_scope(
                 status=status,
                 error_code=error_code,
                 client_label=_mcp_client_label(ctx),
+                tokens_input=bucket.get("tokens_input"),
+                tokens_output=bucket.get("tokens_output"),
+                embed_model=bucket.get("embed_model"),
+                completion_model=bucket.get("completion_model"),
             )
 
 
@@ -257,6 +279,7 @@ async def retrieve_payload(
     current_user: User | None,
     snippet_chars: int = DEFAULT_SNIPPET_CHARS,
     mode: str | None = None,
+    usage_sink: dict | None = None,
 ) -> RetrievalResponse:
     async with services.session_manager.session() as session:
         embed_provider = services.embed_provider
@@ -283,6 +306,7 @@ async def retrieve_payload(
             context_builder=services.context_builder,
             snippet_chars=snippet_chars,
             mode=mode,
+            usage_sink=usage_sink,
         )
 
 
@@ -563,6 +587,7 @@ async def collection_search_payload(
     query: str,
     top_k: int,
     snippet_chars: int = DEFAULT_SNIPPET_CHARS,
+    usage_sink: dict | None = None,
 ) -> object:
     async with services.session_manager.session() as session:
         try:
@@ -580,7 +605,16 @@ async def collection_search_payload(
                 settings=services.settings,
             )
             embed_provider = runtime_providers.embed_provider
-        query_embedding = (await embed_provider.embed([query]))[0]
+        if hasattr(embed_provider, "embed_with_usage"):
+            vectors, embed_usage = await embed_provider.embed_with_usage([query])
+            query_embedding = vectors[0]
+            if usage_sink is not None:
+                usage_sink["embed_model"] = embed_usage.model
+                usage_sink["tokens_input"] = int(
+                    (usage_sink.get("tokens_input") or 0) + embed_usage.tokens_input
+                )
+        else:
+            query_embedding = (await embed_provider.embed([query]))[0]
         chunks = await services.retriever.retrieve(
             session,
             query_text=query,

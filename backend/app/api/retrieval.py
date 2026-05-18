@@ -137,6 +137,7 @@ async def retrieve(
     error_code: str | None = None
     result_count: int | None = None
     response: RetrievalResponse | None = None
+    usage_sink: dict = {}
     try:
         response = await retrieve_composite(
             session,
@@ -156,6 +157,7 @@ async def retrieve(
             retriever=retriever,
             context_builder=context_builder,
             snippet_chars=payload.snippet_chars,
+            usage_sink=usage_sink,
         )
         result_count = _result_count(response)
         status = QueryLogStatus.OK if result_count > 0 else QueryLogStatus.EMPTY
@@ -179,4 +181,8 @@ async def retrieve(
                 status=status,
                 error_code=error_code,
                 client_label=_client_label(request),
+                tokens_input=usage_sink.get("tokens_input"),
+                tokens_output=usage_sink.get("tokens_output"),
+                embed_model=usage_sink.get("embed_model"),
+                completion_model=usage_sink.get("completion_model"),
             )

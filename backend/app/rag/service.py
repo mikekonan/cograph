@@ -32,7 +32,13 @@ async def retrieve_composite(
     context_builder: ContextBuilder,
     snippet_chars: int = DEFAULT_SNIPPET_CHARS,
     mode: str | None = None,
+    usage_sink: dict | None = None,
 ) -> RetrievalResponse:
+    """If `usage_sink` is provided, the embed call writes
+    `embed_model` and `tokens_input` into it (additive — repeated
+    calls accumulate `tokens_input`). MCP / REST wrappers use this
+    to feed the query_log bucket without changing the response shape.
+    """
     validate_retrieval_scope(
         repository_id=repository_id,
         requested_layers=requested_layers,
@@ -62,7 +68,20 @@ async def retrieve_composite(
         )
 
     try:
-        query_embedding = (await embed_provider.embed([query]))[0]
+        # `embed_with_usage` is part of the protocol but third-party
+        # duck-typed stubs (notably the test doubles) implement only
+        # the bare `embed`. Fall back to it; in that case we have no
+        # usage data, so the cost column stays NULL.
+        if hasattr(embed_provider, "embed_with_usage"):
+            vectors, usage = await embed_provider.embed_with_usage([query])
+            query_embedding = vectors[0]
+            if usage_sink is not None:
+                usage_sink["embed_model"] = usage.model
+                usage_sink["tokens_input"] = int(
+                    (usage_sink.get("tokens_input") or 0) + usage.tokens_input
+                )
+        else:
+            query_embedding = (await embed_provider.embed([query]))[0]
     except EmbeddingProviderError as exc:
         raise ApiError(
             503,

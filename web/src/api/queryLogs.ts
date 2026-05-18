@@ -20,6 +20,11 @@ export type QueryLogItem = {
   status: QueryLogStatus;
   error_code: string | null;
   client_label: string | null;
+  tokens_input: number | null;
+  tokens_output: number | null;
+  cost_usd_micros: number | null;
+  embed_model: string | null;
+  completion_model: string | null;
 };
 
 export type QueryLogPage = {
@@ -41,6 +46,10 @@ export type QueryLogStats = {
   p95_duration_ms: number | null;
   top_queries: TopQueryItem[];
   top_repos: TopRepoItem[];
+  tokens_input_total: number;
+  tokens_output_total: number;
+  cost_usd_micros_total: number;
+  rows_with_cost: number;
 };
 
 export type AdminQueryLogsFilters = {

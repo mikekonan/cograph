@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import Boolean, Enum, ForeignKey, Integer, String, Uuid
+from sqlalchemy import BigInteger, Boolean, Enum, ForeignKey, Integer, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.app.db.base import Base, CreatedAtMixin
@@ -93,3 +93,8 @@ class QueryLog(CreatedAtMixin, Base):
     )
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     client_label: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    tokens_input: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tokens_output: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cost_usd_micros: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    embed_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    completion_model: Mapped[str | None] = mapped_column(String(128), nullable=True)

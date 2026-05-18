@@ -475,6 +475,7 @@ async def record_query_log(
     from datetime import UTC, datetime
     from uuid import UUID
 
+    from backend.app.llm.pricing import cost_micros
     from backend.app.models.query_log import QueryLog
 
     session_manager = ctx.get("session_manager")
@@ -489,6 +490,61 @@ async def record_query_log(
             return None
 
     try:
+        tokens_input = payload.get("tokens_input")
+        tokens_output = payload.get("tokens_output")
+        embed_model = payload.get("embed_model")
+        completion_model = payload.get("completion_model")
+
+        # Cost is the SUM of (embed input cost) + (completion in + out).
+        # We hit `cost_micros` twice with distinct token splits because
+        # the two models may have different price tables and embed has
+        # no output side.
+        embed_cost = cost_micros(
+            model=embed_model,
+            tokens_input=tokens_input if completion_model is None else None,
+            tokens_output=None,
+        )
+        # When both an embed and a completion call happened in the same
+        # tool call, we can't tell from the bucket how `tokens_input` is
+        # split between them. Convention: callers attribute the embed
+        # prompt to `tokens_input` and OMIT it when no embed happened.
+        # If only embed_model is set → all input is embed.
+        # If only completion_model is set → all input is completion in.
+        # If both are set → input is completion (embed prompt is tiny
+        # noise relative to a chat prompt; mis-attributing it costs
+        # micro-USD). The split is good enough for ballpark cost.
+        if completion_model is not None:
+            embed_cost = (
+                cost_micros(
+                    model=embed_model,
+                    tokens_input=0,  # we don't know — under-bill safely
+                    tokens_output=None,
+                )
+                if embed_model
+                else None
+            )
+            completion_cost = cost_micros(
+                model=completion_model,
+                tokens_input=tokens_input,
+                tokens_output=tokens_output,
+            )
+        else:
+            embed_cost = cost_micros(
+                model=embed_model,
+                tokens_input=tokens_input,
+                tokens_output=None,
+            )
+            completion_cost = None
+
+        # Combine NULL-tolerantly: at least one side must contribute,
+        # else cost stays NULL.
+        if embed_cost is None and completion_cost is None:
+            cost_total: int | None = None
+        else:
+            cost_total = int(embed_cost or 0) + int(completion_cost or 0)
+            if cost_total <= 0:
+                cost_total = None
+
         async with session_manager.session() as session:
             row = QueryLog(
                 user_id=_opt_uuid(payload.get("user_id")),
@@ -505,6 +561,11 @@ async def record_query_log(
                 status=payload["status"],
                 error_code=payload.get("error_code"),
                 client_label=payload.get("client_label"),
+                tokens_input=tokens_input,
+                tokens_output=tokens_output,
+                cost_usd_micros=cost_total,
+                embed_model=embed_model,
+                completion_model=completion_model,
                 created_at=datetime.now(UTC),
             )
             session.add(row)
