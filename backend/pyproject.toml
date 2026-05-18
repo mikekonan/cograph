@@ -46,7 +46,7 @@ dependencies = [
   # `tree_sitter_language_pack` module our parser imports.
   "tree-sitter-language-pack==1.6.2",
   "PyYAML>=6.0",
-  "uvicorn[standard]>=0.30",
+  "uvicorn[standard]>=0.47.0",
   "uvicorn-worker>=0.3",
   "mcp[cli]>=1.13.1",
   "openai>=1.50",
