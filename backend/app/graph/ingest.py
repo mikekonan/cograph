@@ -12,6 +12,7 @@ from pathlib import Path
 from uuid import UUID
 
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
 
@@ -742,10 +743,13 @@ class GraphIngestService:
             else {}
         )
         # Each file gets its own SAVEPOINT. If `persist_graph` raises
-        # `StaleDataError` (or any DB error) the savepoint rolls back
-        # so the outer ingest transaction stays alive and the
-        # remaining files can still be processed. Without this guard,
-        # one bad file kills the whole reindex of a large monorepo.
+        # either `StaleDataError` (the UPDATE matched 0 rows — typical
+        # of a cache that drifted from the DB) or `IntegrityError` (FK
+        # / UNIQUE / NOT NULL — typical of a parent UUID in the cache
+        # that no longer exists in the table) the savepoint rolls back
+        # so the outer ingest transaction stays alive and the remaining
+        # files can still be processed. Without this guard, one bad
+        # file kills the whole reindex of a large monorepo.
         try:
             async with session.begin_nested():
                 return await self._builder.persist_graph(
@@ -756,20 +760,26 @@ class GraphIngestService:
                     temporal_by_key=temporal_by_key,
                     cache=cache,
                 )
-        except StaleDataError as exc:
-            # The in-memory cache holds Python-side mutations
-            # (qualified_name renames, parent_id, node_metadata) that
-            # the savepoint rollback cannot undo. If we kept using it,
-            # the next persist_graph would propagate the divergence.
-            # Refresh from DB so subsequent files see a clean snapshot.
+        except (StaleDataError, IntegrityError) as exc:
+            # Both failure modes share the same recovery: the in-memory
+            # cache holds Python-side mutations (qualified_name renames,
+            # parent_id, node_metadata) that the savepoint rollback
+            # cannot undo, so refreshing from DB is the only safe path
+            # before the next file. Telemetry distinguishes the two so
+            # we can keep root-causing each in prod.
+            event = (
+                "persist_graph_stale_data"
+                if isinstance(exc, StaleDataError)
+                else "persist_graph_integrity_error"
+            )
             logger.warning(
-                "persist_graph_stale_data repo=%s file=%s — skipping file, "
-                "rebuilding cache: %s",
+                "%s repo=%s file=%s — skipping file, rebuilding cache: %s",
+                event,
                 repository_id,
                 relative_path.as_posix(),
                 exc,
                 extra={
-                    "event": "persist_graph_stale_data",
+                    "event": event,
                     "repository_id": str(repository_id),
                     "file_path": relative_path.as_posix(),
                     "error": str(exc),
