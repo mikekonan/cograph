@@ -1,7 +1,7 @@
 """Excerpt builder for MCP/REST search responses.
 
 Returns ``(snippet, content_truncated)`` so the agent knows when full content
-is available via ``cograph.read_node`` / ``cograph.read_chunk``. The snippet
+is available via ``cograph_read_node`` / ``cograph_read_chunk``. The snippet
 is centred on the first query-term match and falls back to a head-anchored
 window for vector-only hits with no lexical overlap. Word-boundary safe.
 
@@ -81,7 +81,7 @@ def make_snippet(
 
     The truncation flag is the contract MCP tools surface to agents: when
     ``content_truncated`` is ``True``, the agent should fetch the full body
-    via ``cograph.read_node`` / ``cograph.read_chunk`` if needed.
+    via ``cograph_read_node`` / ``cograph_read_chunk`` if needed.
     """
     chars = max(MIN_SNIPPET_CHARS, min(MAX_SNIPPET_CHARS, chars))
     raw = content or ""

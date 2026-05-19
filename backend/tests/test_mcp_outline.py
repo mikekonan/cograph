@@ -1,4 +1,4 @@
-"""MCP `cograph.outline` smoke — repo + collection variants."""
+"""MCP `cograph_outline` smoke — repo + collection variants."""
 
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ async def _call_tool(client, plaintext: str, args: dict, *, request_id: int = 1)
             "id": request_id,
             "method": "tools/call",
             "params": {
-                "name": "cograph.outline",
+                "name": "cograph_outline",
                 "arguments": args,
             },
         },

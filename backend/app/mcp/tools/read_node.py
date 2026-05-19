@@ -20,10 +20,10 @@ _READ_NODE_DESCRIPTION = (
     "Read one code node fully (body + AST citation). Returns the snippet "
     "with `content_truncated` so the agent knows whether to widen "
     "snippet_chars.\n"
-    "Use when: you have a known node_id (typically from cograph.search_code "
-    "or cograph.retrieve) and need the actual code, not a list of hits.\n"
-    "Do NOT use to search by name (use cograph.search_code) or to explore "
-    "neighbours by graph (use cograph.related). Pass with_graph=true / "
+    "Use when: you have a known node_id (typically from cograph_search_code "
+    "or cograph_retrieve) and need the actual code, not a list of hits.\n"
+    "Do NOT use to search by name (use cograph_search_code) or to explore "
+    "neighbours by graph (use cograph_related). Pass with_graph=true / "
     "with_summary=true / with_linked_docs=true only when you actually "
     "need the heavier payload — defaults skip them to keep tokens bounded."
 )
@@ -44,7 +44,7 @@ class ReadNodeArgs(BaseModel):
 
 def register(server: FastMCP, services: MCPServices) -> None:
     @server.tool(
-        name="cograph.read_node",
+        name="cograph_read_node",
         description=_READ_NODE_DESCRIPTION,
     )
     async def read_node(

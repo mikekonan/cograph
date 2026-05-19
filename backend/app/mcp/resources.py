@@ -21,7 +21,7 @@ from backend.app.models.mcp_operator_briefing import McpOperatorBriefing
 def register_resources(server: FastMCP, services: MCPServices) -> None:
     @server.resource(
         "cograph://repo/{host}/{owner}/{name}/graph",
-        name="cograph.graph",
+        name="cograph_graph",
         title="Repository graph snapshot",
         description="Read-only symbol graph snapshot for a ready repository.",
         mime_type="application/json",
@@ -46,7 +46,7 @@ def register_resources(server: FastMCP, services: MCPServices) -> None:
 
     @server.resource(
         "cograph://repo/{host}/{owner}/{name}/wiki",
-        name="cograph.wiki_tree",
+        name="cograph_wiki_tree",
         title="Repository wiki tree",
         description="Generated wiki tree for a ready repository.",
         mime_type="application/json",
@@ -71,7 +71,7 @@ def register_resources(server: FastMCP, services: MCPServices) -> None:
 
     @server.resource(
         "cograph://repo/{host}/{owner}/{name}/wiki/{slug}",
-        name="cograph.wiki_page",
+        name="cograph_wiki_page",
         title="Repository wiki page",
         description="Single generated wiki page with citations and related nodes.",
         mime_type="application/json",
@@ -98,7 +98,7 @@ def register_resources(server: FastMCP, services: MCPServices) -> None:
 
     @server.resource(
         "cograph://repo/{host}/{owner}/{name}/graph/node/{node_id}",
-        name="cograph.graph_node",
+        name="cograph_graph_node",
         title="Graph node",
         description="Single code node from the repository graph.",
         mime_type="application/json",
@@ -125,7 +125,7 @@ def register_resources(server: FastMCP, services: MCPServices) -> None:
 
     @server.resource(
         "cograph://briefing",
-        name="cograph.briefing",
+        name="cograph_briefing",
         title="Deployment operator briefing",
         description=(
             "The operator-edited markdown briefing for this Cograph "
@@ -154,7 +154,7 @@ def register_resources(server: FastMCP, services: MCPServices) -> None:
 
     @server.resource(
         "cograph://my-context",
-        name="cograph.my_context",
+        name="cograph_my_context",
         title="Caller-visible repositories and collections",
         description=(
             "Lists the repositories and markdown collections the calling "
@@ -170,7 +170,7 @@ def register_resources(server: FastMCP, services: MCPServices) -> None:
         # MCP-authenticated user from request context. An unauthenticated
         # caller sees only what `apply_repository_read_scope` allows
         # anonymously (which is the same behavior as the existing
-        # `cograph.repositories` / `cograph.collections` tools).
+        # `cograph_repositories` / `cograph_collections` tools).
         current_user = current_user_from_context(None)
         repos = await repositories_payload(
             services=services,

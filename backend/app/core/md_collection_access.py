@@ -32,7 +32,7 @@ def apply_md_collection_read_scope(
 
     Same MCP-propagation property as `apply_repository_read_scope`:
     `mcp/services.py:317` calls this function, so ACL flows into the
-    `cograph.collections` resource without any MCP-side changes.
+    `cograph_collections` resource without any MCP-side changes.
     """
 
     if current_user is None:

@@ -216,7 +216,7 @@ The installer stores the URL/token outside client configs
 (`~/.config/cograph-connect/config.json`, `0600`), writes per-client
 config blocks, and installs a Codex skill at
 `~/.codex/skills/cograph-connect/` so an agent can pick the right tool
-(`cograph.retrieve`, `cograph.search_code`, `cograph.read_node`, …)
+(`cograph_retrieve`, `cograph_search_code`, `cograph_read_node`, …)
 without prompting. Source and documentation:
 <https://github.com/mikekonan/cograph-connect>.
 

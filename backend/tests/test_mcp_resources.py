@@ -102,7 +102,7 @@ async def test_my_context_returns_empty_lists_for_anonymous_caller(
 @pytest.mark.asyncio
 async def test_my_context_lists_public_repo_and_collection(app, db_session) -> None:
     # Public-visibility records ARE returned to an anonymous caller — the
-    # MCP `cograph.repositories` and `cograph.collections` tools already
+    # MCP `cograph_repositories` and `cograph_collections` tools already
     # behave this way. The resource just reformats their output.
     repo = Repository(
         host="github.com",

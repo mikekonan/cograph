@@ -9,8 +9,8 @@ Every `cograph.*` MCP tool MUST follow:
 
 The agent picks tools by reading descriptions in isolation. A drifted or
 missing L2/L3 line means the agent picks the wrong tool in confusing
-overlap zones (e.g. cograph.retrieve vs cograph.search_code,
-cograph.collection_search vs cograph.read_chunk). This test fails loud
+overlap zones (e.g. cograph_retrieve vs cograph_search_code,
+cograph_collection_search vs cograph_read_chunk). This test fails loud
 the moment a new tool ships without the schema or an existing one
 silently loses a section.
 
@@ -54,22 +54,22 @@ def all_tool_descriptions() -> dict[str, str]:
 
 def test_at_least_the_known_tools_are_registered(all_tool_descriptions) -> None:
     # A backstop against a future refactor that drops a tool without
-    # noticing — the cost of losing one (e.g. cograph.route) is the agent
+    # noticing — the cost of losing one (e.g. cograph_route) is the agent
     # quietly regressing to single-source retrieval.
     required = {
-        "cograph.repositories",
-        "cograph.collections",
-        "cograph.collection_document",
-        "cograph.collection_search",
-        "cograph.read_chunk",
-        "cograph.route",
-        "cograph.retrieve",
-        "cograph.read_node",
-        "cograph.search_code",
-        "cograph.related",
-        "cograph.repository_readme",
-        "cograph.read_file_range",
-        "cograph.outline",
+        "cograph_repositories",
+        "cograph_collections",
+        "cograph_collection_document",
+        "cograph_collection_search",
+        "cograph_read_chunk",
+        "cograph_route",
+        "cograph_retrieve",
+        "cograph_read_node",
+        "cograph_search_code",
+        "cograph_related",
+        "cograph_repository_readme",
+        "cograph_read_file_range",
+        "cograph_outline",
     }
     missing = required - set(all_tool_descriptions)
     assert not missing, f"missing tools: {sorted(missing)}"
@@ -127,9 +127,9 @@ def test_do_not_use_clause_points_to_a_sibling_tool(all_tool_descriptions) -> No
             continue  # already caught by the prior test
         # Look at the rest of the description from the L3 line onward.
         l3_tail = desc[match.start():]
-        cites = re.findall(r"cograph\.[a-z_]+", l3_tail)
+        cites = re.findall(r"cograph_[a-z_]+", l3_tail)
         # The tool may legitimately cite itself in the L3 (e.g. "do not
-        # use cograph.X for Y") but it MUST cite at least one sibling.
+        # use cograph_X for Y") but it MUST cite at least one sibling.
         siblings = [c for c in cites if c != name]
         assert siblings, (
             f"{name}: 'Do NOT use' clause cites no sibling tool — agents "

@@ -1,4 +1,4 @@
-"""MCP `cograph.read_chunk` smoke — happy path, cross-collection guard."""
+"""MCP `cograph_read_chunk` smoke — happy path, cross-collection guard."""
 
 from __future__ import annotations
 
@@ -87,7 +87,7 @@ async def _call_tool(client, plaintext: str, args: dict, *, request_id: int = 1)
             "id": request_id,
             "method": "tools/call",
             "params": {
-                "name": "cograph.read_chunk",
+                "name": "cograph_read_chunk",
                 "arguments": args,
             },
         },

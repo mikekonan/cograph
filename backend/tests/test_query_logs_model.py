@@ -77,7 +77,7 @@ async def test_query_log_stores_truncated_flag(db_session) -> None:
     row = QueryLog(
         id=uuid4(),
         source=QueryLogSource.MCP.value,
-        tool_name="cograph.retrieve",
+        tool_name="cograph_retrieve",
         query_text=text,
         query_truncated=was_truncated,
         duration_ms=100,

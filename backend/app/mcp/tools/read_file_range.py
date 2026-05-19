@@ -23,11 +23,11 @@ from backend.app.models.source_file import SourceFile
 _READ_FILE_RANGE_DESCRIPTION = (
     "Read a 1-indexed line range of a source file by repo slug + path.\n"
     "Use when: you have a `file_path` (typically from `provenance` on a "
-    "cograph.retrieve / cograph.search_code / cograph.read_node result) and "
+    "cograph_retrieve / cograph_search_code / cograph_read_node result) and "
     "need a few dozen lines of surrounding context that a node-bounded read "
     "won't capture.\n"
     "Do NOT use to dump whole files (the range is capped at 1000 lines) or to "
-    "search by content (use cograph.retrieve)."
+    "search by content (use cograph_retrieve)."
 )
 
 MAX_LINE_RANGE = 1000
@@ -42,7 +42,7 @@ class ReadFileRangeArgs(BaseModel):
 
 def register(server: FastMCP, services: MCPServices) -> None:
     @server.tool(
-        name="cograph.read_file_range",
+        name="cograph_read_file_range",
         description=_READ_FILE_RANGE_DESCRIPTION,
     )
     async def read_file_range(

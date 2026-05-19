@@ -2,7 +2,7 @@
 
 The contract is: every search-style MCP tool routes content through
 ``make_snippet`` so agents can rely on a single (snippet, content_truncated)
-shape and decide when to fetch full text via cograph.read_node / read_chunk.
+shape and decide when to fetch full text via cograph_read_node / read_chunk.
 """
 
 from __future__ import annotations

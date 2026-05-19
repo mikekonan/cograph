@@ -192,7 +192,7 @@ questions:
   - id: wiki-mcp-tools
     category: wiki_grounded
     question: "What MCP tools does the wiki document for cograph?"
-    expected_answer_keywords: ["cograph.retrieve", "cograph.repositories"]
+    expected_answer_keywords: ["cograph_retrieve", "cograph_repositories"]
     expected_provenance: ["wiki/", "MCP"]
     max_tool_calls_target: 2
     negative: false

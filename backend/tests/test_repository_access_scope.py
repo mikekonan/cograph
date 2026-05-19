@@ -3,7 +3,7 @@
 Covers the matrix: anonymous / USER / ADMIN viewers crossed with
 PUBLIC / ADMIN_ONLY (granted / not granted) / soft-deleted rows.
 The funnel is the single point that REST list endpoints AND the MCP
-`cograph.repositories` resource go through, so getting the matrix
+`cograph_repositories` resource go through, so getting the matrix
 right here proves the contract for both surfaces simultaneously.
 """
 

@@ -580,7 +580,7 @@ async def test_mcp_repositories_hides_admin_only_repo_without_grant(
     client, db_session, settings
 ):
     """USER PAT without any group grant must NOT see ADMIN_ONLY repos
-    through the MCP `cograph.repositories` tool. MCP funnels through
+    through the MCP `cograph_repositories` tool. MCP funnels through
     the same `apply_repository_read_scope` as REST — so this proves
     the ACL extension propagates to MCP for free.
     """
@@ -620,7 +620,7 @@ async def test_mcp_repositories_hides_admin_only_repo_without_grant(
             "id": 1,
             "method": "tools/call",
             "params": {
-                "name": "cograph.repositories",
+                "name": "cograph_repositories",
                 "arguments": {},
             },
         },
@@ -636,7 +636,7 @@ async def test_mcp_repositories_lists_admin_only_repo_for_grant_holder(
     client, db_session, settings
 ):
     """USER PAT in a group with READ on the ADMIN_ONLY repo MUST see
-    it through MCP — positive ACL counterpart for `cograph.repositories`.
+    it through MCP — positive ACL counterpart for `cograph_repositories`.
     """
     from backend.app.models.enums import GrantLevel
     from backend.app.models.group import Group, GroupMember, RepositoryGrant
@@ -693,7 +693,7 @@ async def test_mcp_repositories_lists_admin_only_repo_for_grant_holder(
             "id": 1,
             "method": "tools/call",
             "params": {
-                "name": "cograph.repositories",
+                "name": "cograph_repositories",
                 "arguments": {},
             },
         },
@@ -755,7 +755,7 @@ async def test_mcp_collection_document_reads_private_collection_for_pat_user(
             "id": 2,
             "method": "tools/call",
             "params": {
-                "name": "cograph.collection_document",
+                "name": "cograph_collection_document",
                 "arguments": {
                     "collection_id": str(collection.id),
                     "document_id": str(document.id),

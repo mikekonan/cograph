@@ -57,7 +57,7 @@ concurring hits is an answer. Triangulate before you conclude.
 ### Step 0 — locate the source
 
 If the user's question does NOT name a specific repository or collection,
-your first call is `cograph.route(query)`. It returns the top-3 most
+your first call is `cograph_route(query)`. It returns the top-3 most
 relevant repositories and the top-3 most relevant collections with a
 confidence score in [0, 1] and a one-line `why`.
 
@@ -78,7 +78,7 @@ Picking which sources to dig into:
 
 If the user already named a specific slug, skip step 0.
 
-**Re-route per distinct concept.** `cograph.route` is cheap (~150
+**Re-route per distinct concept.** `cograph_route` is cheap (~150
 tokens, lexical+vector over repo display_name / README / outline) —
 treat it as a router you can call multiple times in one question, not
 a one-shot. A question that mixes two concepts almost always spans
@@ -108,12 +108,12 @@ broaden a stale candidate set.
 * If the user named a slug — skip route entirely (you already know
   where to look).
 * If you're inside the ladder already and just need another phrasing
-  in the SAME source — that's a `cograph.retrieve` rephrase, not a
+  in the SAME source — that's a `cograph_retrieve` rephrase, not a
   re-route.
 
 ### Step 1 — bootstrap each candidate
 
-For every slug from step 0, run `cograph.outline(slug)` once. The
+For every slug from step 0, run `cograph_outline(slug)` once. The
 outline tells you the repository's top-level structure (modules,
 packages, key files). Use it to formulate better retrieval queries — a
 search for "session expiry" lands better when you know the auth code
@@ -121,7 +121,7 @@ lives under `internal/auth/`.
 
 ### Step 2 — multi-phrasing retrieve
 
-One `cograph.retrieve` per source is NEVER enough. Always probe each
+One `cograph_retrieve` per source is NEVER enough. Always probe each
 source from several angles before deciding what it does or does not
 contain:
 
@@ -133,7 +133,7 @@ contain:
 * the inverse / failure mode ("session expiry" → also "session refresh",
   "session not found")
 * a hop along the call graph if you found one related symbol — call
-  `cograph.related` on the most promising node; the neighbours often
+  `cograph_related` on the most promising node; the neighbours often
   answer the question better than the original hit
 
 Aim for ≥5 distinct retrieve formulations per source before concluding
@@ -144,7 +144,7 @@ of absence — it's evidence that one particular phrasing missed.
 
 If `mode=code` came back thin, try `mode=mixed` (which broadens to wiki
 and AST summaries within the same repo). If you have a distinctive
-identifier from a previous hit, follow up with `cograph.search_code` for
+identifier from a previous hit, follow up with `cograph_search_code` for
 exact-symbol matches.
 
 ### Step 4 — synthesise

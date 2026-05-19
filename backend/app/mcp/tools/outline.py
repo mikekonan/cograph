@@ -32,8 +32,8 @@ _OUTLINE_DESCRIPTION = (
     "items per section.\n"
     "Use when: agent has just resolved a repo/collection and needs to know "
     "what's inside before any retrieval call. One-shot bootstrap.\n"
-    "Do NOT use to read content (use cograph.repository_readme / "
-    "cograph.collection_document) or to search (use cograph.retrieve)."
+    "Do NOT use to read content (use cograph_repository_readme / "
+    "cograph_collection_document) or to search (use cograph_retrieve)."
 )
 
 _OUTLINE_MAX_ITEMS = 30
@@ -46,7 +46,7 @@ class OutlineArgs(BaseModel):
 
 def register(server: FastMCP, services: MCPServices) -> None:
     @server.tool(
-        name="cograph.outline",
+        name="cograph_outline",
         description=_OUTLINE_DESCRIPTION,
     )
     async def outline(
