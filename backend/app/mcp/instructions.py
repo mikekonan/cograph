@@ -78,6 +78,39 @@ Picking which sources to dig into:
 
 If the user already named a specific slug, skip step 0.
 
+**Hard rules — when re-route is REQUIRED (not optional):**
+
+1. If `cograph_route` returned only 1 candidate (counting repositories
+   and collections together), you MUST re-route at least once with a
+   different framing before answering. A single hit is a lead, never
+   an answer — facts span sources, and one source means you have not
+   yet triangulated.
+2. If `cograph_route` returned 0 collections with a real lexical match
+   (i.e. every collection in the response carries a `weak/fallback`
+   `why` marker, or the response has no collections at all), you MUST
+   re-route once with a glossary/architecture-framed query —
+   `"<entity> glossary"`, `"<entity> definition"`, or `"<entity>
+   architecture overview"`. Collections hold the domain definitions,
+   PRDs, and ADRs that code paths cannot give you.
+3. If the top score across every candidate (repos + collections) is
+   below 0.5, re-route with a re-phrased query before falling back to
+   "I don't have enough information." A weak first route is a signal
+   that your phrasing missed the vocabulary, not that the answer is
+   absent.
+
+**Collections are always present in the route response — every call
+returns the top-N collections regardless of score.** A collection with
+score ≥ 0.5 means real lexical match (its `why` cites the matched
+fields); a collection with score < 0.3 and a `weak/fallback` `why`
+marker means no lexical hit but is still listed because docs and code
+both need to be triangulated. For any question that involves a domain
+term, business concept, integration name, or "what is X" framing, you
+SHOULD skim the top collection's outline via `cograph_outline(slug=…)`
+before answering — even when the score is weak. A low score is a
+signal to verify by reading, NOT a signal to skip. Code answers "how";
+collections answer "what" and "why". Skipping collections collapses
+you to half the picture.
+
 **Re-route per distinct concept.** `cograph_route` is cheap (~150
 tokens, lexical+vector over repo display_name / README / outline) —
 treat it as a router you can call multiple times in one question, not
@@ -95,6 +128,13 @@ two source sets:
 * "What does `acquirer` mean in the payment system?" — route for
   `"acquirer glossary definition"` (likely a collection) AND for
   `"acquirer routing implementation"` (likely a service repo).
+* "Tell me about AcmePay" — route(`"AcmePay"`) returns runner at 1.0 and
+  collections that are weak/fallback only (the entity name does not
+  appear lexically in any wiki body). Hard-rule #2 fires: re-route
+  with `"payment provider integration architecture"` to find the
+  cross-cutting PRD / ADR, then re-route with `"acquirer terminal
+  contract"` to pick up the shared abstraction that runner implements
+  one specific case of. Three routes, then synthesise.
 
 The rule of thumb: every distinct domain term or sub-question in the
 user's prompt deserves its own route call. Cheap routing beats one
