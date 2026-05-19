@@ -23,7 +23,9 @@ from __future__ import annotations
 import pytest
 
 from backend.app.core.auth import TokenType, create_token, hash_password
+from backend.app.models.code_node import CodeNode
 from backend.app.models.enums import (
+    CodeNodeType,
     MdCollectionVisibility,
     RepositoryStatus,
     RepositoryVisibility,
@@ -306,6 +308,116 @@ async def test_route_matches_collection_title_and_headings(db_session, settings)
     assert coll_hits, hits
     assert coll_hits[0].label == "Engineering glossary"
     assert "acquirer" in coll_hits[0].why.lower()
+
+
+@pytest.mark.asyncio
+async def test_route_finds_provider_only_in_code_symbols(
+    db_session, settings
+) -> None:
+    """Reproducer for the 'Nuvei' incident (2026-05-19): the agent in chat
+    mode asked Cograph about a payment provider whose name lives ONLY in
+    code paths (`domain/payments/nuvei/terminal.go`, qualified_name
+    `domain.payments.nuvei.terminal`). The router-then-fan-out playbook
+    requires that the right repo come back with score ≥ 0.5 — anything
+    less and the agent treats the hit as ignorable noise.
+
+    Before the fix: score was 0.167 (router only saw slug + README, neither
+    of which mentions Nuvei). Walle's README describes the runner
+    mechanics in the abstract; the provider lives entirely in code.
+
+    After the fix: the router also indexes module-level qualified_name and
+    file_path tokens, and the formula normalises so single-source full
+    coverage = 1.0 (was 0.333 before)."""
+    walle = await _make_public_repo(
+        db_session,
+        host="pgw.dev",
+        owner="svc",
+        name="walle",
+        # Realistic README shape: walle is described as an abstract runner;
+        # zero providers named here. All provider mentions live in code.
+        readme=(
+            "# Walle\n\nIntegration runner. Adapts the internal payment "
+            "flow to provider-specific terminals.\n"
+        ),
+    )
+    # Module-level code nodes — the indexer produces exactly one per Go
+    # file. These are the chunky structural-skeleton rows the router will
+    # pull as a routing signal.
+    for fname in ("terminal", "builder_card", "process_error", "dictionary"):
+        db_session.add(
+            CodeNode(
+                repository_id=walle.id,
+                file_path=f"domain/payments/nuvei/{fname}.go",
+                qualified_name=f"domain.payments.nuvei.{fname}#module",
+                name=fname,
+                language="go",
+                node_type=CodeNodeType.MODULE,
+                start_line=1,
+                end_line=100,
+                content=f"package nuvei // {fname}\n",
+                content_hash="x" * 64,
+            )
+        )
+    await db_session.commit()
+
+    hits = await route_sources(
+        db_session,
+        query="Nuvei payment provider integration",
+        current_user=None,
+        settings=settings,
+        top_k=3,
+    )
+    repo_hits = [h for h in hits if h.kind == "repository"]
+    walle_hit = next((h for h in repo_hits if "walle" in h.label), None)
+    assert walle_hit is not None, (
+        f"router lost walle entirely — symbol-name match for 'nuvei' is the "
+        f"single strongest signal we have; got: {repo_hits}"
+    )
+    assert walle_hit.score >= 0.5, (
+        f"router should be ≥0.5 confident when 'nuvei' appears in 4 module "
+        f"qualified_names; got {walle_hit.score:.3f}. The playbook treats "
+        f"<0.5 as ignorable, so this is the user-visible 'agent gave up' "
+        f"threshold."
+    )
+    assert "symbol" in walle_hit.why.lower() or "code" in walle_hit.why.lower(), (
+        f"why should announce the symbol-name match so the agent's debug "
+        f"trail can explain WHERE the match came from; got: {walle_hit.why!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_route_does_not_regress_readme_only_matches(
+    db_session, settings
+) -> None:
+    """When a repo has NO indexed code but matches purely via README, it
+    must still cross the playbook's 0.5 threshold for full token coverage.
+
+    Pre-fix the formula divided by 3 (slug-weight + README-weight), capping
+    a README-only full coverage at 0.333 — which silently demoted any wiki-
+    style repo to 'ignorable'. The Nuvei fix changes the formula; this
+    test pins the side effect so it doesn't get reverted later."""
+    await _make_public_repo(
+        db_session,
+        host="github.com",
+        owner="acme",
+        name="auth-docs",
+        readme="# Auth docs\nDescribes the session refresh ladder.",
+    )
+    hits = await route_sources(
+        db_session,
+        query="session refresh ladder",
+        current_user=None,
+        settings=settings,
+        top_k=3,
+    )
+    repo_hits = [h for h in hits if h.kind == "repository"]
+    assert repo_hits, "README-only repo must surface for a tokens-all-in-README query"
+    top = repo_hits[0]
+    assert top.score >= 0.5, (
+        f"full README coverage with no slug hit must clear 0.5; got "
+        f"{top.score:.3f}. Anything lower revives the pre-fix bug where the "
+        f"agent ignored wiki-style repos."
+    )
 
 
 # ---------- REST mirror tests -------------------------------------------------
