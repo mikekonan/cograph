@@ -115,7 +115,7 @@ describe("normalizeWikiMarkdown — lazy-continuation blockquotes", () => {
     const md = [
       "> `RedirectFollowedEvent```",
       " represents a change-operation-state event for redirect_followed action",
-      "> This will be sent to bookkeeping via the event bus",
+      "> This will be sent to ledger via the event bus",
       "Source: domain/redirect_followed.go:L58-L65",
     ].join("\n");
 
@@ -126,7 +126,7 @@ describe("normalizeWikiMarkdown — lazy-continuation blockquotes", () => {
     // lines (the input had a hard wrap) but they're now all inside the fence.
     expect(out).toContain("`RedirectFollowedEvent`");
     expect(out).toContain("represents a change-operation-state event for redirect_followed action");
-    expect(out).toContain("This will be sent to bookkeeping via the event bus");
+    expect(out).toContain("This will be sent to ledger via the event bus");
     expect(out).toContain("Source: domain/redirect_followed.go:L58-L65");
     expect(out).not.toMatch(/^>\s/m);
   });
