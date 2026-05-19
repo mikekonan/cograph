@@ -3,7 +3,7 @@
 Three fixture-driven scenarios cover the canonical cases:
   - `go-oas3`-shape: CLI code generator with `internal/validator/`
     regression scaffolding that must NOT promote to a wiki page.
-  - `bookkeeping`-shape: Go service with `cmd/`, `internal/domain`,
+  - `ledger`-shape: Go service with `cmd/`, `internal/domain`,
     `internal/repo` layers — domain layer should reach `supporting`,
     cmd should reach `public`.
   - small-library-shape: exported package, no `cmd/`. Must not get
@@ -239,15 +239,15 @@ def test_go_oas3_internal_validator_filtered_from_public_api():
 
 
 # ---------------------------------------------------------------------------
-# Fixture: bookkeeping-shape (Go service)
+# Fixture: ledger-shape (Go service)
 # ---------------------------------------------------------------------------
 
 
-def _bookkeeping_fixture() -> RepoContext:
+def _ledger_fixture() -> RepoContext:
     file_tree = [
         _file("README.md", language="markdown"),
         _file("go.mod"),
-        _file("cmd/bookkeeping/main.go"),
+        _file("cmd/ledger/main.go"),
         _file("internal/api/router.go"),
         _file("internal/api/router_test.go"),
         _file("internal/domain/account/account.go"),
@@ -260,10 +260,10 @@ def _bookkeeping_fixture() -> RepoContext:
     ]
     public_api: list[PublicApiEntry] = []
     readme = (
-        "# bookkeeping\n\n"
+        "# ledger\n\n"
         "Tracks merchant balances and double-entry postings.\n\n"
         "## Run\n\n"
-        "Set `HTTP_PORT` and `BROKER_URL`, then `go run ./cmd/bookkeeping`.\n"
+        "Set `HTTP_PORT` and `BROKER_URL`, then `go run ./cmd/ledger`.\n"
     )
     return _make_context(
         file_tree=file_tree,
@@ -272,18 +272,18 @@ def _bookkeeping_fixture() -> RepoContext:
     )
 
 
-def test_bookkeeping_cmd_is_public():
-    signals = build_repo_signals(_bookkeeping_fixture())
+def test_ledger_cmd_is_public():
+    signals = build_repo_signals(_ledger_fixture())
     cmd = next(
-        c for c in signals.topic_candidates if c.normalized_key == "cmd:bookkeeping"
+        c for c in signals.topic_candidates if c.normalized_key == "cmd:ledger"
     )
     assert cmd.salience_tier == SalienceTier.PUBLIC
 
 
-def test_bookkeeping_internal_layers_not_test_scaffolding():
+def test_ledger_internal_layers_not_test_scaffolding():
     """Service repos store production logic under `internal/`; we must
     NOT collapse those to test_scaffolding."""
-    signals = build_repo_signals(_bookkeeping_fixture())
+    signals = build_repo_signals(_ledger_fixture())
     # internal/api/router.go has a sibling _test.go but the cluster
     # contains real production code. With test-paired demotion it goes
     # below the supporting bar, but should not be test_scaffolding.
@@ -543,7 +543,7 @@ def test_topic_candidate_id_is_normalized():
 
 
 def test_evidence_paths_are_non_test_only_when_mixed():
-    signals = build_repo_signals(_bookkeeping_fixture())
+    signals = build_repo_signals(_ledger_fixture())
     api = next(
         c for c in signals.topic_candidates if c.normalized_key == "internal:api"
     )

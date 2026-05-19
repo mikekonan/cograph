@@ -229,7 +229,7 @@ async def _resolve_pat(
             row.last_used_ip = client_ip[:64]
         try:
             await session.commit()
-        except Exception:  # bookkeeping must not fail the request
+        except Exception:  # ledger must not fail the request
             await session.rollback()
 
     return AuthenticatedActor(

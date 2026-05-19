@@ -114,8 +114,8 @@ export default function AdminMcpPage() {
                 "This Cograph deployment serves the payments team.\n\n" +
                 "Glossary:\n" +
                 "  - acquirer: the bank that routes the merchant's card transactions.\n" +
-                "  - terminal: the merchant↔acquirer binding used by walle.\n\n" +
-                "When asked about routing or fallback, search bookkeeping AND " +
+                "  - terminal: the merchant↔acquirer binding used by runner.\n\n" +
+                "When asked about routing or fallback, search ledger AND " +
                 "processing-api in parallel; both own pieces of the flow."
               }
             />
