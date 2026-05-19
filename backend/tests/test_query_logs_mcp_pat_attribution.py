@@ -128,7 +128,7 @@ async def test_mcp_pat_call_attributes_query_log_to_pat_owner(
 
     async with mcp_query_log_scope(
         ctx=ctx,
-        tool_name="cograph.retrieve",
+        tool_name="cograph_retrieve",
         query_text="who owns this query",
         top_k=10,
     ) as log_bucket:
@@ -136,7 +136,7 @@ async def test_mcp_pat_call_attributes_query_log_to_pat_owner(
 
     rows = (
         await db_session.scalars(
-            select(QueryLog).where(QueryLog.tool_name == "cograph.retrieve")
+            select(QueryLog).where(QueryLog.tool_name == "cograph_retrieve")
         )
     ).all()
     assert len(rows) == 1, f"expected exactly one row, got {len(rows)}"
@@ -176,7 +176,7 @@ async def test_mcp_anonymous_ctx_writes_no_row(app, db_session, monkeypatch) -> 
 
     async with mcp_query_log_scope(
         ctx=ctx,
-        tool_name="cograph.retrieve",
+        tool_name="cograph_retrieve",
         query_text="anonymous",
         top_k=5,
     ) as log_bucket:

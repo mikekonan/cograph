@@ -28,15 +28,15 @@ class SearchCodeToolArgs(BaseModel):
 
 def register(server: FastMCP, services: MCPServices) -> None:
     @server.tool(
-        name="cograph.search_code",
+        name="cograph_search_code",
         description=(
             "Lexical + fuzzy symbol search over a repository's code nodes. "
             "Returns names + line ranges (no body) so the agent can pick the "
-            "right node, then read it with cograph.read_node.\n"
+            "right node, then read it with cograph_read_node.\n"
             "Use when: agent has a probable symbol name (class, function, "
             "qualified path) and wants a symbol-exact lookup.\n"
-            "Do NOT use for natural-language questions (use cograph.retrieve "
-            "with mode=code) or to read a node fully (use cograph.read_node)."
+            "Do NOT use for natural-language questions (use cograph_retrieve "
+            "with mode=code) or to read a node fully (use cograph_read_node)."
         ),
     )
     async def search_code(
@@ -60,7 +60,7 @@ def register(server: FastMCP, services: MCPServices) -> None:
             )
         async with mcp_query_log_scope(
             ctx=ctx,
-            tool_name="cograph.search_code",
+            tool_name="cograph_search_code",
             query_text=args.query,
             repository_id=repo.id,
             top_k=args.top_k,

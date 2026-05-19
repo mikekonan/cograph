@@ -37,8 +37,8 @@ _RETRIEVE_DESCRIPTION = (
     "file-anchored snippets back. Pick mode='code' for "
     "'where is X implemented', mode='wiki' for 'what is the auth flow about', "
     "mode='mixed' only when the target is unclear.\n"
-    "Do NOT use for symbol-exact lookups (use cograph.search_code) or "
-    "to read a known node fully (use cograph.read_node)."
+    "Do NOT use for symbol-exact lookups (use cograph_search_code) or "
+    "to read a known node fully (use cograph_read_node)."
 )
 
 
@@ -93,7 +93,7 @@ class RetrieveToolArgs(BaseModel):
 
 def register(server: FastMCP, services: MCPServices) -> None:
     @server.tool(
-        name="cograph.retrieve",
+        name="cograph_retrieve",
         description=_RETRIEVE_DESCRIPTION,
     )
     async def retrieve(
@@ -138,7 +138,7 @@ def register(server: FastMCP, services: MCPServices) -> None:
             repository_id = repo.id
         async with mcp_query_log_scope(
             ctx=ctx,
-            tool_name="cograph.retrieve",
+            tool_name="cograph_retrieve",
             query_text=args.query,
             repository_id=repository_id,
             top_k=args.top_k,

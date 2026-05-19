@@ -72,12 +72,12 @@ def test_playbook_contains_route_step_zero() -> None:
     # The router is mandatory only when no specific repo is named — make
     # sure the playbook reflects that conditional, not an unconditional
     # "always route first".
-    assert "cograph.route(query)" in text
+    assert "cograph_route(query)" in text
     assert "skip step 0" in text or "Skip step 0" in text
 
 
 def test_playbook_recommends_re_routing_per_concept() -> None:
-    # `cograph.route` is cheap; one prompt that mixes two concepts deserves
+    # `cograph_route` is cheap; one prompt that mixes two concepts deserves
     # two route calls. The playbook must keep this guidance verbatim so the
     # agent doesn't collapse multi-concept questions to a single candidate
     # set.

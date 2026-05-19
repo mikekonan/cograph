@@ -1,4 +1,4 @@
-"""MCP `cograph.read_file_range` smoke — slice, range guard, end-clamp."""
+"""MCP `cograph_read_file_range` smoke — slice, range guard, end-clamp."""
 
 from __future__ import annotations
 
@@ -86,7 +86,7 @@ async def _call_tool(client, plaintext: str, args: dict, *, request_id: int = 1)
             "id": request_id,
             "method": "tools/call",
             "params": {
-                "name": "cograph.read_file_range",
+                "name": "cograph_read_file_range",
                 "arguments": args,
             },
         },

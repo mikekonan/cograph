@@ -1,6 +1,6 @@
 """One-call README/Overview fetch for a repository.
 
-Replaces the chained `cograph.repositories` → `cograph.retrieve` → `cograph.read_node`
+Replaces the chained `cograph_repositories` → `cograph_retrieve` → `cograph_read_node`
 sequence agents currently use to answer "what is repo X about?".
 """
 
@@ -25,8 +25,8 @@ _README_DESCRIPTION = (
     "Use when: the agent has a repo slug and wants to know what the project does, "
     "its scope, or how to use it. Falls back to the wiki Overview page if no "
     "README-named file is indexed.\n"
-    "Do NOT use to search inside the readme (use cograph.retrieve mode='wiki') or "
-    "to read other docs (use cograph.collection_search / cograph.read_chunk)."
+    "Do NOT use to search inside the readme (use cograph_retrieve mode='wiki') or "
+    "to read other docs (use cograph_collection_search / cograph_read_chunk)."
 )
 
 _README_SNIPPET_CHARS = 4000
@@ -38,7 +38,7 @@ class RepositoryReadmeArgs(BaseModel):
 
 def register(server: FastMCP, services: MCPServices) -> None:
     @server.tool(
-        name="cograph.repository_readme",
+        name="cograph_repository_readme",
         description=_README_DESCRIPTION,
     )
     async def repository_readme(

@@ -1,4 +1,4 @@
-"""MCP `cograph.repository_readme` smoke — README hit, wiki fallback, miss."""
+"""MCP `cograph_repository_readme` smoke — README hit, wiki fallback, miss."""
 
 from __future__ import annotations
 
@@ -75,7 +75,7 @@ async def _call_tool(client, plaintext: str, slug: str, *, request_id: int = 1):
             "id": request_id,
             "method": "tools/call",
             "params": {
-                "name": "cograph.repository_readme",
+                "name": "cograph_repository_readme",
                 "arguments": {"slug": slug},
             },
         },

@@ -22,16 +22,16 @@ class RelatedToolArgs(BaseModel):
 
 def register(server: FastMCP, services: MCPServices) -> None:
     @server.tool(
-        name="cograph.related",
+        name="cograph_related",
         description=(
             "Traverse the caller/callee graph around a code node up to "
             "`depth` hops. Returns nodes and edges, scoped by `direction` "
             "(callers, callees, or both).\n"
-            "Use when: agent has a known node_id (from cograph.search_code "
-            "or cograph.retrieve) and needs to trace control flow — what "
+            "Use when: agent has a known node_id (from cograph_search_code "
+            "or cograph_retrieve) and needs to trace control flow — what "
             "calls it, or what it calls.\n"
-            "Do NOT use to find nodes by name (use cograph.search_code) or "
-            "to read a node's body (use cograph.read_node)."
+            "Do NOT use to find nodes by name (use cograph_search_code) or "
+            "to read a node's body (use cograph_read_node)."
         ),
     )
     async def related(

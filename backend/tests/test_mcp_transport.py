@@ -244,7 +244,7 @@ async def _call_node_tool(
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
                 result = await session.call_tool(
-                    "cograph.read_node",
+                    "cograph_read_node",
                     {
                         "repository": repository_slug,
                         "node_id": str(node_id),

@@ -18,14 +18,14 @@ class RepositoriesToolArgs(BaseModel):
 
 def register(server: FastMCP, services: MCPServices) -> None:
     @server.tool(
-        name="cograph.repositories",
+        name="cograph_repositories",
         description=(
             "List repositories readable by the authenticated MCP user. Returns "
             "compound slugs (host/owner/name) and graph/wiki resource URIs.\n"
             "Use when: target repo is unknown — start here to enumerate, then "
             "feed the slug into the other tools.\n"
-            "Do NOT use to read a repo's docs (use cograph.repository_readme) "
-            "or to search inside a repo (use cograph.retrieve / cograph.search_code)."
+            "Do NOT use to read a repo's docs (use cograph_repository_readme) "
+            "or to search inside a repo (use cograph_retrieve / cograph_search_code)."
         ),
     )
     async def repositories(

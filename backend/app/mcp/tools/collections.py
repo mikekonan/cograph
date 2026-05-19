@@ -57,13 +57,13 @@ class ReadChunkToolArgs(BaseModel):
 
 def register(server: FastMCP, services: MCPServices) -> None:
     @server.tool(
-        name="cograph.collections",
+        name="cograph_collections",
         description=(
             "List markdown collections readable by the authenticated MCP user.\n"
             "Use when: target collection_id is unknown — start here to enumerate.\n"
             "Do NOT use to read a collection's documents (use "
-            "cograph.collection_document) or to search inside a collection "
-            "(use cograph.collection_search)."
+            "cograph_collection_document) or to search inside a collection "
+            "(use cograph_collection_search)."
         ),
     )
     async def collections(
@@ -81,14 +81,14 @@ def register(server: FastMCP, services: MCPServices) -> None:
         return encode_payload(response)
 
     @server.tool(
-        name="cograph.collection_document",
+        name="cograph_collection_document",
         description=(
             "Read one full markdown collection document with parsed metadata "
             "(headings, code blocks, tables, links). No truncation.\n"
             "Use when: agent has a known document_id from a prior "
-            "cograph.collection_search / cograph.outline call.\n"
-            "Do NOT use to find documents (use cograph.collection_search) or to "
-            "read just one chunk (use cograph.read_chunk — cheaper)."
+            "cograph_collection_search / cograph_outline call.\n"
+            "Do NOT use to find documents (use cograph_collection_search) or to "
+            "read just one chunk (use cograph_read_chunk — cheaper)."
         ),
     )
     async def collection_document(
@@ -109,7 +109,7 @@ def register(server: FastMCP, services: MCPServices) -> None:
         return encode_payload(response)
 
     @server.tool(
-        name="cograph.collection_search",
+        name="cograph_collection_search",
         description=(
             "Hybrid search inside one readable markdown collection. Returns "
             "query-anchored excerpts (snippet + content_truncated) per chunk "
@@ -117,7 +117,7 @@ def register(server: FastMCP, services: MCPServices) -> None:
             "Use when: agent has a known collection_id and a natural-language "
             "question targeting markdown content.\n"
             "Do NOT use to search code/wiki across repositories (use "
-            "cograph.retrieve) or to read a chunk fully (use cograph.read_chunk)."
+            "cograph_retrieve) or to read a chunk fully (use cograph_read_chunk)."
         ),
     )
     async def collection_search(
@@ -135,7 +135,7 @@ def register(server: FastMCP, services: MCPServices) -> None:
         )
         async with mcp_query_log_scope(
             ctx=ctx,
-            tool_name="cograph.collection_search",
+            tool_name="cograph_collection_search",
             query_text=args.query,
             collection_id=args.collection_id,
             top_k=args.top_k,
@@ -153,12 +153,12 @@ def register(server: FastMCP, services: MCPServices) -> None:
             return encode_payload(response)
 
     @server.tool(
-        name="cograph.read_chunk",
+        name="cograph_read_chunk",
         description=(
             "Fetch the full content of one markdown collection chunk by id.\n"
-            "Use when: cograph.collection_search returned a hit with "
+            "Use when: cograph_collection_search returned a hit with "
             "content_truncated=true and the agent needs the rest of the chunk.\n"
-            "Do NOT use to read whole documents (use cograph.collection_document) "
+            "Do NOT use to read whole documents (use cograph_collection_document) "
             "or chunks from a different collection — chunk_id is scoped to its "
             "collection by access check."
         ),

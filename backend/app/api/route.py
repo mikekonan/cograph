@@ -1,4 +1,4 @@
-"""REST mirror of the MCP `cograph.route` tool.
+"""REST mirror of the MCP `cograph_route` tool.
 
 Lets `cograph-web` and `cograph-eval` call the same source-routing logic
 deterministically without going through MCP transport. The handler is a

@@ -270,19 +270,19 @@ jobs:
 
               tool_names = {tool.name for tool in tools.tools}
               expected = {
-                  "cograph.repositories",
-                  "cograph.collections",
-                  "cograph.collection_document",
-                  "cograph.collection_search",
-                  "cograph.read_chunk",
-                  "cograph.retrieve",
-                  "cograph.read_node",
-                  "cograph.search_code",
-                  "cograph.related",
-                  "cograph.repository_readme",
-                  "cograph.read_file_range",
-                  "cograph.outline",
-                  "cograph.route",
+                  "cograph_repositories",
+                  "cograph_collections",
+                  "cograph_collection_document",
+                  "cograph_collection_search",
+                  "cograph_read_chunk",
+                  "cograph_retrieve",
+                  "cograph_read_node",
+                  "cograph_search_code",
+                  "cograph_related",
+                  "cograph_repository_readme",
+                  "cograph_read_file_range",
+                  "cograph_outline",
+                  "cograph_route",
               }
               assert tool_names == expected, f"unexpected MCP tools via packaged web tier: {tool_names}"
 

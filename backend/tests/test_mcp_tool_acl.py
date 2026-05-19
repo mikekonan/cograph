@@ -140,9 +140,9 @@ async def test_collections_payload_hides_private_collection_from_anon(
 # ---------- slug-resolution choke point ---------------------------------------
 #
 # resolve_readable_repository_by_slug is the gate every slug-taking tool funnels
-# through (cograph.outline, cograph.retrieve, cograph.read_node,
-# cograph.search_code, cograph.related, cograph.repository_readme,
-# cograph.read_file_range). One test against that choke point covers them all.
+# through (cograph_outline, cograph_retrieve, cograph_read_node,
+# cograph_search_code, cograph_related, cograph_repository_readme,
+# cograph_read_file_range). One test against that choke point covers them all.
 
 
 @pytest.mark.asyncio

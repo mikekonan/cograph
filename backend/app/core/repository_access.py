@@ -36,7 +36,7 @@ def apply_repository_read_scope(
       `(repository_id)` indexes on `group_members` / `repository_grants`.
 
     This function is the single source of truth for both the REST list
-    endpoints and the MCP `cograph.repositories` resource — they both
+    endpoints and the MCP `cograph_repositories` resource — they both
     funnel through here, so ACL propagates to MCP for free.
     """
 

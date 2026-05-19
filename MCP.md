@@ -72,7 +72,7 @@ Field semantics:
   `snippet_chars` in `[80, 4000]`.
 - **`content_truncated`** — `true` iff the original content was longer than
   the returned snippet. Agents that need full text follow up with
-  `cograph.read_node` (code) or `cograph.read_chunk` (markdown).
+  `cograph_read_node` (code) or `cograph_read_chunk` (markdown).
 - **`provenance`** — anchors the result to its source so the agent can
   quote it. For code hits: `node_id` + `file_path` + line range. For
   repo-doc hits: `document_id` + `file_path` + `heading_path`. Line
@@ -90,9 +90,9 @@ The agent should be able to self-budget without parsing every result:
 
 - `total_tokens_estimate` is `sum(len(snippet)) // 4` over all results in
   the response — a conservative proxy that avoids tokenizer roundtrips.
-- A `top_k=10` `cograph.retrieve` with default `snippet_chars=600` is
+- A `top_k=10` `cograph_retrieve` with default `snippet_chars=600` is
   capped at ~1.5K tokens of *snippet* payload regardless of source size.
-- `cograph.read_node` / `cograph.read_chunk` return full content. Agents
+- `cograph_read_node` / `cograph_read_chunk` return full content. Agents
   should reach for them only when `content_truncated=true` AND the answer
   needs the full body.
 
@@ -106,23 +106,23 @@ Twelve tools (target). Status flags mark migration progress.
 
 | Tool | Status | Returns | Use when |
 |------|--------|---------|----------|
-| `cograph.route(query, top_k=3)` | ✅ | `{repositories: [{slug,score,why}], collections: [{id,score,why}]}` | Question doesn't name a target repo / collection — pick where to look |
-| `cograph.repositories` | ✅ | List of readable repos | Inventory / target a repo by slug |
-| `cograph.collections` | ✅ | List of markdown collections | Inventory / target a collection by id |
-| `cograph.repository_readme(slug)` | ✅ | `{content, source_path, content_truncated, …}` | One-shot "what is repo X about" |
-| `cograph.outline(slug? \| collection_id?)` | ✅ | Token-cheap structure preview | Bootstrap context before any heavy search |
-| `cograph.retrieve(query, mode)` | ✅ | Hybrid-search results envelope | Natural-language question; `mode=code\|wiki\|mixed` |
-| `cograph.search_code(query)` | ✅ | Symbol names + line ranges (no body) | Probable symbol name; symbol-exact lookup |
-| `cograph.read_node(node_id)` | ✅ | Full node body + optional graph | Read a known code node fully |
-| `cograph.related(node_id)` | ✅ | Graph neighbours of a node | Trace callers/callees from a known node |
-| `cograph.collection_document(...)` | ✅ | Doc metadata + chunk list | Navigate a markdown collection |
-| `cograph.collection_search(query, ...)` | ✅ | Excerpt envelope (md_chunk layer) | Search inside a collection |
-| `cograph.read_chunk(collection_id, chunk_id)` | ✅ | Full chunk body | After `collection_search`, when truncated |
-| `cograph.read_file_range(slug, path, start, end)` | ✅ | File range body | Read lines `[start, end]` of a file (≤ 1000 lines) |
-| ~~`cograph.search`~~ | 🚫 | — | Replaced by `cograph.retrieve(mode=…)` |
-| ~~`cograph.node`~~ | 🚫 | — | Renamed to `cograph.read_node` |
+| `cograph_route(query, top_k=3)` | ✅ | `{repositories: [{slug,score,why}], collections: [{id,score,why}]}` | Question doesn't name a target repo / collection — pick where to look |
+| `cograph_repositories` | ✅ | List of readable repos | Inventory / target a repo by slug |
+| `cograph_collections` | ✅ | List of markdown collections | Inventory / target a collection by id |
+| `cograph_repository_readme(slug)` | ✅ | `{content, source_path, content_truncated, …}` | One-shot "what is repo X about" |
+| `cograph_outline(slug? \| collection_id?)` | ✅ | Token-cheap structure preview | Bootstrap context before any heavy search |
+| `cograph_retrieve(query, mode)` | ✅ | Hybrid-search results envelope | Natural-language question; `mode=code\|wiki\|mixed` |
+| `cograph_search_code(query)` | ✅ | Symbol names + line ranges (no body) | Probable symbol name; symbol-exact lookup |
+| `cograph_read_node(node_id)` | ✅ | Full node body + optional graph | Read a known code node fully |
+| `cograph_related(node_id)` | ✅ | Graph neighbours of a node | Trace callers/callees from a known node |
+| `cograph_collection_document(...)` | ✅ | Doc metadata + chunk list | Navigate a markdown collection |
+| `cograph_collection_search(query, ...)` | ✅ | Excerpt envelope (md_chunk layer) | Search inside a collection |
+| `cograph_read_chunk(collection_id, chunk_id)` | ✅ | Full chunk body | After `collection_search`, when truncated |
+| `cograph_read_file_range(slug, path, start, end)` | ✅ | File range body | Read lines `[start, end]` of a file (≤ 1000 lines) |
+| ~~`cograph.search`~~ | 🚫 | — | Replaced by `cograph_retrieve(mode=…)` |
+| ~~`cograph.node`~~ | 🚫 | — | Renamed to `cograph_read_node` |
 
-`cograph.route` is the **lowest-cost** way to figure out where the answer
+`cograph_route` is the **lowest-cost** way to figure out where the answer
 lives when the user's question doesn't name a slug. It returns up to
 `top_k` candidate repositories and `top_k` collections, each with a
 `score` in `[0, 1]` and a `why` string explaining which signal (slug,
@@ -138,29 +138,29 @@ implementation lives in code). If fewer than two candidates clear
 
 | Question shape | First call |
 |---|---|
-| Target repo / collection unclear (no slug in the question) | `cograph.route(query)` — then run the ladder against every candidate with `score ≥ 0.7` |
-| "What repos / collections are there?" | `cograph.repositories` / `cograph.collections` |
-| "What is repo X about?" | `cograph.repository_readme(slug)` |
-| "What's in repo / collection X?" | `cograph.outline(...)` |
-| "Find class / function `Name`" | `cograph.search_code(query="Name")` |
-| "Where is feature Y implemented?" | `cograph.retrieve(query=…, mode="code")` |
-| "What does the wiki say about Z?" | `cograph.retrieve(query=…, mode="wiki")` |
-| Code AND wiki together | `cograph.retrieve(query=…, mode="mixed")` (only when target unclear) |
-| "Read this node fully" | `cograph.read_node(node_id, with_graph=false)` |
-| "Show me lines 100-200 of foo.py" | `cograph.read_file_range(slug, path, 100, 200)` |
-| "Find chunks in collection X about Y" | `cograph.collection_search(collection_id, query)` |
-| "Read this chunk fully" | `cograph.read_chunk(collection_id, chunk_id)` |
+| Target repo / collection unclear (no slug in the question) | `cograph_route(query)` — then run the ladder against every candidate with `score ≥ 0.7` |
+| "What repos / collections are there?" | `cograph_repositories` / `cograph_collections` |
+| "What is repo X about?" | `cograph_repository_readme(slug)` |
+| "What's in repo / collection X?" | `cograph_outline(...)` |
+| "Find class / function `Name`" | `cograph_search_code(query="Name")` |
+| "Where is feature Y implemented?" | `cograph_retrieve(query=…, mode="code")` |
+| "What does the wiki say about Z?" | `cograph_retrieve(query=…, mode="wiki")` |
+| Code AND wiki together | `cograph_retrieve(query=…, mode="mixed")` (only when target unclear) |
+| "Read this node fully" | `cograph_read_node(node_id, with_graph=false)` |
+| "Show me lines 100-200 of foo.py" | `cograph_read_file_range(slug, path, 100, 200)` |
+| "Find chunks in collection X about Y" | `cograph_collection_search(collection_id, query)` |
+| "Read this chunk fully" | `cograph_read_chunk(collection_id, chunk_id)` |
 
 Heuristic: prefer the call whose name is *most specific* to the question.
-A `cograph.repository_readme` answers "what is repo X" in 1 call; the same
-question routed through `cograph.retrieve` typically takes 3-4.
+A `cograph_repository_readme` answers "what is repo X" in 1 call; the same
+question routed through `cograph_retrieve` typically takes 3-4.
 
 ## Failure modes (what the agent should do)
 
 | Symptom | Action |
 |---|---|
 | `0` results from `mode="code"` | Retry once with `mode="mixed"`. If still empty, say so — do not silently fall back to filesystem grep or web search. |
-| `content_truncated=true` and you need full text | `cograph.read_node` / `cograph.read_chunk` for the specific id. |
+| `content_truncated=true` and you need full text | `cograph_read_node` / `cograph_read_chunk` for the specific id. |
 | `403 INSUFFICIENT_SCOPE` | Ask user to re-run `cograph-connect setup` with PAT scopes `mcp` + `api:read`. |
 | `total_tokens_estimate > 8000` | Drop `top_k`, narrow the query, or set `include_chunks=false`. |
 | Tool name not found | Server is older than the client; surface the version mismatch instead of silently retrying with the legacy name. |
@@ -216,12 +216,12 @@ restarting the process.
   → optional rerank. The retriever returns full content; the MCP tool
   layer applies `make_snippet` before serialising.
 - `backend/app/api/retrieval.py` — REST mirror of the same envelope so
-  `/api/retrieve` and `cograph.retrieve` stay structurally identical.
+  `/api/retrieve` and `cograph_retrieve` stay structurally identical.
 - `backend/app/rag/source_router.py` — lexical hybrid over
   `repository.display_name + slug + README first ~2K chars + outline
   labels` and `collection.title + description + heading_path`s;
   scores normalised to `[0, 1]` and ACL-filtered. Powers both
-  `cograph.route` and `POST /api/route`.
+  `cograph_route` and `POST /api/route`.
 - `backend/app/mcp/instructions.py` — playbook + briefing renderer +
   the `_RENDERED_CACHE` the dynamic-property hook on the MCP server
   reads at each `initialize`.

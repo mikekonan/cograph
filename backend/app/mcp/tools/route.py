@@ -1,4 +1,4 @@
-"""MCP tool: `cograph.route(query, top_k=3)`.
+"""MCP tool: `cograph_route(query, top_k=3)`.
 
 Cheap source-routing step the playbook tells the agent to call FIRST when
 the user's question doesn't name a specific repository. The agent then
@@ -30,12 +30,12 @@ _DESCRIPTION = (
     "`why` explanation.\n"
     "Use when: the user's question does NOT name a specific repository "
     "or collection — call this first, then fan out to ALL high-confidence "
-    "candidates (score ≥ 0.7) with cograph.outline / cograph.retrieve. "
+    "candidates (score ≥ 0.7) with cograph_outline / cograph_retrieve. "
     "Facts routinely span sources; collapsing to a single candidate is a "
     "bug.\n"
     "Do NOT use when the user already named a slug (skip straight to "
-    "cograph.outline + cograph.retrieve with `repository=<slug>`), and "
-    "do NOT use as a substitute for cograph.retrieve — route returns "
+    "cograph_outline + cograph_retrieve with `repository=<slug>`), and "
+    "do NOT use as a substitute for cograph_retrieve — route returns "
     "*pointers to sources*, not snippets."
 )
 
@@ -56,7 +56,7 @@ def _hit_payload(hit: RouteHit) -> dict[str, object]:
 
 
 def register(server: FastMCP, services: MCPServices) -> None:
-    @server.tool(name="cograph.route", description=_DESCRIPTION)
+    @server.tool(name="cograph_route", description=_DESCRIPTION)
     async def route(
         query: str,
         top_k: int = 3,
