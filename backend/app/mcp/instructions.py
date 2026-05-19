@@ -84,8 +84,8 @@ treat it as a router you can call multiple times in one question, not
 a one-shot. A question that mixes two concepts almost always spans
 two source sets:
 
-* "How does the cashier validate billing addresses?" — route once for
-  `"cashier billing address validation"`, then route again for
+* "How does the checkout validate billing addresses?" — route once for
+  `"checkout billing address validation"`, then route again for
   `"address normalisation"` or `"country code lookup"` if the first
   pass missed the data source.
 * "Where do we handle 3DS challenges and how is the merchant routing

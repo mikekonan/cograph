@@ -23,7 +23,7 @@ Searchable fields:
   `code_node` with `node_type='module'`. This is the chunky structural
   skeleton (one row per file); pulling it gives the router fuel for
   provider-/feature-named queries whose terms NEVER reach the README
-  (e.g. routing "Nuvei" to walle whose `domain/payments/nuvei/*.go`
+  (e.g. routing "AcmePay" to runner whose `domain/payments/acmepay/*.go`
   files lit up under the indexer but whose README describes only the
   abstract runner).
 * **Collections**: `name` + `description` + each `MdDocument`'s top
@@ -126,9 +126,9 @@ def _tokenise(query: str) -> list[str]:
 
 def _matches_in(tokens: set[str], text: str) -> set[str]:
     """Return the subset of `tokens` that appear as a substring in `text`
-    (case-insensitive). Substring match — not whole-word — so `nuvei` hits
-    inside `domain.payments.nuvei.terminal`, and a slug fragment like
-    `walle` hits inside `pgw.dev/svc/walle`.
+    (case-insensitive). Substring match — not whole-word — so `acmepay` hits
+    inside `domain.payments.acmepay.terminal`, and a slug fragment like
+    `runner` hits inside `git.example.com/svc/runner`.
 
     Scoring lives in `_combine_score`; this is just the field-level
     matcher."""
@@ -195,8 +195,8 @@ async def _load_symbol_corpus(
     / methods: each file typically has dozens, the names repeat, and adding
     them would balloon the corpus to 50× the size with marginal new
     information. The substring search in `_matches_in` matches a
-    token like `nuvei` against any qualified_name fragment it appears in,
-    so the module rows alone are enough to surface `domain.payments.nuvei.*`.
+    token like `acmepay` against any qualified_name fragment it appears in,
+    so the module rows alone are enough to surface `domain.payments.acmepay.*`.
 
     Rows per repo are capped at `_SYMBOL_CORPUS_PER_REPO_CAP` — sorted by
     `qualified_name` for determinism (alphabetical hits the prefix tree of
@@ -241,7 +241,7 @@ def _combine_score(
                   → 1.0 when no label hit, 1.5 when the entire query is in
                   the label. The boost is multiplicative, not additive, so a
                   partial label match doesn't pay for missing content
-                  coverage (a slug match of 'walle' with 0 README/symbol
+                  coverage (a slug match of 'runner' with 0 README/symbol
                   hits is still 0.0 — we want substance behind the label).
     """
     if not tokens:

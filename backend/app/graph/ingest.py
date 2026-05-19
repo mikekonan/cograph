@@ -282,7 +282,7 @@ class GraphIngestService:
         # files see the freshest state without re-hitting the database.
         # Before this we did the same full SELECT inside `persist_graph`
         # itself, which scaled O(F × N) on monorepos and was the root
-        # cause of the parse-step hang on bookkeeping.
+        # cause of the parse-step hang on ledger.
         cache = GraphIngestCache.from_nodes(
             list(
                 (

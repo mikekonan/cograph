@@ -537,7 +537,7 @@ async def add_members(
     `users` first — a 404 on a single missing id rolls back the whole
     batch so partial state never lands. Idempotency: re-sending the
     same payload returns `added=[]` instead of a 409, which lets the
-    UI resubmit the full membership list without bookkeeping.
+    UI resubmit the full membership list without ledger.
     """
     del _csrf
 

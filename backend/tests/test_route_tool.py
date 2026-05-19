@@ -200,8 +200,8 @@ async def test_route_score_in_unit_interval(db_session, settings) -> None:
         db_session,
         host="github.com",
         owner="acme",
-        name="bookkeeping",
-        readme="# Bookkeeping\nLedger, settlements, payouts.",
+        name="ledger",
+        readme="# Ledger\nLedger, settlements, payouts.",
     )
     hits = await route_sources(
         db_session,
@@ -314,29 +314,29 @@ async def test_route_matches_collection_title_and_headings(db_session, settings)
 async def test_route_finds_provider_only_in_code_symbols(
     db_session, settings
 ) -> None:
-    """Reproducer for the 'Nuvei' incident (2026-05-19): the agent in chat
+    """Reproducer for the 'AcmePay' incident (2026-05-19): the agent in chat
     mode asked Cograph about a payment provider whose name lives ONLY in
-    code paths (`domain/payments/nuvei/terminal.go`, qualified_name
-    `domain.payments.nuvei.terminal`). The router-then-fan-out playbook
+    code paths (`domain/payments/acmepay/terminal.go`, qualified_name
+    `domain.payments.acmepay.terminal`). The router-then-fan-out playbook
     requires that the right repo come back with score ≥ 0.5 — anything
     less and the agent treats the hit as ignorable noise.
 
     Before the fix: score was 0.167 (router only saw slug + README, neither
-    of which mentions Nuvei). Walle's README describes the runner
+    of which mentions AcmePay). Runner's README describes the runner
     mechanics in the abstract; the provider lives entirely in code.
 
     After the fix: the router also indexes module-level qualified_name and
     file_path tokens, and the formula normalises so single-source full
     coverage = 1.0 (was 0.333 before)."""
-    walle = await _make_public_repo(
+    runner = await _make_public_repo(
         db_session,
-        host="pgw.dev",
+        host="git.example.com",
         owner="svc",
-        name="walle",
-        # Realistic README shape: walle is described as an abstract runner;
+        name="runner",
+        # Realistic README shape: runner is described as an abstract runner;
         # zero providers named here. All provider mentions live in code.
         readme=(
-            "# Walle\n\nIntegration runner. Adapts the internal payment "
+            "# Runner\n\nIntegration runner. Adapts the internal payment "
             "flow to provider-specific terminals.\n"
         ),
     )
@@ -346,15 +346,15 @@ async def test_route_finds_provider_only_in_code_symbols(
     for fname in ("terminal", "builder_card", "process_error", "dictionary"):
         db_session.add(
             CodeNode(
-                repository_id=walle.id,
-                file_path=f"domain/payments/nuvei/{fname}.go",
-                qualified_name=f"domain.payments.nuvei.{fname}#module",
+                repository_id=runner.id,
+                file_path=f"domain/payments/acmepay/{fname}.go",
+                qualified_name=f"domain.payments.acmepay.{fname}#module",
                 name=fname,
                 language="go",
                 node_type=CodeNodeType.MODULE,
                 start_line=1,
                 end_line=100,
-                content=f"package nuvei // {fname}\n",
+                content=f"package acmepay // {fname}\n",
                 content_hash="x" * 64,
             )
         )
@@ -362,26 +362,26 @@ async def test_route_finds_provider_only_in_code_symbols(
 
     hits = await route_sources(
         db_session,
-        query="Nuvei payment provider integration",
+        query="AcmePay payment provider integration",
         current_user=None,
         settings=settings,
         top_k=3,
     )
     repo_hits = [h for h in hits if h.kind == "repository"]
-    walle_hit = next((h for h in repo_hits if "walle" in h.label), None)
-    assert walle_hit is not None, (
-        f"router lost walle entirely — symbol-name match for 'nuvei' is the "
+    runner_hit = next((h for h in repo_hits if "runner" in h.label), None)
+    assert runner_hit is not None, (
+        f"router lost runner entirely — symbol-name match for 'acmepay' is the "
         f"single strongest signal we have; got: {repo_hits}"
     )
-    assert walle_hit.score >= 0.5, (
-        f"router should be ≥0.5 confident when 'nuvei' appears in 4 module "
-        f"qualified_names; got {walle_hit.score:.3f}. The playbook treats "
+    assert runner_hit.score >= 0.5, (
+        f"router should be ≥0.5 confident when 'acmepay' appears in 4 module "
+        f"qualified_names; got {runner_hit.score:.3f}. The playbook treats "
         f"<0.5 as ignorable, so this is the user-visible 'agent gave up' "
         f"threshold."
     )
-    assert "symbol" in walle_hit.why.lower() or "code" in walle_hit.why.lower(), (
+    assert "symbol" in runner_hit.why.lower() or "code" in runner_hit.why.lower(), (
         f"why should announce the symbol-name match so the agent's debug "
-        f"trail can explain WHERE the match came from; got: {walle_hit.why!r}"
+        f"trail can explain WHERE the match came from; got: {runner_hit.why!r}"
     )
 
 
@@ -394,7 +394,7 @@ async def test_route_does_not_regress_readme_only_matches(
 
     Pre-fix the formula divided by 3 (slug-weight + README-weight), capping
     a README-only full coverage at 0.333 — which silently demoted any wiki-
-    style repo to 'ignorable'. The Nuvei fix changes the formula; this
+    style repo to 'ignorable'. The AcmePay fix changes the formula; this
     test pins the side effect so it doesn't get reverted later."""
     await _make_public_repo(
         db_session,
