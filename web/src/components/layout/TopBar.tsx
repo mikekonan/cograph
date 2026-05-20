@@ -115,7 +115,7 @@ export function TopBar() {
         <nav aria-label="Primary navigation" className="flex items-center gap-0.5">
           <TopBarNavLink to="/">Repos</TopBarNavLink>
           <TopBarNavLink to="/docs">Docs</TopBarNavLink>
-          <TopBarNavLink to="/search">Search</TopBarNavLink>
+          {isAdmin && <TopBarNavLink to="/search">Search</TopBarNavLink>}
         </nav>
       </div>
 

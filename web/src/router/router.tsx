@@ -101,7 +101,14 @@ export const router = createBrowserRouter([
     ),
     children: [
       { index: true, element: <HomePage /> },
-      { path: "search", element: <SearchPage /> },
+      {
+        path: "search",
+        element: (
+          <ProtectedAdminRoute>
+            <SearchPage />
+          </ProtectedAdminRoute>
+        ),
+      },
       { path: "design", element: <DesignPage /> },
       { path: "login", element: <LoginRoute /> },
       { path: "setup", element: <SetupRoute /> },

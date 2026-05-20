@@ -87,7 +87,10 @@ describe("TopBar jobs access", () => {
       name: /primary navigation/i,
     });
     expect(within(primaryNav).getByRole("link", { name: "Repos" })).toBeInTheDocument();
-    expect(within(primaryNav).getByRole("link", { name: "Search" })).toBeInTheDocument();
+    // Search is admin-only — anonymous users must not see the nav-link, and
+    // the matching route in router.tsx is wrapped in ProtectedAdminRoute so
+    // typing /search directly returns the 403 panel rather than the page.
+    expect(within(primaryNav).queryByRole("link", { name: "Search" })).not.toBeInTheDocument();
     expect(within(primaryNav).queryByRole("link", { name: "Design" })).not.toBeInTheDocument();
     expect(within(primaryNav).queryByRole("link", { name: "Jobs" })).not.toBeInTheDocument();
     expect(within(primaryNav).queryByRole("link", { name: "Config" })).not.toBeInTheDocument();
@@ -113,6 +116,9 @@ describe("TopBar jobs access", () => {
     });
     expect(within(primaryNav).queryByRole("link", { name: "Jobs" })).not.toBeInTheDocument();
     expect(within(primaryNav).queryByRole("link", { name: "Config" })).not.toBeInTheDocument();
+    // Search is restored for admins — it's the only role-gated link in the
+    // primary nav, mirroring how Jobs/Config live in the admin menu.
+    expect(within(primaryNav).getByRole("link", { name: "Search" })).toBeInTheDocument();
 
     const trigger = screen.getByRole("button", {
       name: /open admin menu for admin@example\.com/i,
@@ -153,6 +159,13 @@ describe("TopBar jobs access", () => {
 
   it("shows an account menu with logout for non-admin authenticated users", () => {
     renderTopBar({ status: "authenticated", user: memberUser });
+
+    const primaryNav = screen.getByRole("navigation", {
+      name: /primary navigation/i,
+    });
+    // Non-admin authenticated users see Repos and Docs but not Search — same
+    // gate as anonymous; the role is the discriminator, not just login state.
+    expect(within(primaryNav).queryByRole("link", { name: "Search" })).not.toBeInTheDocument();
 
     const trigger = screen.getByRole("button", {
       name: /open account menu for member@example\.com/i,
