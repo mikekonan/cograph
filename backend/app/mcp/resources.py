@@ -185,13 +185,30 @@ def register_resources(server: FastMCP, services: MCPServices) -> None:
             search=None,
             limit=100,
         )
+        # Surface wiki_total per repository so the agent can see at session
+        # start which repos actually have generated wiki pages — the playbook's
+        # "Wiki gate" rule keys off this to decide whether mode="wiki" retrieve
+        # is mandatory for that repo. Cost is one COUNT(*) per visible repo
+        # (capped at 100 by the limit above), acceptable for a session-bootstrap
+        # resource that the agent fetches once.
+        repo_items = []
+        async with services.session_manager.session() as session:
+            for item in repos["items"]:  # type: ignore[index]
+                wiki_total = await services.wiki_queries.count_pages(
+                    session=session,
+                    repository_id=item["id"],
+                )
+                repo_items.append(
+                    {
+                        "slug": item["slug"],
+                        "status": item["status"],
+                        "wiki_total": wiki_total,
+                    }
+                )
         return {
             "repositories": {
                 "total": repos["total"],  # type: ignore[index]
-                "items": [
-                    {"slug": item["slug"], "status": item["status"]}
-                    for item in repos["items"]  # type: ignore[index]
-                ],
+                "items": repo_items,
             },
             "collections": {
                 "total": collections["total"],  # type: ignore[index]

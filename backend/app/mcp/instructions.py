@@ -155,9 +155,40 @@ broaden a stale candidate set.
 
 For every slug from step 0, run `cograph_outline(slug)` once. The
 outline tells you the repository's top-level structure (modules,
-packages, key files). Use it to formulate better retrieval queries — a
+packages, key files) AND the titles of up to 30 generated wiki pages
+plus `wiki_total`. Use it to formulate better retrieval queries — a
 search for "session expiry" lands better when you know the auth code
-lives under `internal/auth/`.
+lives under `internal/auth/`, and wiki titles often surface the exact
+domain vocabulary the user is asking about.
+
+### Step 1.5 — Wiki gate (HARD RULE)
+
+For every candidate repository where `wiki_total > 0` (visible in
+`cograph://my-context` at session start, or in the `cograph_outline`
+response), you MUST issue at least one `cograph_retrieve(repository=…,
+mode="wiki", query=<…>)` call BEFORE you synthesise the answer. The
+generated wiki holds conceptual / definitional / architectural prose
+the code itself does not encode — skipping it on a repo that has one
+collapses your answer to "what the code does" and loses "what the team
+says it does and why."
+
+Phrase the wiki query in domain terms, not code terms — wiki pages are
+written for humans, not compilers. Good wiki queries:
+
+* the bare domain entity ("AcmePay", "3DS challenge", "idempotency key")
+* a "what is" / "how does" / "why" framing of the user's question
+* the title of a wiki page from outline that looks adjacent to the
+  topic
+
+If `mode="wiki"` returns no hits for a repo with `wiki_total > 0`, try
+one more phrasing before giving up on its wiki — the page exists, your
+first phrasing just didn't match its language. Wiki citations carry
+the form `wiki/<slug>` and count as full provenance, same as code
+citations.
+
+Repos with `wiki_total == 0` are exempt from this gate — there is
+nothing to read. Mention this explicitly in your reasoning if relevant
+("repo has no generated wiki, so this answer is code-only").
 
 ### Step 2 — multi-phrasing retrieve
 
@@ -234,7 +265,10 @@ Before your first substantive answer in a session, fetch the resource
 can see in this Cograph instance (the list is filtered by the calling
 user's ACL — repositories the operator hasn't granted access to are
 genuinely invisible, not hidden). Use the slugs from there as
-`repository=` values in your tool calls.
+`repository=` values in your tool calls. Each repository entry also
+carries `wiki_total` — the count of generated wiki pages for that repo.
+A non-zero `wiki_total` makes the Wiki gate (Step 1.5) mandatory for
+that repo on any question that involves it.
 
 There is also a resource `cograph://briefing` that returns the
 deployment-specific operator briefing in case it gets dropped after a

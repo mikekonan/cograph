@@ -22,6 +22,7 @@ import json
 import pytest
 from sqlalchemy import select
 
+from backend.app.models.document import Document
 from backend.app.models.enums import (
     MdCollectionVisibility,
     RepositoryStatus,
@@ -138,6 +139,62 @@ async def test_my_context_lists_public_repo_and_collection(app, db_session) -> N
 
     repo_slugs = [item["slug"] for item in payload["repositories"]["items"]]
     assert "github.com/acme/payments" in repo_slugs
+    # A repo without any generated wiki must surface wiki_total: 0 so the
+    # agent can see the Wiki gate (Step 1.5 in the playbook) does NOT apply
+    # to it. Absence of the field would force the agent to guess.
+    repo_entry = next(
+        item
+        for item in payload["repositories"]["items"]
+        if item["slug"] == "github.com/acme/payments"
+    )
+    assert repo_entry["wiki_total"] == 0
 
     collection_names = [item["name"] for item in payload["collections"]["items"]]
     assert "Engineering glossary" in collection_names
+
+
+@pytest.mark.asyncio
+async def test_my_context_reports_wiki_total_when_pages_exist(
+    app, db_session
+) -> None:
+    # The playbook's Wiki gate fires only on repos with wiki_total > 0; the
+    # session-bootstrap resource must therefore report a non-zero count when
+    # the repo actually has generated pages. Two pages, expect 2.
+    repo = Repository(
+        host="github.com",
+        owner="acme",
+        name="runner",
+        git_url="https://github.com/acme/runner.git",
+        branch="main",
+        status=RepositoryStatus.READY,
+        visibility=RepositoryVisibility.PUBLIC,
+    )
+    db_session.add(repo)
+    await db_session.flush()
+
+    for idx, slug in enumerate(("overview", "architecture")):
+        db_session.add(
+            Document(
+                repository_id=repo.id,
+                slug=slug,
+                title=slug.capitalize(),
+                doc_type="wiki",
+                sort_order=idx,
+                content=f"# {slug}\n\nGenerated page body.",
+                content_hash=f"hash-{slug}",
+                source_hash=f"src-{slug}",
+                model="test",
+            )
+        )
+    await db_session.commit()
+
+    server = await _get_mcp_server(app)
+    result = await server.read_resource("cograph://my-context")
+    payload = json.loads(_content_str(result))
+
+    repo_entry = next(
+        item
+        for item in payload["repositories"]["items"]
+        if item["slug"] == "github.com/acme/runner"
+    )
+    assert repo_entry["wiki_total"] == 2
