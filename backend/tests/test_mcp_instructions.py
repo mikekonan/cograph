@@ -59,7 +59,7 @@ def test_playbook_contains_persistence_rule() -> None:
     text = _render_with_default_settings(None)
     # Whitespace-tolerant — the rule is the load-bearing claim, exact line
     # wrapping is not.
-    assert re.search(r"at least five distinct\s+approaches", text), text
+    assert re.search(r"at least three distinct\s+approaches", text), text
 
 
 def test_playbook_contains_no_single_hit_rule() -> None:
