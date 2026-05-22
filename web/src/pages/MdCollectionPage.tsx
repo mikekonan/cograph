@@ -237,7 +237,11 @@ export default function MdCollectionPage() {
   if (!id) return <div className="p-8">Missing collection ID</div>;
 
   const totalDocs = data?.documents.total ?? 0;
-  const totalChunks = data?.documents.items.reduce((sum, d) => sum + d.chunk_count, 0) ?? 0;
+  // Use the embed-status endpoint's collection-wide total. Summing
+  // ``chunk_count`` over ``data.documents.items`` only covers the current
+  // page (10 docs), producing a misleading "47 chunks" badge on a
+  // 2293-document / 6704-chunk collection.
+  const totalChunks = embedStatus.data?.total_chunks ?? 0;
 
   return (
     <main className="mx-auto flex w-full max-w-[90rem] flex-col px-5 py-8">
