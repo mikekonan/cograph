@@ -134,8 +134,11 @@ async def test_repo_sync_orchestrator_prepares_checkout_and_enqueues_job(
     assert kwargs["_queue_name"] == REPO_SYNC_QUEUE_NAME
     assert kwargs["_job_id"] == str(sync_run.id)
     assert Path(args[1]).exists()
-    assert (Path(args[1]) / "service.py").read_text(encoding="utf-8").strip().endswith(
-        "'pong'"
+    assert (
+        (Path(args[1]) / "service.py")
+        .read_text(encoding="utf-8")
+        .strip()
+        .endswith("'pong'")
     )
 
 
@@ -410,3 +413,41 @@ async def test_repo_sync_orchestrator_auto_detects_branch(
     await db_session.refresh(repository)
     assert repository.branch == "trunk"
     assert result.batch_id is not None
+
+
+@pytest.mark.asyncio
+async def test_repo_sync_orchestrator_stamps_wiki_rebuild_flag(
+    db_session,
+    settings,
+    tmp_path,
+):
+    """`wiki_rebuild=True` lands on the sync-run row; the processor reads it
+    there instead of through the arq payload. Default stays False."""
+    source_repo_path = tmp_path / "source"
+    source_repo = _init_source_repo(source_repo_path)
+    _commit_file(source_repo, source_repo_path, "main.py", "x = 1\n")
+
+    repository = Repository(
+        host="example.com",
+        git_url=str(source_repo_path),
+        name="rebuild-repo",
+        owner="acme",
+        branch="main",
+    )
+    db_session.add(repository)
+    await db_session.commit()
+
+    orchestrator = RepoSyncOrchestrator(
+        job_queue=_RecordingQueue(),
+        checkout_adapter=GitCheckoutAdapter(checkouts_root=settings.git.checkouts_root),
+    )
+
+    result = await orchestrator.enqueue_repository_sync(
+        session=db_session,
+        repository_id=repository.id,
+        trigger_kind=RepoSyncTriggerKind.MANUAL,
+        wiki_rebuild=True,
+    )
+    sync_run = await db_session.get(RepoSyncRun, result.sync_run_id)
+    assert sync_run is not None
+    assert sync_run.wiki_rebuild_requested is True

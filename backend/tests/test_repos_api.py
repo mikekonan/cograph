@@ -146,6 +146,83 @@ async def test_reindex_repository_enqueues_sync_run(client, app, db_session, set
     assert orchestrator.calls[0]["repository_id"] == repository.id
     assert orchestrator.calls[0]["trigger_kind"] is RepoSyncTriggerKind.MANUAL
     assert orchestrator.calls[0]["requested_by"] == admin.id
+    assert orchestrator.calls[0]["wiki_rebuild"] is False
+
+
+async def test_reindex_wiki_rebuild_forbidden_for_admin(
+    client, app, db_session, settings
+):
+    """`wiki_rebuild` re-pays the full first-run LLM cost, so it is gated
+    to OWNER — stricter than the ADMIN-passing repo mutation grant."""
+    admin = User(
+        email="admin@example.com",
+        password_hash="hashed",
+        role=UserRole.ADMIN,
+    )
+    repository = Repository(
+        host="example.com",
+        git_url="https://example.com/acme/demo.git",
+        name="demo",
+        owner="acme",
+        branch="main",
+    )
+    db_session.add_all([admin, repository])
+    await db_session.commit()
+
+    await _authenticate_admin(client, settings, admin)
+    orchestrator = _FakeOrchestrator()
+    app.dependency_overrides[get_repo_sync_orchestrator] = lambda: orchestrator
+
+    response = await client.post(
+        f"/api/repos/{repository.host}/{repository.owner}/{repository.name}/reindex",
+        json={"wiki_rebuild": True},
+        headers={"X-CSRF-Token": _TEST_CSRF},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "OWNER_REQUIRED"
+    assert orchestrator.calls == []
+
+
+async def test_reindex_wiki_rebuild_allowed_for_owner(
+    client, app, db_session, settings
+):
+    owner = User(
+        email="owner@example.com",
+        password_hash="hashed",
+        role=UserRole.OWNER,
+    )
+    repository = Repository(
+        host="example.com",
+        git_url="https://example.com/acme/demo.git",
+        name="demo",
+        owner="acme",
+        branch="main",
+    )
+    db_session.add_all([owner, repository])
+    await db_session.commit()
+
+    await _authenticate_admin(client, settings, owner)
+    fake_result = RepoSyncEnqueueResult(
+        repository_id=repository.id,
+        sync_run_id=uuid4(),
+        batch_id=None,
+        status=RepoSyncRunStatus.QUEUED,
+        requested_ref="abc123",
+        deduplicated=False,
+    )
+    orchestrator = _FakeOrchestrator(result=fake_result)
+    app.dependency_overrides[get_repo_sync_orchestrator] = lambda: orchestrator
+
+    response = await client.post(
+        f"/api/repos/{repository.host}/{repository.owner}/{repository.name}/reindex",
+        json={"wiki_rebuild": True},
+        headers={"X-CSRF-Token": _TEST_CSRF},
+    )
+
+    assert response.status_code == 202
+    assert len(orchestrator.calls) == 1
+    assert orchestrator.calls[0]["wiki_rebuild"] is True
 
 
 async def test_reindex_repository_maps_clone_failures(
@@ -636,7 +713,9 @@ async def test_list_repositories_pat_user_without_grant_sees_only_public(
     repos. This is the new ACL contract: visibility funnel + group
     grants, no implicit access just because you authenticated.
     """
-    member = User(email="member@example.com", password_hash="hashed", role=UserRole.USER)
+    member = User(
+        email="member@example.com", password_hash="hashed", role=UserRole.USER
+    )
     db_session.add_all(
         [
             member,
@@ -683,7 +762,9 @@ async def test_list_repositories_pat_user_with_grant_sees_admin_only(
     from backend.app.models.enums import GrantLevel
     from backend.app.models.group import Group, GroupMember, RepositoryGrant
 
-    member = User(email="grantee@example.com", password_hash="hashed", role=UserRole.USER)
+    member = User(
+        email="grantee@example.com", password_hash="hashed", role=UserRole.USER
+    )
     public_repo = Repository(
         host="example.com",
         git_url="https://github.com/acme/public.git",
@@ -866,7 +947,9 @@ async def test_get_repository_pat_user_without_grant_404s_on_admin_only(
     """USER-tier PAT without a grant must get a 404 (not 403) on an
     ADMIN_ONLY repo — funnel hides its existence to avoid leaking.
     """
-    member = User(email="member-read@example.com", password_hash="hashed", role=UserRole.USER)
+    member = User(
+        email="member-read@example.com", password_hash="hashed", role=UserRole.USER
+    )
     repository = Repository(
         host="example.com",
         git_url="https://github.com/acme/secret.git",
@@ -901,7 +984,9 @@ async def test_get_repository_pat_user_with_grant_can_read_admin_only(
     from backend.app.models.enums import GrantLevel
     from backend.app.models.group import Group, GroupMember, RepositoryGrant
 
-    member = User(email="grantee-detail@example.com", password_hash="hashed", role=UserRole.USER)
+    member = User(
+        email="grantee-detail@example.com", password_hash="hashed", role=UserRole.USER
+    )
     repository = Repository(
         host="example.com",
         git_url="https://github.com/acme/secret.git",

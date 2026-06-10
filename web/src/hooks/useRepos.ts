@@ -197,6 +197,28 @@ export function useReindexRepo() {
   });
 }
 
+/**
+ * OWNER-only full wiki rebuild: `POST /repos/<slug>/reindex` with
+ * `{ wiki_rebuild: true }`. Re-plans and regenerates every wiki page at the
+ * full first-run LLM cost (routine syncs rewrite only changed pages); the
+ * backend rejects non-owner callers with 403 OWNER_REQUIRED.
+ */
+export function useRebuildWiki() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (slug: RepoSlug) =>
+      apiJson<ReindexResponse>(repoApiPath(slug, "reindex"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ wiki_rebuild: true }),
+      }),
+    onSuccess: (_data, slug) => {
+      qc.invalidateQueries({ queryKey: ["repo", slug.host, slug.owner, slug.name] });
+      qc.invalidateQueries({ queryKey: ["repos"] });
+    },
+  });
+}
+
 /** Delete-repo mutation. Optimistically removes from cache. */
 export function useDeleteRepo() {
   const qc = useQueryClient();

@@ -60,9 +60,7 @@ class StepTimeoutError(RuntimeError):
     """
 
     def __init__(self, step: SyncStep, timeout_seconds: int) -> None:
-        super().__init__(
-            f"Step {step.value} exceeded {timeout_seconds}s deadline"
-        )
+        super().__init__(f"Step {step.value} exceeded {timeout_seconds}s deadline")
         self.step = step
         self.timeout_seconds = timeout_seconds
 
@@ -402,6 +400,7 @@ class RepoSyncProcessor:
                         sync_run_id=sync_run.id,
                         verified_commit=sync_run.requested_ref,
                         checkout_path=checkout_path,
+                        force_full=sync_run.wiki_rebuild_requested,
                     ),
                     timeout_seconds=self._timeouts.generate_wiki_seconds,
                     step=SyncStep.GENERATE_WIKI,

@@ -80,6 +80,7 @@ class LLMWikiGenerator:
         sync_run_id: UUID | None = None,
         verified_commit: str | None = None,
         checkout_path: Path | str | None = None,
+        force_full: bool = False,
     ) -> LLMWikiResult:
         if not verified_commit:
             logger.warning(
@@ -103,6 +104,7 @@ class LLMWikiGenerator:
             checkout_path=checkout_path,
             config=self._config,
             session_factory=self._session_factory,
+            force_full=force_full,
         )
         return LLMWikiResult(
             generated_documents=result.pages_persisted,
