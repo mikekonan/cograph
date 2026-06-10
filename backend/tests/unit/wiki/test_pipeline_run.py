@@ -170,6 +170,9 @@ async def test_run_wiki_generation_deletes_orphans(db_session: AsyncSession) -> 
     )
 
     # Second run drops `old-page` from the plan — it should be deleted.
+    # incremental=False: this test exercises LLM-driven re-planning, which
+    # the incremental path deliberately suppresses while the structural
+    # hash is unchanged (the artifact plan would be reused instead).
     fake2 = FakeStructuredProvider()
     _queue_fake_pipeline(fake2, slugs=["index", "architecture", "getting-started"])
     result = await run_wiki_generation(
@@ -179,7 +182,7 @@ async def test_run_wiki_generation_deletes_orphans(db_session: AsyncSession) -> 
         sync_run_id=None,
         llm=fake2,
         retriever=_retriever(),
-        config=WikiGenerationConfig(),
+        config=WikiGenerationConfig(incremental=False),
     )
     assert result.pages_orphaned_deleted == 1
 
@@ -199,6 +202,42 @@ async def test_run_wiki_generation_deletes_orphans(db_session: AsyncSession) -> 
 async def test_run_wiki_generation_skips_unchanged_content(
     db_session: AsyncSession,
 ) -> None:
+    """Full-rebuild path (incremental=False): rewriting identical bodies
+    hits the content-hash skip in the store — decision 4."""
+    repo = await _make_repo(db_session)
+    fake1 = FakeStructuredProvider()
+    _queue_fake_pipeline(fake1, slugs=["index", "architecture", "getting-started"])
+    await run_wiki_generation(
+        session=db_session,
+        repository_id=repo.id,
+        source_commit="abc",
+        sync_run_id=None,
+        llm=fake1,
+        retriever=_retriever(),
+        config=WikiGenerationConfig(incremental=False),
+    )
+
+    # Re-running with identical bodies → all three slugs should be skipped.
+    fake2 = FakeStructuredProvider()
+    _queue_fake_pipeline(fake2, slugs=["index", "architecture", "getting-started"])
+    result = await run_wiki_generation(
+        session=db_session,
+        repository_id=repo.id,
+        source_commit="abc",
+        sync_run_id=None,
+        llm=fake2,
+        retriever=_retriever(),
+        config=WikiGenerationConfig(incremental=False),
+    )
+    assert result.pages_skipped == 3
+    assert result.pages_persisted == 3
+
+
+async def test_rerun_unchanged_repo_is_incremental_noop(
+    db_session: AsyncSession,
+) -> None:
+    """Incremental path (default): an unchanged repo reuses the artifact,
+    clears every page as clean, and makes zero LLM calls on the rerun."""
     repo = await _make_repo(db_session)
     fake1 = FakeStructuredProvider()
     _queue_fake_pipeline(fake1, slugs=["index", "architecture", "getting-started"])
@@ -212,20 +251,37 @@ async def test_run_wiki_generation_skips_unchanged_content(
         config=WikiGenerationConfig(),
     )
 
-    # Re-running with identical bodies → all three slugs should be skipped.
+    # Nothing queued: any LLM call on the rerun would raise / exhaust.
     fake2 = FakeStructuredProvider()
-    _queue_fake_pipeline(fake2, slugs=["index", "architecture", "getting-started"])
     result = await run_wiki_generation(
         session=db_session,
         repository_id=repo.id,
-        source_commit="abc",
+        source_commit="abc2",
         sync_run_id=None,
         llm=fake2,
         retriever=_retriever(),
         config=WikiGenerationConfig(),
     )
-    assert result.pages_skipped == 3
-    assert result.pages_persisted == 3
+    assert result.mode == "incremental"
+    assert result.pages_clean_skipped == 3
+    assert result.pages_written == 0
+    assert result.pages_persisted == 0
+    assert result.dirty_reasons == {}
+    assert fake2.calls == []
+    assert fake2.tool_calls == []
+
+    # Clean rows got the audit bump but kept their content.
+    rows = (
+        (
+            await db_session.execute(
+                select(Document).where(Document.repository_id == repo.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert {r.slug for r in rows} == {"index", "architecture", "getting-started"}
+    assert all(r.source_commit == "abc2" for r in rows)
 
 
 async def test_run_wiki_generation_records_page_failures(
@@ -407,13 +463,17 @@ async def test_pipeline_does_not_raise_on_degraded_pages(
     assert result.pages_persisted == 1
     assert any("page_quality:index:degraded" in err for err in result.errors)
     persisted = (
-        await db_session.execute(
-            select(Document).where(
-                Document.repository_id == repo.id,
-                Document.doc_type == "wiki",
+        (
+            await db_session.execute(
+                select(Document).where(
+                    Document.repository_id == repo.id,
+                    Document.doc_type == "wiki",
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert [row.slug for row in persisted] == ["index"]
 
 
@@ -498,13 +558,17 @@ async def test_reindex_keeps_orphan_for_failed_pages(
     assert any("page_failed:architecture" in err for err in result.errors)
     assert result.pages_persisted == 1
     rows = (
-        await db_session.execute(
-            select(Document).where(
-                Document.repository_id == repo.id,
-                Document.doc_type == "wiki",
+        (
+            await db_session.execute(
+                select(Document).where(
+                    Document.repository_id == repo.id,
+                    Document.doc_type == "wiki",
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     by_slug = {row.slug: row for row in rows}
     # The transiently-failed page's prior row survives — not orphan-deleted.
     assert "architecture" in by_slug

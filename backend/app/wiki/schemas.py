@@ -756,13 +756,23 @@ class WikiGenerationResult(BaseModel):
     repository_id: UUID
     source_commit: str
     model: str
+    # "full" — plan came from the LLM this run; "incremental" — plan,
+    # overview, and mindmap were rehydrated from `wiki_artifacts`.
+    mode: str = "full"
     pages_planned: int
     pages_written: int
     pages_persisted: int
     pages_skipped: int
+    # Pages the dirty predicate cleared: zero LLM calls, audit-only
+    # `touch_pages` bump. Disjoint from `pages_skipped` (content-hash
+    # match after a full rewrite).
+    pages_clean_skipped: int = 0
     pages_orphaned_deleted: int
     unresolved_placeholders_total: int
     wall_clock_ms: int
     errors: list[str] = Field(default_factory=list)
     kept_for_quality_slugs: list[str] = Field(default_factory=list)
+    # slug -> dirty reason for every page Stage 4 rewrote on an
+    # incremental (or salvaged-full) run. Empty on unconditional rebuilds.
+    dirty_reasons: dict[str, str] = Field(default_factory=dict)
     plan_quality: WikiPlanQualityReport = Field(default_factory=WikiPlanQualityReport)
