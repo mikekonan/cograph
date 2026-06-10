@@ -42,6 +42,9 @@ const batch: SyncBatchSummary = {
   },
   started_at: "2026-04-22T12:00:00Z",
   is_complete: true,
+  tokens_input: null,
+  tokens_output: null,
+  cost_usd_micros: null,
 };
 const secondBatch: SyncBatchSummary = {
   batch_id: "batch-2",
@@ -60,6 +63,9 @@ const secondBatch: SyncBatchSummary = {
   },
   started_at: "2026-04-22T11:00:00Z",
   is_complete: true,
+  tokens_input: null,
+  tokens_output: null,
+  cost_usd_micros: null,
 };
 
 const jobs: SyncJob[] = [
@@ -93,6 +99,11 @@ const jobs: SyncJob[] = [
         ? "Skipped because the embedding capability was disabled for this run."
         : "Skipped because completion-based generation was disabled for this run."
       : null,
+    tokens_input: null,
+    tokens_output: null,
+    cost_usd_micros: null,
+    llm_model: null,
+    cost_breakdown: null,
     started_at: "2026-04-22T12:00:00Z",
     finished_at: "2026-04-22T12:01:00Z",
     created_at: "2026-04-22T12:00:00Z",
@@ -110,6 +121,11 @@ const secondBatchJobs: SyncJob[] = [
     units: null,
     error_code: null,
     error_msg: null,
+    tokens_input: null,
+    tokens_output: null,
+    cost_usd_micros: null,
+    llm_model: null,
+    cost_breakdown: null,
     started_at: "2026-04-22T11:00:00Z",
     finished_at: "2026-04-22T11:01:00Z",
     created_at: "2026-04-22T11:00:00Z",

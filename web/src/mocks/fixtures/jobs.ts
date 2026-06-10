@@ -29,6 +29,11 @@ function job(p: JobInput): SyncJob {
     error_msg: p.error_msg ?? null,
     progress: p.progress ?? null,
     units: p.units ?? null,
+    tokens_input: p.tokens_input ?? null,
+    tokens_output: p.tokens_output ?? null,
+    cost_usd_micros: p.cost_usd_micros ?? null,
+    llm_model: p.llm_model ?? null,
+    cost_breakdown: p.cost_breakdown ?? null,
     started_at: p.started_at ?? null,
     finished_at: p.finished_at ?? null,
     id: p.id,
@@ -536,6 +541,9 @@ const historicBatches: SyncBatchSummary[] = HISTORY.map((spec) => {
     counts: countStatuses(jobs),
     started_at: iso(-spec.startedAgoSec),
     is_complete: jobs.every(isTerminal),
+    tokens_input: null,
+    tokens_output: null,
+    cost_usd_micros: null,
   };
 });
 
@@ -553,6 +561,9 @@ export const seedBatches: SyncBatchSummary[] = [
     counts: countStatuses(batch1Jobs),
     started_at: iso(-900),
     is_complete: batch1Jobs.every(isTerminal),
+    tokens_input: null,
+    tokens_output: null,
+    cost_usd_micros: null,
   },
   {
     batch_id: batch2,
@@ -563,6 +574,9 @@ export const seedBatches: SyncBatchSummary[] = [
     counts: countStatuses(batch2Jobs),
     started_at: iso(-7200),
     is_complete: batch2Jobs.every(isTerminal),
+    tokens_input: null,
+    tokens_output: null,
+    cost_usd_micros: null,
   },
   ...historicBatches,
 ];

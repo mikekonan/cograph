@@ -9,6 +9,8 @@ from __future__ import annotations
 import re
 from typing import Protocol, runtime_checkable
 
+from backend.app.llm.usage import LlmUsageTally
+
 # GPT-5.x and the o-series reasoning models reject `max_tokens`; they require
 # `max_completion_tokens` instead.  Everything older (gpt-4o, gpt-4-turbo,
 # llama3 on Ollama, etc.) still expects the legacy `max_tokens`.
@@ -69,6 +71,7 @@ class OpenAICompletionProvider:
         temperature: float = 0.2,
         request_timeout_seconds: float = 120.0,
         connect_timeout_seconds: float = 10.0,
+        usage_tally: LlmUsageTally | None = None,
         _max_attempts: int = 5,
         _wait_initial: float = 1.0,
         _wait_max: float = 30.0,
@@ -96,6 +99,7 @@ class OpenAICompletionProvider:
         self._max_attempts = _max_attempts
         self._wait_initial = _wait_initial
         self._wait_max = _wait_max
+        self._tally = usage_tally
 
     @property
     def model(self) -> str:
@@ -150,4 +154,11 @@ class OpenAICompletionProvider:
         if resp is None:
             raise CompletionProviderError("retry budget exhausted with no attempts")
 
+        usage = getattr(resp, "usage", None)
+        if self._tally is not None and usage is not None:
+            self._tally.record(
+                model=self._model,
+                tokens_in=int(getattr(usage, "prompt_tokens", 0) or 0),
+                tokens_out=int(getattr(usage, "completion_tokens", 0) or 0),
+            )
         return resp.choices[0].message.content or ""

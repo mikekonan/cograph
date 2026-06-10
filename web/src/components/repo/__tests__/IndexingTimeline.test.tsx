@@ -20,6 +20,9 @@ const batch: SyncBatchSummary = {
   },
   started_at: "2026-04-22T09:00:00Z",
   is_complete: true,
+  tokens_input: null,
+  tokens_output: null,
+  cost_usd_micros: null,
 };
 
 const jobs: SyncJob[] = [
@@ -78,6 +81,46 @@ describe("IndexingTimeline", () => {
     expect(screen.getByLabelText(/embed code — skipped/i)).toBeInTheDocument();
   });
 
+  it("appends token and cost suffixes for steps that recorded LLM usage", () => {
+    const usageJobs = jobs.map((job) =>
+      job.step === "generate_wiki"
+        ? {
+            ...job,
+            tokens_input: 80_000,
+            tokens_output: 4_200,
+            cost_usd_micros: 310_000,
+            llm_model: "gpt-4o-mini",
+          }
+        : job,
+    );
+    const usageBatch: SyncBatchSummary = {
+      ...batch,
+      tokens_input: 80_000,
+      tokens_output: 4_200,
+      cost_usd_micros: 310_000,
+    };
+
+    render(<IndexingTimeline batch={usageBatch} jobs={usageJobs} />);
+
+    // Header rolls up the batch; the wiki legend row carries its own usage.
+    expect(screen.getAllByText(/84\.2k tok · \$0\.31/)).toHaveLength(2);
+    // Steps without LLM usage must not grow a "0 tok" suffix.
+    expect(screen.queryByText(/0 tok/)).toBeNull();
+  });
+
+  it("shows tokens without a price for models missing from the price table", () => {
+    const usageJobs = jobs.map((job) =>
+      job.step === "generate_wiki"
+        ? { ...job, tokens_input: 500, tokens_output: 100, llm_model: "local-vllm" }
+        : job,
+    );
+
+    render(<IndexingTimeline batch={batch} jobs={usageJobs} />);
+
+    expect(screen.getByText(/600 tok/)).toBeInTheDocument();
+    expect(screen.queryByText(/\$/)).toBeNull();
+  });
+
   it("uses millisecond labels for sub-second stages instead of fake zero-second copy", () => {
     const fastBatch: SyncBatchSummary = {
       ...batch,
@@ -111,6 +154,11 @@ function makeJob(step: SyncJob["step"], startedAt: string, finishedAt: string): 
     units: null,
     error_code: null,
     error_msg: null,
+    tokens_input: null,
+    tokens_output: null,
+    cost_usd_micros: null,
+    llm_model: null,
+    cost_breakdown: null,
     started_at: startedAt,
     finished_at: finishedAt,
     created_at: startedAt,

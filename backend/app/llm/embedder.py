@@ -3,11 +3,14 @@
 FakeEmbedProvider is used in unit tests (no network, deterministic).
 OpenAIEmbedProvider calls any OpenAI-compatible embeddings endpoint.
 """
+
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
+
+from backend.app.llm.usage import LlmUsageTally
 
 
 class EmbeddingProviderError(RuntimeError):
@@ -105,6 +108,7 @@ class OpenAIEmbedProvider:
         dimensions: int,
         request_timeout_seconds: float = 120.0,
         connect_timeout_seconds: float = 10.0,
+        usage_tally: LlmUsageTally | None = None,
         _max_attempts: int = 5,
         _wait_initial: float = 1.0,
         _wait_max: float = 30.0,
@@ -131,6 +135,18 @@ class OpenAIEmbedProvider:
         self._max_attempts = _max_attempts
         self._wait_initial = _wait_initial
         self._wait_max = _wait_max
+        self._tally = usage_tally
+
+    def _record_usage(self, resp: object) -> None:
+        if self._tally is None:
+            return
+        usage = getattr(resp, "usage", None)
+        if usage is None:
+            return
+        self._tally.record(
+            model=self._model,
+            tokens_in=int(getattr(usage, "prompt_tokens", 0) or 0),
+        )
 
     @property
     def model(self) -> str:
@@ -182,6 +198,7 @@ class OpenAIEmbedProvider:
         if resp is None:
             raise EmbeddingProviderError("retry budget exhausted with no attempts")
 
+        self._record_usage(resp)
         ordered = sorted(resp.data, key=lambda x: x.index)
         return [item.embedding for item in ordered]
 
@@ -237,12 +254,15 @@ class OpenAIEmbedProvider:
         if resp is None:
             raise EmbeddingProviderError("retry budget exhausted with no attempts")
 
+        self._record_usage(resp)
         ordered = sorted(resp.data, key=lambda x: x.index)
         vectors = [item.embedding for item in ordered]
         usage_obj = getattr(resp, "usage", None)
         # `prompt_tokens` is OpenAI's name; some compat servers
         # (LM-Studio, vLLM) omit usage entirely → 0.
-        tokens_input = int(getattr(usage_obj, "prompt_tokens", 0) or 0) if usage_obj else 0
+        tokens_input = (
+            int(getattr(usage_obj, "prompt_tokens", 0) or 0) if usage_obj else 0
+        )
         # Prefer the requested model id for pricing lookups so an
         # echo-back like `text-embedding-3-small-v1` doesn't miss the
         # `text-embedding-3-small` price entry.

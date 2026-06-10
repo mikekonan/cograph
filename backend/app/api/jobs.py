@@ -77,6 +77,14 @@ class SyncJobResponse(BaseModel):
     units: SyncUnits | None
     error_code: str | None
     error_msg: str | None
+    # LLM usage attributed to this step; null = no LLM calls (or the run
+    # predates accounting). cost is integer micro-USD, null when the model
+    # has no price on file.
+    tokens_input: int | None
+    tokens_output: int | None
+    cost_usd_micros: int | None
+    llm_model: str | None
+    cost_breakdown: dict[str, dict[str, object]] | None
     started_at: str | None
     finished_at: str | None
     created_at: str
@@ -113,6 +121,10 @@ class SyncBatchSummaryResponse(BaseModel):
     counts: SyncBatchCounts
     started_at: str
     is_complete: bool
+    # Rollup over child jobs; null when no job recorded any LLM usage.
+    tokens_input: int | None = None
+    tokens_output: int | None = None
+    cost_usd_micros: int | None = None
 
 
 class SyncBatchListResponse(BaseModel):
@@ -173,6 +185,11 @@ def _job_to_response(job: SyncJob) -> SyncJobResponse:
         units=units,
         error_code=job.error_code,
         error_msg=job.error_msg,
+        tokens_input=job.tokens_input,
+        tokens_output=job.tokens_output,
+        cost_usd_micros=job.cost_usd_micros,
+        llm_model=job.llm_model,
+        cost_breakdown=job.cost_breakdown,
         started_at=_fmt_dt(job.started_at),
         finished_at=_fmt_dt(job.finished_at),
         created_at=_fmt_dt(job.created_at) or "",
@@ -204,6 +221,12 @@ def _is_batch_complete(counts: SyncBatchCounts) -> bool:
     return counts.queued == 0 and counts.running == 0 and counts.paused == 0
 
 
+def _nullable_sum(values: list[int | None]) -> int | None:
+    """Sum present values; all-None stays None ("never recorded", not 0)."""
+    present = [v for v in values if v is not None]
+    return sum(present) if present else None
+
+
 def _batch_to_summary(
     batch: SyncBatch, jobs: list[SyncJob]
 ) -> SyncBatchSummaryResponse:
@@ -223,6 +246,9 @@ def _batch_to_summary(
         counts=counts,
         started_at=_fmt_dt(started_at_dt) or "",
         is_complete=_is_batch_complete(counts),
+        tokens_input=_nullable_sum([j.tokens_input for j in jobs]),
+        tokens_output=_nullable_sum([j.tokens_output for j in jobs]),
+        cost_usd_micros=_nullable_sum([j.cost_usd_micros for j in jobs]),
     )
 
 
@@ -487,6 +513,11 @@ async def retry_job(
     job.units_unit = None
     job.error_code = None
     job.error_msg = None
+    job.tokens_input = None
+    job.tokens_output = None
+    job.cost_usd_micros = None
+    job.llm_model = None
+    job.cost_breakdown = None
     job.started_at = None
     job.finished_at = None
     job.attempt = (job.attempt or 1) + 1

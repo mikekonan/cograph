@@ -27,6 +27,7 @@ from backend.app.config import Settings
 from backend.app.core.errors import ApiError
 from backend.app.llm.completion import CompletionProvider, OpenAICompletionProvider
 from backend.app.llm.embedder import EmbedProvider, OpenAIEmbedProvider
+from backend.app.llm.usage import LlmUsageTally
 from backend.app.models.llm_model_assignment import LLMModelAssignment
 
 logger = logging.getLogger(__name__)
@@ -64,11 +65,14 @@ async def build_runtime_providers(
     *,
     session: AsyncSession,
     settings: Settings,
+    usage_tally: LlmUsageTally | None = None,
 ) -> RuntimeProviders:
     assignments = await resolve_runtime_provider_assignments(
         session=session, settings=settings
     )
-    embed_provider = _build_embed_provider(assignments.embedding, settings)
+    embed_provider = _build_embed_provider(
+        assignments.embedding, settings, usage_tally=usage_tally
+    )
     if embed_provider is None:
         raise ApiError(
             503,
@@ -78,7 +82,7 @@ async def build_runtime_providers(
     return RuntimeProviders(
         embed_provider=embed_provider,
         completion_provider=_build_completion_provider(
-            assignments.completion, settings
+            assignments.completion, settings, usage_tally=usage_tally
         ),
     )
 
@@ -181,6 +185,8 @@ def _runtime_provider_config_for_assignment(
 def _build_embed_provider(
     configured: RuntimeProviderConfig | None,
     settings: Settings,
+    *,
+    usage_tally: LlmUsageTally | None = None,
 ) -> EmbedProvider | None:
     if configured is None:
         return None
@@ -192,12 +198,15 @@ def _build_embed_provider(
         dimensions=settings.embedding.dimensions,
         request_timeout_seconds=settings.embedding.request_timeout_seconds,
         connect_timeout_seconds=settings.embedding.connect_timeout_seconds,
+        usage_tally=usage_tally,
     )
 
 
 def _build_completion_provider(
     configured: RuntimeProviderConfig | None,
     settings: Settings,
+    *,
+    usage_tally: LlmUsageTally | None = None,
 ) -> CompletionProvider | None:
     if configured is None:
         return None
@@ -208,4 +217,5 @@ def _build_completion_provider(
         model=configured.model_name,
         request_timeout_seconds=settings.completion.request_timeout_seconds,
         connect_timeout_seconds=settings.completion.connect_timeout_seconds,
+        usage_tally=usage_tally,
     )
