@@ -11,7 +11,12 @@ from sqlalchemy import select
 
 from backend.app.core.auth import TokenType, create_token
 from backend.app.models.code_node import CodeNode
-from backend.app.models.enums import RepoSyncRunStatus, RepositoryStatus, SyncSchedule, UserRole
+from backend.app.models.enums import (
+    RepoSyncRunStatus,
+    RepositoryStatus,
+    SyncSchedule,
+    UserRole,
+)
 from backend.app.models.repo_sync_run import RepoSyncRun
 from backend.app.models.repository import Repository
 from backend.app.models.user import User
@@ -92,6 +97,7 @@ async def test_live_webhook_flow_enqueues_and_processes_sync_job(
         )
         repository = Repository(
             git_url=str(source_repo_path),
+            host="example.com",
             name="demo",
             owner="acme",
             branch="main",
@@ -118,7 +124,9 @@ async def test_live_webhook_flow_enqueues_and_processes_sync_job(
     )
     assert update_response.status_code == 200
 
-    webhook_response = await integration_client.get(f"/api/admin/repos/{repository_id}/webhook")
+    webhook_response = await integration_client.get(
+        f"/api/admin/repos/{repository_id}/webhook"
+    )
     assert webhook_response.status_code == 200
     webhook_secret = webhook_response.json()["webhook_secret"]
 
@@ -181,6 +189,7 @@ async def test_live_scheduler_tick_enqueues_due_repo_and_skips_unchanged_head(
     async with integration_session_manager.session() as session:
         repository = Repository(
             git_url=str(source_repo_path),
+            host="example.com",
             name="demo",
             owner="acme",
             branch="main",
@@ -207,9 +216,9 @@ async def test_live_scheduler_tick_enqueues_due_repo_and_skips_unchanged_head(
             assert repository is not None
             assert repository.status is RepositoryStatus.READY
             assert repository.last_commit == head_commit
-            repository.next_sync_at = datetime.now(UTC).replace(microsecond=0) - timedelta(
-                minutes=5
-            )
+            repository.next_sync_at = datetime.now(UTC).replace(
+                microsecond=0
+            ) - timedelta(minutes=5)
             await session.commit()
 
         second_tick = await run_scheduler_tick(ctx)

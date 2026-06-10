@@ -17,6 +17,7 @@ async def test_graph_query_service_reads_live_postgres_graph(
     async with integration_session_manager.session() as session:
         repository = Repository(
             git_url="git@github.com:mikekonan/cograph.git",
+            host="example.com",
             name="cograph",
             owner="mikekonan",
             branch="main",

@@ -16,6 +16,7 @@ async def test_graph_builder_persists_code_nodes_on_live_postgres(
     async with integration_session_manager.session() as session:
         repository = Repository(
             git_url="git@github.com:mikekonan/cograph.git",
+            host="example.com",
             name="cograph",
             owner="mikekonan",
             branch="main",
@@ -56,7 +57,9 @@ def helper(user_id: str) -> str:
         assert result.resolved_calls == 2
 
         login_node = await session.scalar(
-            select(CodeNode).where(CodeNode.qualified_name == "service.UserService.login")
+            select(CodeNode).where(
+                CodeNode.qualified_name == "service.UserService.login"
+            )
         )
         helper_node = await session.scalar(
             select(CodeNode).where(CodeNode.qualified_name == "service.helper")
@@ -73,6 +76,7 @@ async def test_live_postgres_graph_builder_rebinds_cross_file_calls_after_reinde
     async with integration_session_manager.session() as session:
         repository = Repository(
             git_url="git@github.com:mikekonan/cograph.git",
+            host="example.com",
             name="cograph",
             owner="mikekonan",
             branch="main",

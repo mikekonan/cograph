@@ -87,8 +87,8 @@ async def test_search_md_collection_hybrid_retrieval(
 
     _auth_client(integration_client, integration_settings, str(owner.id))
 
-    integration_app.dependency_overrides[get_md_search_embed_provider] = (
-        lambda: _StubEmbedProvider()
+    integration_app.dependency_overrides[get_md_search_embed_provider] = lambda: (
+        _StubEmbedProvider()
     )
     try:
         response = await integration_client.post(
@@ -140,8 +140,8 @@ async def test_search_md_collection_returns_empty_when_no_match(
 
     _auth_client(integration_client, integration_settings, str(owner.id))
 
-    integration_app.dependency_overrides[get_md_search_embed_provider] = (
-        lambda: _StubEmbedProvider()
+    integration_app.dependency_overrides[get_md_search_embed_provider] = lambda: (
+        _StubEmbedProvider()
     )
     try:
         response = await integration_client.post(

@@ -57,4 +57,5 @@ jobs:
           backend/integration_tests/test_core_infra.py
           backend/integration_tests/test_graph_api.py
           backend/integration_tests/test_retrieval_api.py
+          backend/integration_tests/test_wiki_incremental_pg.py
           -q

@@ -12,6 +12,7 @@ Guards:
 Run:
     COGRAPH_RUN_INTEGRATION=1 uv run pytest backend/integration_tests/test_phase7d_regression.py -q
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -23,7 +24,9 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.mark.integration
-def test_migration_0018_downgrade_upgrade_clean(integration_database_url, integration_settings):
+def test_migration_0018_downgrade_upgrade_clean(
+    integration_database_url, integration_settings
+):
     """Alembic 0018↔0017 round-trip leaves the schema in a consistent state.
 
     Synchronous — alembic's env.py calls asyncio.run() internally, which can't
@@ -101,7 +104,9 @@ def test_migration_0018_downgrade_upgrade_clean(integration_database_url, integr
         command.upgrade(cfg, "head")
 
     # After upgrade — everything must be back / present.
-    assert _extension_installed("pg_trgm"), "pg_trgm extension must be installed after upgrade"
+    assert _extension_installed("pg_trgm"), (
+        "pg_trgm extension must be installed after upgrade"
+    )
     assert _column_exists("code_nodes", "content_tsv_simple"), (
         "content_tsv_simple column must exist after upgrade to head"
     )

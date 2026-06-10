@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
@@ -39,9 +43,9 @@ async def test_live_postgres_migration_and_app_health(
                     'documents',
                     'repo_documents',
                     'repo_document_chunks',
-                    'banks',
-                    'bank_documents',
-                    'bank_document_chunks',
+                    'wiki_artifacts',
+                    'sync_batches',
+                    'sync_jobs',
                     'md_collections',
                     'md_documents',
                     'md_chunks',
@@ -53,12 +57,14 @@ async def test_live_postgres_migration_and_app_health(
             )
         )
 
-    assert alembic_version == "6c89e762b2bb"
+    # Pin to whatever the migration tree says is head, not a hardcoded
+    # revision id — the previous literal pin silently went stale and kept
+    # the nightly red for unrelated reasons.
+    alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    expected_head = ScriptDirectory.from_config(alembic_config).get_current_head()
+    assert alembic_version == expected_head
     actual_tables = set(tables.scalars())
     required_tables = {
-        "bank_document_chunks",
-        "bank_documents",
-        "banks",
         "code_nodes",
         "documents",
         "repo_document_chunks",
@@ -66,13 +72,18 @@ async def test_live_postgres_migration_and_app_health(
         "repo_sync_runs",
         "repositories",
         "users",
+        "wiki_artifacts",
+        "sync_batches",
+        "sync_jobs",
         "md_collections",
         "md_documents",
         "md_chunks",
         "md_links",
         "md_jobs",
     }
-    assert required_tables <= actual_tables, f"Missing tables: {required_tables - actual_tables}"
+    assert required_tables <= actual_tables, (
+        f"Missing tables: {required_tables - actual_tables}"
+    )
 
 
 async def test_partial_unique_index_blocks_multiple_active_repo_runs(
@@ -81,6 +92,7 @@ async def test_partial_unique_index_blocks_multiple_active_repo_runs(
     async with integration_session_manager.session() as session:
         repository = Repository(
             git_url="git@github.com:mikekonan/cograph.git",
+            host="example.com",
             name="cograph",
             owner="mikekonan",
             branch="main",

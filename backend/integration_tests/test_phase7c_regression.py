@@ -8,6 +8,7 @@ Guards:
 Run:
     COGRAPH_RUN_INTEGRATION=1 uv run pytest backend/integration_tests/test_phase7c_regression.py -q
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -71,6 +72,7 @@ async def test_retriever_provenance_unchanged_after_phase7c(
     async with integration_session_manager.session() as session:
         repo = Repository(
             git_url="git@github.com:test/phase7c-regression-provenance.git",
+            host="example.com",
             name="phase7c-regression-provenance",
             owner="test",
             branch="main",
@@ -84,7 +86,9 @@ async def test_retriever_provenance_unchanged_after_phase7c(
         # Run pipeline WITHOUT summary_generator to validate 7b-shape is preserved.
         processor = RepoSyncProcessor(
             code_embedder_service=CodeEmbedderService(provider, batch_size=64),
-            repo_document_embedder_service=RepoDocumentEmbedderService(provider, batch_size=64),
+            repo_document_embedder_service=RepoDocumentEmbedderService(
+                provider, batch_size=64
+            ),
             summary_generator=None,  # Phase 7c step explicitly disabled
         )
         sync_result = await processor.process_checkout(
@@ -99,7 +103,9 @@ async def test_retriever_provenance_unchanged_after_phase7c(
 
     # Build a query vector from a known text so at least one code chunk is returned.
     query_text = "greet"
-    query_embedding = (await provider.embed(["function greet\ndef greet(name): pass"]))[0]
+    query_embedding = (await provider.embed(["function greet\ndef greet(name): pass"]))[
+        0
+    ]
 
     async with integration_session_manager.session() as session:
         retriever = RagRetriever()
@@ -183,9 +189,7 @@ def test_migration_0017_downgrade_upgrade_clean(integration_database_url):
 
         for table in _new_tables:
             exists = asyncio.run(_table_exists(table))
-            assert not exists, (
-                f"table '{table}' must not exist after downgrade to 0016"
-            )
+            assert not exists, f"table '{table}' must not exist after downgrade to 0016"
 
     finally:
         # Always restore to head so other tests in the session are unaffected.
@@ -193,17 +197,14 @@ def test_migration_0017_downgrade_upgrade_clean(integration_database_url):
 
     for table in _new_tables:
         exists = asyncio.run(_table_exists(table))
-        assert exists, (
-            f"table '{table}' must exist after upgrade to head (0017)"
-        )
+        assert exists, f"table '{table}' must exist after upgrade to head (0017)"
 
     # Schema integrity: the safety claims around migration 0017 are more than
     # just the two table names — UNIQUE constraints, importance DESC indexes,
     # and the uuid[] column must all be in place after upgrade.
     node_uniq = asyncio.run(
         _fetch_one(
-            "SELECT conname FROM pg_constraint "
-            "WHERE conname = $1 AND contype = 'u'",
+            "SELECT conname FROM pg_constraint WHERE conname = $1 AND contype = 'u'",
             "uq_code_node_summaries_code_node_id",
         )
     )
@@ -213,8 +214,7 @@ def test_migration_0017_downgrade_upgrade_clean(integration_database_url):
 
     subgraph_uniq = asyncio.run(
         _fetch_one(
-            "SELECT conname FROM pg_constraint "
-            "WHERE conname = $1 AND contype = 'u'",
+            "SELECT conname FROM pg_constraint WHERE conname = $1 AND contype = 'u'",
             "uq_code_subgraph_summaries_repo_root",
         )
     )
@@ -224,8 +224,7 @@ def test_migration_0017_downgrade_upgrade_clean(integration_database_url):
 
     node_idx = asyncio.run(
         _fetch_one(
-            "SELECT indexdef FROM pg_indexes "
-            "WHERE indexname = $1",
+            "SELECT indexdef FROM pg_indexes WHERE indexname = $1",
             "idx_code_node_summaries_repo_importance",
         )
     )
@@ -238,8 +237,7 @@ def test_migration_0017_downgrade_upgrade_clean(integration_database_url):
 
     subgraph_idx = asyncio.run(
         _fetch_one(
-            "SELECT indexdef FROM pg_indexes "
-            "WHERE indexname = $1",
+            "SELECT indexdef FROM pg_indexes WHERE indexname = $1",
             "idx_code_subgraph_summaries_repo_importance",
         )
     )

@@ -5,15 +5,18 @@ from uuid import uuid4
 import pytest
 
 from backend.app.api.retrieval import get_query_embed_provider
-from backend.app.models.bank import Bank, BankDocument, BankDocumentChunk
 from backend.app.models.code_embedding import CodeEmbedding
 from backend.app.models.code_node import CodeNode
 from backend.app.models.code_node_summary import CodeNodeSummary
-from backend.app.models.enums import BankDocumentSourceKind, CodeNodeType, RepositoryStatus, SyncSchedule, UserRole
+from backend.app.models.enums import (
+    CodeNodeType,
+    RepositoryStatus,
+    RepositoryVisibility,
+    SyncSchedule,
+)
 from backend.app.models.repo_document import RepoDocument, RepoDocumentChunk
 from backend.app.models.repo_document_chunk_mention import RepoDocumentChunkMention
 from backend.app.models.repository import Repository
-from backend.app.models.user import User
 
 
 class _StubEmbedProvider:
@@ -36,15 +39,16 @@ async def test_live_postgres_retrieve_endpoint_returns_layered_composite(
     async with integration_session_manager.session() as session:
         repository = Repository(
             git_url="git@github.com:mikekonan/cograph.git",
+            host="example.com",
             name="cograph",
             owner="mikekonan",
             branch="main",
             status=RepositoryStatus.READY,
             sync_schedule=SyncSchedule.MANUAL,
+            # Queried anonymously below; public_read only reaches PUBLIC.
+            visibility=RepositoryVisibility.PUBLIC,
         )
-        owner = User(email="owner@example.com", password_hash="hashed", role=UserRole.USER)
-        bank = Bank(name="Runbooks", description="Ops", owner=owner)
-        session.add_all([repository, owner, bank])
+        session.add(repository)
         await session.flush()
 
         helper_id = uuid4()
@@ -156,41 +160,18 @@ async def test_live_postgres_retrieve_endpoint_returns_layered_composite(
         session.add(
             RepoDocumentChunkMention(chunk_id=repo_chunk.id, code_node_id=error_node.id)
         )
-
-        bank_document = BankDocument(
-            bank_id=bank.id,
-            title="Ops guide",
-            source_kind=BankDocumentSourceKind.UPLOAD,
-            source_key="runbooks/repo.md",
-            external_id=None,
-            content="# Ops\n\nIf the repo is not ready, retry later.",
-            content_hash="bank-doc-hash",
-            bytes=48,
-            document_metadata={},
-        )
-        session.add(bank_document)
-        await session.flush()
-        bank_chunk = BankDocumentChunk(
-            document_id=bank_document.id,
-            chunk_index=0,
-            heading_path=["Ops"],
-            content="If the repo is not ready, retry later.",
-            content_hash="bank-chunk-hash",
-            embedding=_vector(1.0),
-            model="fake-embed-v1",
-        )
-        session.add(bank_chunk)
         await session.commit()
 
-    integration_app.dependency_overrides[get_query_embed_provider] = lambda: _StubEmbedProvider()
+    integration_app.dependency_overrides[get_query_embed_provider] = lambda: (
+        _StubEmbedProvider()
+    )
     try:
         response = await integration_client.post(
             "/api/retrieve",
             json={
                 "query": "E_REPO_NOT_READY",
                 "repository_id": str(repository.id),
-                "bank_ids": [str(bank.id)],
-                "stores": ["code", "ast", "ast_summary", "repo_doc", "bank"],
+                "stores": ["code", "ast", "ast_summary", "repo_doc"],
                 "top_k": 5,
                 "include": {"chunks": True, "graph": True, "scores": True},
             },
@@ -201,13 +182,15 @@ async def test_live_postgres_retrieve_endpoint_returns_layered_composite(
     assert response.status_code == 200
     payload = response.json()
     assert payload["results"][0]["layer"] == "code"
-    assert payload["results"][0]["provenance"]["qualified_name"] == "svc.raise_repo_not_ready"
+    assert (
+        payload["results"][0]["provenance"]["qualified_name"]
+        == "svc.raise_repo_not_ready"
+    )
     assert {item["layer"] for item in payload["results"]} >= {
         "code",
         "ast",
         "ast_summary",
         "repo_doc",
-        "bank",
     }
     assert payload["nodes"][str(error_id)]["callees"][0]["name"] == "helper"
 
@@ -221,11 +204,14 @@ async def test_live_postgres_retrieve_endpoint_keeps_conceptual_top_five_stable(
     async with integration_session_manager.session() as session:
         repository = Repository(
             git_url="git@github.com:mikekonan/cograph.git",
+            host="example.com",
             name="cograph",
             owner="mikekonan",
             branch="main",
             status=RepositoryStatus.READY,
             sync_schedule=SyncSchedule.MANUAL,
+            # Queried anonymously below; public_read only reaches PUBLIC.
+            visibility=RepositoryVisibility.PUBLIC,
         )
         session.add(repository)
         await session.flush()
@@ -281,9 +267,7 @@ async def test_live_postgres_retrieve_endpoint_keeps_conceptual_top_five_stable(
                 start_byte=None,
                 end_byte=None,
                 content=(
-                    f"def {name}() -> None:\n"
-                    f'    """{doc_comment}"""\n'
-                    "    return None"
+                    f'def {name}() -> None:\n    """{doc_comment}"""\n    return None'
                 ),
                 signature=f"def {name}() -> None",
                 doc_comment=doc_comment,
@@ -310,7 +294,9 @@ async def test_live_postgres_retrieve_endpoint_keeps_conceptual_top_five_stable(
 
         await session.commit()
 
-    integration_app.dependency_overrides[get_query_embed_provider] = lambda: _StubEmbedProvider()
+    integration_app.dependency_overrides[get_query_embed_provider] = lambda: (
+        _StubEmbedProvider()
+    )
     try:
         first = await integration_client.post(
             "/api/retrieve",
@@ -355,4 +341,7 @@ async def test_live_postgres_retrieve_endpoint_keeps_conceptual_top_five_stable(
     followup_positions = {name: index for index, name in enumerate(second_order)}
     for name in expected_names:
         assert abs(baseline_positions[name] - followup_positions[name]) <= 1
-    assert set(first.json()["results"][0]["metadata"]["candidate_from"]) >= {"vector", "lexical"}
+    assert set(first.json()["results"][0]["metadata"]["candidate_from"]) >= {
+        "vector",
+        "lexical",
+    }

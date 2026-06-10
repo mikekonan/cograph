@@ -76,6 +76,21 @@ jobs:
           COGRAPH_DATABASE__URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/cograph_ci
         run: alembic -c backend/alembic.ini upgrade head
 
+  wiki-schema-guard:
+    name: Wiki schema guard
+    # Diff-based, so it only makes sense on PRs where a base sha exists.
+    # The precise companion (quality-surface sha test) runs in Pytest above.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check WIKI_SCHEMA_VERSION bump
+        run: scripts/check_wiki_schema_version.sh "${{ github.event.pull_request.base.sha }}"
+
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
