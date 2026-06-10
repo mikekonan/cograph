@@ -33,7 +33,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.wiki_artifact import WikiArtifact
-from backend.app.wiki.retrieval import PageBundle
+from backend.app.wiki.retrieval import PageBundle, WikiRetrievalService
 from backend.app.wiki.schemas import (
     MindMap,
     PagePlan,
@@ -175,6 +175,176 @@ def page_fingerprint_reason(
     if record.retrieval_fingerprint != current_fingerprint:
         return "retrieval_drift"
     return None
+
+
+# ---------------------------------------------------------------------------
+# DB-touching dirty-set orchestration
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True, frozen=True)
+class DirtyReport:
+    """Outcome of `compute_dirty_slugs` for one plan against the DB."""
+
+    dirty: dict[str, str]  # slug -> reason
+    clean: list[str]
+    total: int
+
+    @property
+    def dirty_ratio(self) -> float:
+        if self.total <= 0:
+            return 1.0
+        return len(self.dirty) / self.total
+
+
+async def load_page_records(
+    session: AsyncSession, *, repository_id: UUID
+) -> dict[str, PageRecord]:
+    """Project every persisted wiki page of this repo into `PageRecord`s."""
+    from backend.app.models.document import Document
+    from backend.app.wiki.store import WikiDocumentStore, _existing_quality_status
+
+    stmt = select(Document).where(
+        Document.repository_id == repository_id,
+        Document.doc_type == WikiDocumentStore.DOC_TYPE,
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    return {
+        row.slug: PageRecord(
+            slug=row.slug,
+            spec_hash=row.spec_hash,
+            retrieval_fingerprint=row.retrieval_fingerprint,
+            wiki_schema_version=row.wiki_schema_version,
+            source_node_ids=tuple(str(nid) for nid in (row.source_node_ids or [])),
+            source_repo_doc_chunk_ids=tuple(
+                str(cid) for cid in (row.source_repo_doc_chunk_ids or [])
+            ),
+            quality_status=_existing_quality_status(row.quality),
+        )
+        for row in rows
+    }
+
+
+async def _live_id_set(session: AsyncSession, column, cited: set[str]) -> set[str]:
+    """Batched existence check: which of `cited` UUID strings still exist.
+
+    Unparseable ids are simply absent from the result — the predicate then
+    reports the citing page as dirty, which is the safe direction.
+    """
+    parseable: list[UUID] = []
+    for raw in cited:
+        try:
+            parseable.append(UUID(raw))
+        except ValueError:
+            continue
+    if not parseable:
+        return set()
+    rows = (
+        await session.execute(select(column).where(column.in_(parseable)))
+    ).scalars()
+    return {str(value) for value in rows}
+
+
+async def compute_dirty_slugs(
+    session: AsyncSession,
+    *,
+    repository_id: UUID,
+    plan: PagePlan,
+    records: dict[str, PageRecord],
+    retriever: WikiRetrievalService,
+    overview: RepoOverview,
+    code_top_k: int,
+    docs_top_k: int,
+    graph_pivot_top_k: int,
+    wiki_schema_version: int = WIKI_SCHEMA_VERSION,
+) -> DirtyReport:
+    """Decide, for every page in `plan`, whether it must be rewritten.
+
+    Three passes:
+      1. one batched liveness SELECT per cited-id kind (code nodes,
+         repo-doc chunks) across all records;
+      2. the cheap predicate per page (`page_dirty_cheap_reason`);
+      3. for survivors only — recompute the retrieval fingerprint via
+         `retriever.for_page` (one embed call per page, zero LLM calls)
+         and compare against the stamp.
+
+    The `index` page narrates the whole wiki (sibling links, reading
+    order), so any dirty sibling marks it dirty too.
+
+    A retrieval failure during pass 3 marks the page dirty
+    (`retrieval_error`) — the full path would have written it with an
+    empty bundle, so rewriting is the equivalence-preserving choice.
+    """
+    from backend.app.models.code_node import CodeNode
+    from backend.app.models.repo_document import RepoDocumentChunk
+
+    cited_nodes: set[str] = set()
+    cited_chunks: set[str] = set()
+    plan_slugs = {spec.slug for spec in plan.pages}
+    for slug, record in records.items():
+        if slug not in plan_slugs:
+            continue
+        cited_nodes.update(record.source_node_ids)
+        cited_chunks.update(record.source_repo_doc_chunk_ids)
+    live_node_ids = await _live_id_set(session, CodeNode.id, cited_nodes)
+    live_chunk_ids = await _live_id_set(session, RepoDocumentChunk.id, cited_chunks)
+
+    dirty: dict[str, str] = {}
+    clean: list[str] = []
+    embed_model = retriever.embedder.model
+    for spec in plan.pages:
+        record = records.get(spec.slug)
+        reason = page_dirty_cheap_reason(
+            record=record,
+            current_spec_hash=spec_hash(spec),
+            live_node_ids=live_node_ids,
+            live_chunk_ids=live_chunk_ids,
+            wiki_schema_version=wiki_schema_version,
+        )
+        if reason is None:
+            assert record is not None  # cheap pass returns missing_row otherwise
+            try:
+                bundle = await retriever.for_page(
+                    session=session,
+                    repository_id=repository_id,
+                    purpose=spec.purpose,
+                    sources_hint=spec.sources_hint,
+                    code_top_k=code_top_k,
+                    docs_top_k=docs_top_k,
+                    graph_pivot_top_k=graph_pivot_top_k,
+                    domain_concepts=list(overview.business_context.domain_concepts),
+                    business_confidence=overview.business_context.confidence,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "compute_dirty_slugs: retrieval failed for slug=%s (%s); "
+                    "marking dirty",
+                    spec.slug,
+                    exc,
+                )
+                bundle = None
+            if bundle is None:
+                reason = "retrieval_error"
+            else:
+                reason = page_fingerprint_reason(
+                    record=record,
+                    current_fingerprint=bundle_fingerprint(
+                        embed_model=embed_model, bundle=bundle
+                    ),
+                )
+        if reason is not None:
+            dirty[spec.slug] = reason
+        else:
+            clean.append(spec.slug)
+
+    if dirty and "index" in plan_slugs and "index" not in dirty:
+        dirty["index"] = "sibling_dirty"
+        if "index" in clean:
+            clean.remove("index")
+
+    for slug, reason in sorted(dirty.items()):
+        logger.info("page_dirty:%s:%s", slug, reason)
+    return DirtyReport(dirty=dirty, clean=clean, total=len(plan.pages))
 
 
 # ---------------------------------------------------------------------------

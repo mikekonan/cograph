@@ -66,7 +66,13 @@ from backend.app.wiki.context import (
     compute_structural_hash,
 )
 from backend.app.wiki.incremental import (
+    DirtyReport,
+    artifact_reusable,
     bundle_fingerprint,
+    compute_dirty_slugs,
+    load_artifact,
+    load_page_records,
+    rehydrate_artifact,
     save_artifact,
     spec_hash,
 )
@@ -189,6 +195,15 @@ class WikiPlanError(RuntimeError):
 class WikiGenerationConfig:
     write_concurrency: int = 4
     persist: bool = True
+    # Incremental reuse: skip Stage 2/1.5/3 when the persisted artifact is
+    # reusable, and skip Stage 4 for pages whose stamps + cited sources +
+    # retrieval fingerprint are unchanged. `full_rebuild_dirty_ratio` is
+    # the backstop: when more than this fraction of planned pages is
+    # dirty, fall back to a full re-plan + rebuild (coherence beats
+    # savings at that point). Requires `persist` — the stamps live in
+    # the DB.
+    incremental: bool = True
+    full_rebuild_dirty_ratio: float = 0.5
     enable_diagrams: bool = True
     enable_cross_linker: bool = False
     # T5: two-pass writing for high-importance pages. When False, every
@@ -606,6 +621,7 @@ async def write_pages(
     session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]]
     | None = None,
     checkout_path: Path | str | None = None,
+    specs_to_write: list[PageSpec] | None = None,
 ) -> tuple[list[PageDraft], list[str]]:
     """Stage 4: agentic writer → list[PageDraft], parallel with bounded concurrency.
 
@@ -626,10 +642,19 @@ async def write_pages(
     `resolver` is preserved for the run-level orchestrator that passes
     the same `CitationResolver` instance into Stage 5; this stage does
     not use it (T3 supersedes the DB-backed prevalidation pass here).
+
+    `specs_to_write` restricts the agent fan-out to a subset of the plan
+    (the incremental path's dirty set). Sibling links, page notes, and
+    prompt context always come from the FULL plan, so a dirty page is
+    written against exactly the same surroundings a full rebuild would
+    give it. `None` ⇒ write every planned page.
     """
     del resolver  # legacy: see docstring
+    pages_to_write = plan.pages if specs_to_write is None else specs_to_write
     logger.info(
-        "wiki stage 4: write_pages starting (pages=%d, concurrency=%d, max_turns=%d)",
+        "wiki stage 4: write_pages starting (pages=%d of %d planned, "
+        "concurrency=%d, max_turns=%d)",
+        len(pages_to_write),
         len(plan.pages),
         config.write_concurrency,
         _AGENT_MAX_TURNS,
@@ -782,9 +807,7 @@ async def write_pages(
                         )
                         return None
                     write_aggregate.add(result, dispatcher.files_read)
-                    body = (
-                        dispatcher.captured_markdown or result.final_text
-                    ).strip()
+                    body = (dispatcher.captured_markdown or result.final_text).strip()
                     if body:
                         break
                     if write_attempt <= _WRITER_EMPTY_BODY_MAX_RETRIES:
@@ -888,13 +911,13 @@ async def write_pages(
             )
 
     results = await asyncio.gather(
-        *[_agent_write_one(spec) for spec in plan.pages],
+        *[_agent_write_one(spec) for spec in pages_to_write],
         return_exceptions=False,
     )
 
     drafts: list[PageDraft] = []
     failures: list[str] = []
-    for spec, draft in zip(plan.pages, results, strict=True):
+    for spec, draft in zip(pages_to_write, results, strict=True):
         if draft is None:
             failures.append(spec.slug)
         else:
@@ -1703,9 +1726,7 @@ _MERMAID_LABEL_BREAKERS = re.compile(r"[(){}<>:;/#&]")
 # wrapping pass to flowchart-style diagrams (other diagram types — class,
 # sequence, ER — render labels in different containers and don't need
 # `<br/>` injection).
-_MERMAID_FLOWCHART_HEADER_RE = re.compile(
-    r"^\s*(?:flowchart|graph)\b", re.MULTILINE
-)
+_MERMAID_FLOWCHART_HEADER_RE = re.compile(r"^\s*(?:flowchart|graph)\b", re.MULTILINE)
 # Header line of a sequenceDiagram fence — used to scope the semicolon
 # escape below.
 _MERMAID_SEQUENCE_HEADER_RE = re.compile(r"^\s*sequenceDiagram\b", re.MULTILINE)
@@ -1841,7 +1862,7 @@ def _wrap_long_label_text(text: str) -> str:
     if current:
         lines.append(current)
     if len(lines) > _MERMAID_LABEL_MAX_LINES:
-        kept = lines[: _MERMAID_LABEL_MAX_LINES]
+        kept = lines[:_MERMAID_LABEL_MAX_LINES]
         # Mark the truncation visibly so the reader knows the label was
         # capped; the original text survives in the surrounding markdown
         # context (the writer cites the same symbol in prose).
@@ -2662,24 +2683,20 @@ async def resolve_pages(
     return resolved, unresolved_total
 
 
-async def run_stages_1_to_3(
+async def _build_context_with_signals(
     *,
     session: AsyncSession,
     repository_id: UUID,
     source_commit: str,
-    llm: StructuredCompletionProvider,
-    checkout_path: Path | str | None = None,
-    config: WikiGenerationConfig | None = None,
-    embedder: EmbedProvider | None = None,
-) -> StagesOneToThreeResult:
-    """Run Stages 1-3 only. Used by the dry-run CLI and unit tests.
+    checkout_path: Path | str | None,
+    cfg: WikiGenerationConfig,
+) -> RepoContext:
+    """Stage 1 + Stage 0: repo context + deterministic salience scoring.
 
-    `embedder` is optional. When provided, T7 plan-quality telemetry is
-    computed (pairwise question-Jaccard + purpose-cosine over the plan)
-    and attached to the result. Without an embedder we return an empty
-    report — the AND-gate for "suspicious" requires both signals.
+    No LLM calls — this prefix is shared by the full and incremental
+    paths (the incremental orchestrator needs the context to compute the
+    structural hash before deciding whether the LLM stages run at all).
     """
-    cfg = config or WikiGenerationConfig()
     logger.info(
         "wiki stage 1: build_repo_context starting (repo=%s commit=%s)",
         repository_id,
@@ -2719,6 +2736,24 @@ async def run_stages_1_to_3(
         len(context.manifests.public_api),
         len(context.manifests.dependencies),
     )
+    return context
+
+
+async def _plan_with_llm(
+    *,
+    session: AsyncSession,
+    repository_id: UUID,
+    llm: StructuredCompletionProvider,
+    context: RepoContext,
+    cfg: WikiGenerationConfig,
+    embedder: EmbedProvider | None,
+) -> tuple[RepoContext, RepoOverview, PagePlan, WikiPlanQualityReport]:
+    """Stages 2 + 1.5 + 2.5 + 3: overview, mindmap, clusters, plan.
+
+    Returns the context enriched with `business_context` and `mindmap`
+    alongside the LLM outputs. This is the expensive half the incremental
+    path skips when the persisted artifact is reusable.
+    """
     overview = await analyze_repo(llm=llm, context=context, config=cfg)
     context = context.model_copy(update={"business_context": overview.business_context})
     mindmap = await generate_mindmap(
@@ -2746,6 +2781,42 @@ async def run_stages_1_to_3(
                 f"{p.slug_a}<->{p.slug_b}" for p in plan_quality.suspicious_pairs
             ),
         )
+    return context, overview, plan, plan_quality
+
+
+async def run_stages_1_to_3(
+    *,
+    session: AsyncSession,
+    repository_id: UUID,
+    source_commit: str,
+    llm: StructuredCompletionProvider,
+    checkout_path: Path | str | None = None,
+    config: WikiGenerationConfig | None = None,
+    embedder: EmbedProvider | None = None,
+) -> StagesOneToThreeResult:
+    """Run Stages 1-3 only. Used by the dry-run CLI and unit tests.
+
+    `embedder` is optional. When provided, T7 plan-quality telemetry is
+    computed (pairwise question-Jaccard + purpose-cosine over the plan)
+    and attached to the result. Without an embedder we return an empty
+    report — the AND-gate for "suspicious" requires both signals.
+    """
+    cfg = config or WikiGenerationConfig()
+    context = await _build_context_with_signals(
+        session=session,
+        repository_id=repository_id,
+        source_commit=source_commit,
+        checkout_path=checkout_path,
+        cfg=cfg,
+    )
+    context, overview, plan, plan_quality = await _plan_with_llm(
+        session=session,
+        repository_id=repository_id,
+        llm=llm,
+        context=context,
+        cfg=cfg,
+        embedder=embedder,
+    )
     return StagesOneToThreeResult(
         context=context,
         overview=overview,
@@ -2888,8 +2959,27 @@ async def run_wiki_generation(
     config: WikiGenerationConfig | None = None,
     session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]]
     | None = None,
+    force_full: bool = False,
 ) -> WikiGenerationResult:
     """Run all 5 stages and persist.
+
+    Incremental control flow (`config.incremental`, default on; requires
+    `config.persist`; `force_full=True` overrides everything — the
+    OWNER "Rebuild wiki" button):
+
+        1. Stage 1+0 always run (no LLM).
+        2. When the persisted artifact is reusable (structural hash,
+           schema version, and both model ids match), Stages 2/1.5/3 are
+           skipped and overview/mindmap/plan rehydrate from the artifact
+           — mode "incremental". Steering plans rebuild from the file
+           (free) instead of the artifact so steering edits take effect.
+        3. The dirty set decides which pages Stage 4 rewrites. Above
+           `config.full_rebuild_dirty_ratio` the run falls back to a
+           full re-plan, after which unchanged pages are still salvaged
+           by the same predicate (savings only ever shrink LLM work).
+        4. Clean pages are never rewritten: their rows get an audit-only
+           `touch_pages` bump, and the orphan sweep keeps every planned
+           slug regardless of whether it was written this run.
 
     Stage failure modes:
         - Stage 1: SQL errors propagate (fatal — repo isn't ready).
@@ -2914,40 +3004,177 @@ async def run_wiki_generation(
     errors: list[str] = []
 
     logger.info(
-        "wiki regen starting: repository_id=%s commit=%s run_id=%s model=%s persist=%s",
+        "wiki regen starting: repository_id=%s commit=%s run_id=%s model=%s "
+        "persist=%s incremental=%s force_full=%s",
         repository_id,
         source_commit,
         run_id,
         llm.model,
         cfg.persist,
+        cfg.incremental,
+        force_full,
     )
 
     repo_slug = await _load_repository_slug(
         session=session, repository_id=repository_id
     )
-    stages_1_4 = await run_stages_1_to_4(
+    context = await _build_context_with_signals(
         session=session,
         repository_id=repository_id,
         source_commit=source_commit,
+        checkout_path=checkout_path,
+        cfg=cfg,
+    )
+    structural_hash = compute_structural_hash(context)
+    embed_model = retriever.embedder.model
+    incremental_enabled = cfg.incremental and cfg.persist and not force_full
+
+    # --- Plan acquisition: artifact reuse vs LLM planning -----------------
+    mode = "full"
+    overview: RepoOverview | None = None
+    plan: PagePlan | None = None
+    plan_quality = WikiPlanQualityReport()
+    if incremental_enabled:
+        artifact = await load_artifact(session, repository_id=repository_id)
+        if artifact_reusable(
+            artifact,
+            structural_hash=structural_hash,
+            chat_model=llm.model,
+            embed_model=embed_model,
+        ):
+            rehydrated = rehydrate_artifact(artifact)  # type: ignore[arg-type]
+            if rehydrated is not None:
+                mode = "incremental"
+                overview = rehydrated.overview
+                context = context.model_copy(
+                    update={
+                        "business_context": overview.business_context,
+                        "mindmap": rehydrated.mindmap,
+                    }
+                )
+                if context.steering and context.steering.pages:
+                    # Steering plans cost no LLM call — rebuild from the
+                    # current file so steering edits dirty their pages.
+                    plan = _normalize_plan(
+                        _plan_from_steering(context.steering.pages), cfg
+                    )
+                else:
+                    plan = rehydrated.plan
+                logger.info(
+                    "wiki incremental: artifact reused (structural=%s, plan_pages=%d)",
+                    structural_hash[:12],
+                    len(plan.pages),
+                )
+
+    report: DirtyReport | None = None
+    if mode == "incremental":
+        assert plan is not None and overview is not None
+        records = await load_page_records(session, repository_id=repository_id)
+        report = await compute_dirty_slugs(
+            session,
+            repository_id=repository_id,
+            plan=plan,
+            records=records,
+            retriever=retriever,
+            overview=overview,
+            code_top_k=cfg.code_top_k,
+            docs_top_k=cfg.docs_top_k,
+            graph_pivot_top_k=cfg.graph_pivot_top_k,
+        )
+        if report.dirty_ratio > cfg.full_rebuild_dirty_ratio:
+            logger.info(
+                "wiki incremental: dirty ratio %.2f > %.2f — falling back to "
+                "full rebuild (dirty=%d/%d)",
+                report.dirty_ratio,
+                cfg.full_rebuild_dirty_ratio,
+                len(report.dirty),
+                report.total,
+            )
+            mode = "full"
+            report = None
+
+    if mode == "full":
+        context, overview, plan, plan_quality = await _plan_with_llm(
+            session=session,
+            repository_id=repository_id,
+            llm=llm,
+            context=context,
+            cfg=cfg,
+            embedder=retriever.embedder,
+        )
+        if incremental_enabled:
+            # Salvage pass: even a full re-plan rewrites only pages whose
+            # spec/sources/fingerprint actually moved. `force_full` is the
+            # only path that rewrites unconditionally.
+            records = await load_page_records(session, repository_id=repository_id)
+            report = await compute_dirty_slugs(
+                session,
+                repository_id=repository_id,
+                plan=plan,
+                records=records,
+                retriever=retriever,
+                overview=overview,
+                code_top_k=cfg.code_top_k,
+                docs_top_k=cfg.docs_top_k,
+                graph_pivot_top_k=cfg.graph_pivot_top_k,
+            )
+
+    assert overview is not None and plan is not None
+    if report is not None:
+        specs_to_write: list[PageSpec] | None = [
+            spec for spec in plan.pages if spec.slug in report.dirty
+        ]
+        clean_slugs = list(report.clean)
+    else:
+        specs_to_write = None
+        clean_slugs = []
+    logger.info(
+        "wiki regen mode=%s (planned=%d, dirty=%s, clean_skipped=%d)",
+        mode,
+        len(plan.pages),
+        "all" if report is None else len(report.dirty),
+        len(clean_slugs),
+    )
+
+    # --- Stages 4 / 4b / 5 over the (possibly restricted) write set -------
+    bundles_by_slug: dict[str, PageBundle] = {}
+    drafts, page_failures = await write_pages(
         llm=llm,
         retriever=retriever,
-        resolver=citation_resolver,
-        pivot=pivot,
-        checkout_path=checkout_path,
+        session=session,
+        repository_id=repository_id,
+        context=context,
+        overview=overview,
+        plan=plan,
         config=cfg,
+        resolver=citation_resolver,
+        bundles_out=bundles_by_slug,
         session_factory=session_factory,
+        checkout_path=checkout_path,
+        specs_to_write=specs_to_write,
     )
-    errors.extend(f"page_failed:{slug}" for slug in stages_1_4.page_failures)
+    errors.extend(f"page_failed:{slug}" for slug in page_failures)
+    drafts = await synthesize_diagrams(
+        llm=llm,
+        session=session,
+        repository_id=repository_id,
+        context=context,
+        plan=plan,
+        drafts=drafts,
+        bundles_by_slug=bundles_by_slug,
+        config=cfg,
+        pivot=pivot,
+    )
 
     resolved, unresolved_all = await resolve_pages(
         session=session,
         repository_id=repository_id,
         repo_slug=repo_slug,
-        plan=stages_1_4.plan,
-        drafts=stages_1_4.drafts,
+        plan=plan,
+        drafts=drafts,
         resolver=citation_resolver,
-        bundles_by_slug=stages_1_4.bundles_by_slug,
-        manifests=stages_1_4.context.manifests,
+        bundles_by_slug=bundles_by_slug,
+        manifests=context.manifests,
     )
     quality_errors = _quality_gate_errors(resolved)
     errors.extend(quality_errors)
@@ -2961,24 +3188,25 @@ async def run_wiki_generation(
             preview,
         )
 
+    # --- Stage 6: persist --------------------------------------------------
     persisted_ids: list[UUID] = []
     skipped_slugs: list[str] = []
     kept_for_quality_slugs: list[str] = []
     orphaned_deleted = 0
-    if cfg.persist and resolved:
+    pages_clean_touched = 0
+    if cfg.persist and (resolved or clean_slugs):
         logger.info(
-            "wiki stage 6: persisting (resolved=%d)",
+            "wiki stage 6: persisting (resolved=%d, clean=%d)",
             len(resolved),
+            len(clean_slugs),
         )
-        plan_hash = _plan_hash(stages_1_4.plan)
-        embed_model = retriever.embedder.model
+        plan_hash = _plan_hash(plan)
         spec_hashes_by_slug = {
-            page_spec.slug: spec_hash(page_spec)
-            for page_spec in stages_1_4.plan.pages
+            page_spec.slug: spec_hash(page_spec) for page_spec in plan.pages
         }
         fingerprints_by_slug = {
             slug: bundle_fingerprint(embed_model=embed_model, bundle=bundle)
-            for slug, bundle in stages_1_4.bundles_by_slug.items()
+            for slug, bundle in bundles_by_slug.items()
         }
         (
             persisted_ids,
@@ -2996,10 +3224,18 @@ async def run_wiki_generation(
             spec_hashes_by_slug=spec_hashes_by_slug,
             fingerprints_by_slug=fingerprints_by_slug,
         )
-        # Stage-4 failures must not orphan-delete the previously good row;
-        # include them in `keep_slugs` alongside the resolved set.
+        pages_clean_touched = await document_store.touch_pages(
+            session=session,
+            repository_id=repository_id,
+            slugs=clean_slugs,
+            sync_run_id=sync_run_id,
+            source_commit=source_commit,
+        )
+        # Every planned slug survives the orphan sweep — clean pages were
+        # not rewritten this run but are very much part of the wiki — and
+        # so do Stage-4 transient failures (their previous rows stay).
         keep_slugs = sorted(
-            {page.slug for page in resolved} | set(stages_1_4.page_failures)
+            {page_spec.slug for page_spec in plan.pages} | set(page_failures)
         )
         orphaned_deleted = await document_store.delete_orphan_pages(
             session=session,
@@ -3011,35 +3247,38 @@ async def run_wiki_generation(
             repository_id=repository_id,
             sync_run_id=sync_run_id,
             source_commit=source_commit,
-            structural_hash=compute_structural_hash(stages_1_4.context),
+            structural_hash=structural_hash,
             plan_hash=plan_hash,
             chat_model=llm.model,
             embed_model=embed_model,
-            overview=stages_1_4.overview,
-            mindmap=stages_1_4.context.mindmap or MindMap(),
-            plan=stages_1_4.plan,
+            overview=overview,
+            mindmap=context.mindmap or MindMap(),
+            plan=plan,
         )
         await session.commit()
         logger.info(
             "wiki stage 6: persist done (persisted=%d, skipped=%d, "
-            "kept_for_quality=%d, orphaned_deleted=%d)",
+            "kept_for_quality=%d, clean_touched=%d, orphaned_deleted=%d)",
             len(persisted_ids),
             len(skipped_slugs),
             len(kept_for_quality_slugs),
+            pages_clean_touched,
             orphaned_deleted,
         )
 
     wall_clock_ms = int((time.monotonic() - started) * 1000)
     logger.info(
-        "wiki regen complete: repository_id=%s run_id=%s planned=%d written=%d "
-        "persisted=%d skipped=%d kept_for_quality=%d unresolved=%d "
-        "wall_clock_ms=%d errors=%d",
+        "wiki regen complete: repository_id=%s run_id=%s mode=%s planned=%d "
+        "written=%d persisted=%d skipped=%d clean_skipped=%d kept_for_quality=%d "
+        "unresolved=%d wall_clock_ms=%d errors=%d",
         repository_id,
         run_id,
-        len(stages_1_4.plan.pages),
-        len(stages_1_4.drafts),
+        mode,
+        len(plan.pages),
+        len(drafts),
         len(persisted_ids),
         len(skipped_slugs),
+        len(clean_slugs),
         len(kept_for_quality_slugs),
         len(unresolved_all),
         wall_clock_ms,
@@ -3050,16 +3289,19 @@ async def run_wiki_generation(
         repository_id=repository_id,
         source_commit=source_commit,
         model=llm.model,
-        pages_planned=len(stages_1_4.plan.pages),
-        pages_written=len(stages_1_4.drafts),
+        mode=mode,
+        pages_planned=len(plan.pages),
+        pages_written=len(drafts),
         pages_persisted=len(persisted_ids),
         pages_skipped=len(skipped_slugs),
+        pages_clean_skipped=len(clean_slugs),
         pages_orphaned_deleted=orphaned_deleted,
         unresolved_placeholders_total=len(unresolved_all),
         wall_clock_ms=wall_clock_ms,
         errors=errors,
         kept_for_quality_slugs=kept_for_quality_slugs,
-        plan_quality=stages_1_4.plan_quality,
+        dirty_reasons=dict(report.dirty) if report is not None else {},
+        plan_quality=plan_quality,
     )
 
 
@@ -3079,8 +3321,6 @@ def _quality_gate_errors(pages: list[ResolvedPage]) -> list[str]:
             if page.quality.missing_questions:
                 detail += f":missing={','.join(page.quality.missing_questions)}"
             if page.quality.invalid_citations_stripped:
-                detail += (
-                    f":stripped={page.quality.invalid_citations_stripped}"
-                )
+                detail += f":stripped={page.quality.invalid_citations_stripped}"
             errors.append(detail)
     return errors

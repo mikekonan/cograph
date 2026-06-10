@@ -1,7 +1,6 @@
-"""PR1 persistence tests: wiki_artifacts row + per-page incremental stamps.
+"""Persistence + lifecycle tests for the incremental wiki path.
 
-Covers the write side only — PR1 changes no control flow, it just records
-everything the future incremental path will key on:
+Write-side stamping (PR1):
 
 - `run_wiki_generation` persists/refreshes the singleton `wiki_artifacts`
   row (structural_hash, plan, overview, mindmap, model ids).
@@ -10,9 +9,21 @@ everything the future incremental path will key on:
   content-hash-skip paths.
 - The quality-keep path does NOT stamp: a kept row still holds old
   content, so its stale fingerprint must keep marking it dirty.
+
+Row lifecycle under incremental control flow (PR2):
+
+- The orphan sweep keeps clean (not rewritten) pages and rows owed to
+  transiently failed pages; re-planned-away slugs still get deleted.
+- A transient page failure leaves the old row serving and the page dirty,
+  so the next sync retries it.
+- `force_full` rewrites everything even with perfectly reusable artifacts.
+- Decision 4 (content skip) upgrades recorded quality when the rewrite
+  healed the page, and backfills it when it was unknown.
 """
 
 from __future__ import annotations
+
+import hashlib
 
 import pytest
 from sqlalchemy import select
@@ -23,7 +34,10 @@ from backend.app.models.document import Document
 from backend.app.models.repository import Repository
 from backend.app.models.wiki_artifact import WikiArtifact
 from backend.app.wiki.incremental import rehydrate_artifact
-from backend.app.wiki.llm_client import FakeStructuredProvider
+from backend.app.wiki.llm_client import (
+    FakeStructuredProvider,
+    StructuredCompletionError,
+)
 from backend.app.wiki.pipeline import WikiGenerationConfig, run_wiki_generation
 from backend.app.wiki.retrieval import WikiRetrievalService
 from backend.app.wiki.schemas import (
@@ -36,6 +50,19 @@ from backend.app.wiki.schemas import (
 )
 from backend.app.wiki.store import WikiDocumentStore
 from backend.app.wiki.version import WIKI_SCHEMA_VERSION
+from backend.tests.unit.wiki.incremental_harness import (
+    STANDARD_PAGES,
+    ScriptedPage,
+    ScriptedRepo,
+    assert_drained,
+    business_view,
+    queue_full_run,
+    queue_page_turns,
+    run_full,
+    run_incremental,
+    run_pipeline,
+    seed_standard,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -358,3 +385,272 @@ async def test_full_update_overwrites_stamps(db_session: AsyncSession) -> None:
     assert row.spec_hash == "spec-2"
     assert row.retrieval_fingerprint == "fp-2"
     assert row.wiki_schema_version == WIKI_SCHEMA_VERSION
+
+
+async def test_content_skip_upgrades_quality_when_strictly_better(
+    db_session: AsyncSession,
+) -> None:
+    """Decision 4 with a healed page: a degraded row rewritten to identical
+    bytes at quality=ok must record the recovery — otherwise the
+    `quality_degraded` dirty clause re-flags (and re-pays for) the page on
+    every subsequent sync, forever."""
+    repo = await _make_repo(db_session)
+    store = WikiDocumentStore()
+
+    for commit, status in (
+        ("commit-1", QualityStatus.DEGRADED),
+        ("commit-2", QualityStatus.OK),
+    ):
+        await store.upsert_pages(
+            session=db_session,
+            repository_id=repo.id,
+            sync_run_id=None,
+            source_commit=commit,
+            plan_hash="plan",
+            model="fake-v1",
+            pages=[
+                _resolved_page(
+                    slug="index", content="# Same body", quality_status=status
+                )
+            ],
+            wiki_schema_version=WIKI_SCHEMA_VERSION,
+            spec_hashes_by_slug={"index": "spec"},
+            fingerprints_by_slug={"index": "fp"},
+        )
+
+    row = (
+        await db_session.execute(
+            select(Document).where(
+                Document.repository_id == repo.id, Document.slug == "index"
+            )
+        )
+    ).scalar_one()
+    assert row.quality["quality_status"] == "ok"
+
+
+async def test_content_skip_backfills_unknown_quality(
+    db_session: AsyncSession,
+) -> None:
+    """Decision 4 with `quality=NULL` (pre-quality-era row): the rerun's
+    quality is recorded so the `quality_unknown` dirty clause stops firing."""
+    repo = await _make_repo(db_session)
+    store = WikiDocumentStore()
+
+    await store.upsert_pages(
+        session=db_session,
+        repository_id=repo.id,
+        sync_run_id=None,
+        source_commit="commit-1",
+        plan_hash="plan",
+        model="fake-v1",
+        pages=[
+            _resolved_page(
+                slug="index", content="# Same body", quality_status=QualityStatus.OK
+            )
+        ],
+        wiki_schema_version=WIKI_SCHEMA_VERSION,
+    )
+    row = (
+        await db_session.execute(
+            select(Document).where(
+                Document.repository_id == repo.id, Document.slug == "index"
+            )
+        )
+    ).scalar_one()
+    row.quality = None
+    await db_session.flush()
+
+    await store.upsert_pages(
+        session=db_session,
+        repository_id=repo.id,
+        sync_run_id=None,
+        source_commit="commit-2",
+        plan_hash="plan",
+        model="fake-v1",
+        pages=[
+            _resolved_page(
+                slug="index", content="# Same body", quality_status=QualityStatus.OK
+            )
+        ],
+        wiki_schema_version=WIKI_SCHEMA_VERSION,
+    )
+    await db_session.flush()
+    assert row.quality is not None
+    assert row.quality["quality_status"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# Row lifecycle under incremental control flow
+# ---------------------------------------------------------------------------
+
+
+async def _wiki_slugs(session: AsyncSession, repo: ScriptedRepo) -> set[str]:
+    rows = (
+        (
+            await session.execute(
+                select(Document).where(
+                    Document.repository_id == repo.id,
+                    Document.doc_type == "wiki",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {row.slug for row in rows}
+
+
+async def test_orphan_sweep_preserves_clean_pages(
+    db_session: AsyncSession,
+) -> None:
+    """THE incremental regression risk: clean pages are not in the resolved
+    set, so a keep-list built only from resolved∪failed would delete the
+    entire untouched wiki on every partial run."""
+    repo = await ScriptedRepo.create(db_session, "wiki-life-orphan")
+    await seed_standard(db_session, repo)
+    await run_full(db_session, repo, STANDARD_PAGES, source_commit="c1")
+    await repo.change_node(
+        db_session,
+        "pkg.alpha_main",
+        content="def alpha_main():\n    return 'alphaflow v2'",
+    )
+
+    await run_incremental(
+        db_session,
+        repo,
+        STANDARD_PAGES,
+        source_commit="c2",
+        expected_dirty={"alpha", "index"},
+    )
+    assert await _wiki_slugs(db_session, repo) == {
+        "index",
+        "alpha",
+        "beta",
+        "gamma",
+    }
+
+
+async def test_replanned_away_pages_still_deleted(
+    db_session: AsyncSession,
+) -> None:
+    """Orphan deletion must keep working through the salvage path: a
+    structural change re-plans the wiki, the new plan drops gamma and adds
+    delta — gamma's row goes away while clean alpha/beta survive unwritten."""
+    repo = await ScriptedRepo.create(db_session, "wiki-life-replan")
+    await seed_standard(db_session, repo)
+    await run_full(db_session, repo, STANDARD_PAGES, source_commit="c1")
+
+    await repo.add_node(
+        db_session,
+        "pkg.delta_main",
+        content="def delta_main():\n    return 'deltaflow v1'",
+    )
+    pages_v2 = [page for page in STANDARD_PAGES if page.slug != "gamma"] + [
+        ScriptedPage(
+            slug="delta",
+            title="Delta",
+            purpose="Documents the deltaflow subsystem",
+            cites=("pkg.delta_main",),
+        )
+    ]
+    provider = FakeStructuredProvider()
+    queue_full_run(provider, repo, pages_v2, write_slugs={"delta", "index"})
+    result = await run_pipeline(db_session, repo, llm=provider, source_commit="c2")
+    assert result.errors == []
+    assert result.mode == "full"
+    assert_drained(provider)
+    assert await _wiki_slugs(db_session, repo) == {
+        "index",
+        "alpha",
+        "beta",
+        "delta",
+    }
+
+
+class _FlakyProvider(FakeStructuredProvider):
+    """Raises a transient completion error on the Nth tool-loop call."""
+
+    def __init__(self, *, fail_on_call: int) -> None:
+        super().__init__()
+        self._fail_on_call = fail_on_call
+        self._call_count = 0
+
+    async def complete_with_tools(self, **kwargs: object) -> object:
+        self._call_count += 1
+        if self._call_count == self._fail_on_call:
+            raise StructuredCompletionError("transient provider blip")
+        return await super().complete_with_tools(**kwargs)
+
+
+async def test_transient_failure_keeps_old_row_then_retries_next_sync(
+    db_session: AsyncSession,
+) -> None:
+    """A dirty page whose agent dies transiently: the run reports the
+    failure, the OLD row keeps serving readers (kept by the orphan sweep,
+    stamps untouched), and the very next sync retries exactly that page."""
+    repo = await ScriptedRepo.create(db_session, "wiki-life-flaky")
+    await seed_standard(db_session, repo)
+    await run_full(db_session, repo, STANDARD_PAGES, source_commit="c1")
+    old_digest = hashlib.sha256(
+        b"def alpha_main():\n    return 'alphaflow v1'"
+    ).hexdigest()[:12]
+    await repo.change_node(
+        db_session,
+        "pkg.alpha_main",
+        content="def alpha_main():\n    return 'alphaflow v2'",
+    )
+
+    # Write order is plan order (index, alpha); index costs calls 1-2, so
+    # alpha's first loop is call 3.
+    provider = _FlakyProvider(fail_on_call=3)
+    index = next(p for p in STANDARD_PAGES if p.slug == "index")
+    queue_page_turns(provider, repo, index)
+    result = await run_pipeline(db_session, repo, llm=provider, source_commit="c2")
+    assert result.errors == ["page_failed:alpha"]
+    assert result.mode == "incremental"
+    assert set(result.dirty_reasons) == {"alpha", "index"}
+    assert_drained(provider)
+
+    view = await business_view(db_session, repo)
+    assert set(view) == {"index", "alpha", "beta", "gamma"}
+    assert old_digest in view["alpha"]["content"]  # old row still serving
+
+    # Next sync: alpha is still dirty (stale stamps), nothing else is.
+    await run_incremental(
+        db_session,
+        repo,
+        STANDARD_PAGES,
+        source_commit="c3",
+        expected_dirty={"alpha", "index"},
+    )
+    new_digest = hashlib.sha256(
+        b"def alpha_main():\n    return 'alphaflow v2'"
+    ).hexdigest()[:12]
+    view = await business_view(db_session, repo)
+    assert new_digest in view["alpha"]["content"]
+
+
+async def test_force_full_rewrites_everything_despite_valid_artifacts(
+    db_session: AsyncSession,
+) -> None:
+    """The OWNER rebuild button: artifacts and stamps are perfectly
+    reusable, yet `force_full=True` re-plans and rewrites every page."""
+    repo = await ScriptedRepo.create(db_session, "wiki-life-force")
+    await seed_standard(db_session, repo)
+    await run_full(db_session, repo, STANDARD_PAGES, source_commit="c1")
+
+    provider = FakeStructuredProvider()
+    queue_full_run(provider, repo, STANDARD_PAGES)
+    result = await run_pipeline(
+        db_session,
+        repo,
+        llm=provider,
+        source_commit="c2",
+        force_full=True,
+    )
+    assert result.errors == []
+    assert result.mode == "full"
+    assert result.pages_written == len(STANDARD_PAGES)
+    assert result.pages_clean_skipped == 0
+    assert result.dirty_reasons == {}
+    assert_drained(provider)

@@ -15,8 +15,10 @@ Per-page persist decision (in priority order):
    `source_commit` are bumped (audit trail). Slug is reported in the
    returned `kept_for_quality_slugs`.
 4. New page's `content_hash` matches the existing row → skip body write,
-   bump plan/run metadata. Existing `quality` is **left intact** — a
-   same-content rerun must not silently regress recorded quality.
+   bump plan/run metadata. Existing `quality` is upgraded if the new
+   status is strictly better (or the old one unknown) — a degraded page
+   that healed with identical bytes must stop being dirty — but is never
+   regressed by a same-content rerun with worse telemetry.
 5. Otherwise → write the row (insert or full update).
 
 After all upserts, the orchestrator calls `delete_orphan_pages` with a
@@ -30,7 +32,7 @@ import hashlib
 import logging
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.document import Document
@@ -151,8 +153,12 @@ class WikiDocumentStore:
                 continue
 
             # Decision 4 — same content as before. Refresh plan/run
-            # metadata but leave `quality` alone: a same-content rerun
-            # with worse telemetry must not regress recorded quality.
+            # metadata. `quality` is upgraded only when the new status is
+            # strictly better (or the old one unknown): a degraded page
+            # whose rewrite reproduced identical bytes has *healed* — not
+            # recording that would keep it dirty (and rewritten) on every
+            # subsequent sync. Equal-or-worse telemetry must not overwrite
+            # the recorded quality.
             if existing is not None and existing.content_hash == content_hash:
                 skipped_slugs.append(page.slug)
                 existing.sync_run_id = sync_run_id
@@ -163,6 +169,11 @@ class WikiDocumentStore:
                 existing.spec_hash = spec_hashes.get(page.slug)
                 existing.retrieval_fingerprint = fingerprints.get(page.slug)
                 existing.wiki_schema_version = wiki_schema_version
+                if (
+                    existing_status is None
+                    or _QUALITY_RANK[new_status] > _QUALITY_RANK[existing_status]
+                ):
+                    existing.quality = quality_payload
                 persisted_ids.append(existing.id)
                 continue
 
@@ -214,6 +225,36 @@ class WikiDocumentStore:
                 persisted_ids.append(existing.id)
 
         return persisted_ids, skipped_slugs, kept_for_quality_slugs
+
+    async def touch_pages(
+        self,
+        *,
+        session: AsyncSession,
+        repository_id: UUID,
+        slugs: list[str],
+        sync_run_id: UUID | None,
+        source_commit: str,
+    ) -> int:
+        """Bump audit fields on clean (skipped) pages without touching
+        content, quality, or the incremental stamps. Returns updated count.
+
+        The incremental orchestrator calls this for pages it decided not
+        to rewrite, so `source_commit` reflects the sync that last
+        *verified* the page — not the one that last wrote it.
+        """
+        if not slugs:
+            return 0
+        stmt = (
+            update(Document)
+            .where(
+                Document.repository_id == repository_id,
+                Document.doc_type == self.DOC_TYPE,
+                Document.slug.in_(slugs),
+            )
+            .values(sync_run_id=sync_run_id, source_commit=source_commit)
+        )
+        result = await session.execute(stmt)
+        return int(result.rowcount or 0)
 
     async def delete_orphan_pages(
         self,
