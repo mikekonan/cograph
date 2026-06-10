@@ -198,3 +198,58 @@ async def test_my_context_reports_wiki_total_when_pages_exist(
         if item["slug"] == "github.com/acme/runner"
     )
     assert repo_entry["wiki_total"] == 2
+
+
+@pytest.mark.asyncio
+async def test_wiki_tree_resource_serves_compacted_wiki(app, db_session) -> None:
+    # The wiki tree resource is the served wiki: alongside the navigation
+    # tree it must carry the compacted map (lead + sections + covered
+    # questions per page) so an MCP client gets the wiki content here, not
+    # just a list of titles.
+    repo = Repository(
+        host="github.com",
+        owner="acme",
+        name="kms",
+        git_url="https://github.com/acme/kms.git",
+        branch="main",
+        status=RepositoryStatus.READY,
+        visibility=RepositoryVisibility.PUBLIC,
+    )
+    db_session.add(repo)
+    await db_session.flush()
+
+    db_session.add(
+        Document(
+            repository_id=repo.id,
+            slug="index",
+            title="Overview",
+            doc_type="wiki",
+            sort_order=0,
+            content=(
+                "# Overview\n"
+                "A key-management service.\n"
+                "```go\n"
+                "func main() {}\n"
+                "```\n"
+                "## What it does\n"
+            ),
+            content_hash="hash-index",
+            source_hash="src-index",
+            model="test",
+            quality={"covers_questions": ["use-cases"]},
+        )
+    )
+    await db_session.commit()
+
+    server = await _get_mcp_server(app)
+    result = await server.read_resource("cograph://repo/github.com/acme/kms/wiki")
+    payload = json.loads(_content_str(result))
+
+    assert payload["total"] == 1
+    assert "compact" in payload
+    entry = payload["compact"][0]
+    assert entry["slug"] == "index"
+    assert entry["lead"] == "A key-management service."
+    assert "func main" not in entry["lead"]  # code fence stripped
+    assert entry["sections"] == ["What it does"]
+    assert entry["covers_questions"] == ["use-cases"]

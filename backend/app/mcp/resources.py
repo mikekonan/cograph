@@ -47,8 +47,16 @@ def register_resources(server: FastMCP, services: MCPServices) -> None:
     @server.resource(
         "cograph://repo/{host}/{owner}/{name}/wiki",
         name="cograph_wiki_tree",
-        title="Repository wiki tree",
-        description="Generated wiki tree for a ready repository.",
+        title="Repository wiki (compacted)",
+        description=(
+            "The generated wiki for a ready repository, served as a compacted "
+            "map: the page tree plus, per page, its lead prose, section "
+            "headings, and the reader-questions it answers (~2-3k tokens for "
+            "the whole wiki). Read this to learn what the repo is and where "
+            "things are; fetch a full page via "
+            "`cograph://repo/{host}/{owner}/{name}/wiki/{slug}` only when a "
+            "map entry matches your question."
+        ),
         mime_type="application/json",
     )
     async def repository_wiki_tree(

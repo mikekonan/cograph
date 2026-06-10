@@ -18,11 +18,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.code_node import CodeNode
 from backend.app.models.document import Document
+from backend.app.wiki.compact import extract_lead, extract_sections
 
 logger = logging.getLogger(__name__)
 
 
 _DOC_TYPE = "wiki"
+
+# The index page is the repo's narrative overview, so it earns a larger lead
+# budget — the compact carries its elevator pitch in full. Every other page
+# contributes only a one-glance blurb.
+_INDEX_LEAD_CHARS = 1200
+_PAGE_LEAD_CHARS = 400
 
 
 class WikiCitation(BaseModel):
@@ -94,6 +101,20 @@ class WikiPage(BaseModel):
     quality: WikiPageQualityChips | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class WikiCompactPage(BaseModel):
+    """One page reduced to its map entry: what it's about, what's in it, and
+    which reader-questions it answers. The full body lives at `.../wiki/{slug}`.
+    """
+
+    slug: str
+    title: str
+    parent_slug: str | None = None
+    sort_order: int
+    lead: str
+    sections: list[str] = Field(default_factory=list)
+    covers_questions: list[str] = Field(default_factory=list)
 
 
 class WikiQueryService:
@@ -195,6 +216,56 @@ class WikiQueryService:
             Document.doc_type == _DOC_TYPE,
         )
         return int((await session.scalar(stmt)) or 0)
+
+    async def get_compact(
+        self,
+        *,
+        session: AsyncSession,
+        repository_id: UUID,
+    ) -> list[WikiCompactPage]:
+        """A compacted view of the whole wiki — every page as a map entry.
+
+        Deterministic, LLM-free, recomputed on read from the stored markdown,
+        so it never drifts from the published pages. ~2-3k tokens for a
+        typical repo versus ~73k for the full wiki.
+        """
+        stmt = (
+            select(
+                Document.slug,
+                Document.title,
+                Document.parent_slug,
+                Document.sort_order,
+                Document.content,
+                Document.quality,
+            )
+            .where(
+                Document.repository_id == repository_id,
+                Document.doc_type == _DOC_TYPE,
+            )
+            .order_by(Document.sort_order.asc(), Document.slug.asc())
+        )
+        rows = (await session.execute(stmt)).all()
+        compact: list[WikiCompactPage] = []
+        for row in rows:
+            content = row.content or ""
+            quality = row.quality if isinstance(row.quality, dict) else {}
+            covers_raw = quality.get("covers_questions") or []
+            covers = [str(item) for item in covers_raw if item is not None]
+            max_chars = (
+                _INDEX_LEAD_CHARS if row.slug == "index" else _PAGE_LEAD_CHARS
+            )
+            compact.append(
+                WikiCompactPage(
+                    slug=row.slug,
+                    title=row.title,
+                    parent_slug=row.parent_slug,
+                    sort_order=row.sort_order,
+                    lead=extract_lead(content, max_chars=max_chars),
+                    sections=extract_sections(content),
+                    covers_questions=covers,
+                )
+            )
+        return compact
 
 
 def _build_tree(flat: list[WikiTreeNode]) -> list[WikiTreeNode]:

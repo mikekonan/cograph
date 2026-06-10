@@ -226,6 +226,104 @@ async def test_get_page_by_slug_hydrates_quality_chips(
     assert loaded.quality.tokens_used == 11_500
 
 
+async def test_get_compact_strips_code_keeps_map_and_orders(
+    db_session: AsyncSession,
+) -> None:
+    repo = await _make_repo(db_session)
+    index_quality = WikiPageQuality(
+        covers_questions=[ReaderQuestion.USE_CASES, ReaderQuestion.CONFIGURATION],
+    )
+    index = ResolvedPage(
+        slug="index",
+        title="Overview",
+        parent_slug=None,
+        sort_order=0,
+        content=(
+            "# Overview\n"
+            "The narrative pitch for the service.\n"
+            "```go\n"
+            "func main() {}\n"
+            "```\n"
+            "## What it does\n"
+            "## How to run\n"
+        ),
+        model="fake-v1",
+        citations=[],
+        source_node_ids=[],
+        source_repo_doc_chunk_ids=[],
+        unresolved_placeholders=[],
+        quality=index_quality,
+    )
+    child = _page(
+        slug="config",
+        title="Config",
+        content="# Config\nHow configuration is loaded.\n## Options\n",
+        sort_order=1,
+        parent_slug="index",
+    )
+    await WikiDocumentStore().upsert_pages(
+        session=db_session,
+        repository_id=repo.id,
+        sync_run_id=None,
+        source_commit="abc",
+        plan_hash="h",
+        model="fake-v1",
+        pages=[child, index],  # inserted out of order on purpose
+    )
+
+    compact = await WikiQueryService().get_compact(
+        session=db_session, repository_id=repo.id
+    )
+
+    assert [p.slug for p in compact] == ["index", "config"]  # ordered by sort_order
+    overview = compact[0]
+    assert overview.lead == "The narrative pitch for the service."
+    assert "func main" not in overview.lead  # code fence stripped
+    assert overview.sections == ["What it does", "How to run"]
+    assert overview.covers_questions == ["use-cases", "configuration"]
+    assert compact[1].lead == "How configuration is loaded."
+    assert compact[1].sections == ["Options"]
+
+
+async def test_get_compact_gives_index_a_larger_lead_budget(
+    db_session: AsyncSession,
+) -> None:
+    repo = await _make_repo(db_session)
+    long_lead = "alpha " * 100  # ~600 chars of prose
+    pages = [
+        _page(
+            slug="index",
+            title="Overview",
+            content=f"# Overview\n{long_lead}\n## Section\n",
+            sort_order=0,
+        ),
+        _page(
+            slug="deep-dive",
+            title="Deep Dive",
+            content=f"# Deep Dive\n{long_lead}\n## Section\n",
+            sort_order=1,
+        ),
+    ]
+    await WikiDocumentStore().upsert_pages(
+        session=db_session,
+        repository_id=repo.id,
+        sync_run_id=None,
+        source_commit="abc",
+        plan_hash="h",
+        model="fake-v1",
+        pages=pages,
+    )
+
+    compact = await WikiQueryService().get_compact(
+        session=db_session, repository_id=repo.id
+    )
+    by_slug = {p.slug: p for p in compact}
+    # index gets the full ~600-char pitch; a regular page is capped at 400.
+    assert not by_slug["index"].lead.endswith("…")
+    assert by_slug["deep-dive"].lead.endswith("…")
+    assert len(by_slug["deep-dive"].lead) < len(by_slug["index"].lead)
+
+
 async def test_count_pages_counts_only_wiki_variant(db_session: AsyncSession) -> None:
     repo = await _make_repo(db_session)
     store = WikiDocumentStore()

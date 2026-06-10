@@ -165,25 +165,29 @@ domain vocabulary the user is asking about.
 
 For every candidate repository where `wiki_total > 0` (visible in
 `cograph://my-context` at session start, or in the `cograph_outline`
-response), you MUST issue at least one `cograph_retrieve(repository=…,
-mode="wiki", query=<…>)` call BEFORE you synthesise the answer. The
-generated wiki holds conceptual / definitional / architectural prose
-the code itself does not encode — skipping it on a repo that has one
-collapses your answer to "what the code does" and loses "what the team
-says it does and why."
+response), you MUST read the wiki resource
+`cograph://repo/<host>/<owner>/<name>/wiki` BEFORE you synthesise the
+answer. The generated wiki holds conceptual / definitional /
+architectural prose the code itself does not encode — skipping it on a
+repo that has one collapses your answer to "what the code does" and
+loses "what the team says it does and why."
 
-Phrase the wiki query in domain terms, not code terms — wiki pages are
-written for humans, not compilers. Good wiki queries:
+That resource is the *compacted* whole wiki: the page tree plus, for
+every page, its lead prose, its section headings, and the
+reader-questions it answers — the full wiki reduced to ~2-3k tokens.
+Read it as the map:
 
-* the bare domain entity ("AcmePay", "3DS challenge", "idempotency key")
-* a "what is" / "how does" / "why" framing of the user's question
-* the title of a wiki page from outline that looks adjacent to the
-  topic
+* find the page(s) whose lead / sections / covered-questions match the
+  user's question;
+* fetch each such page in full via
+  `cograph://repo/<host>/<owner>/<name>/wiki/<slug>` (the `page_template`
+  in the resource payload) to get the prose and code you will cite.
 
-If `mode="wiki"` returns no hits for a repo with `wiki_total > 0`, try
-one more phrasing before giving up on its wiki — the page exists, your
-first phrasing just didn't match its language. Wiki citations carry
-the form `wiki/<slug>` and count as full provenance, same as code
+Do NOT reach for `cograph_retrieve(mode="wiki")` to surface the
+generated wiki — that mode searches the repository's own checked-in text
+files (README, docs, CI yaml), not the generated pages. The wiki
+resource above is the only path to the generated wiki. Wiki citations
+carry the form `wiki/<slug>` and count as full provenance, same as code
 citations.
 
 Repos with `wiki_total == 0` are exempt from this gate — there is

@@ -730,6 +730,10 @@ async def wiki_tree_resource_payload(
             session=session,
             repository_id=repository.id,
         )
+        compact = await services.wiki_queries.get_compact(
+            session=session,
+            repository_id=repository.id,
+        )
         return encode_payload(
             {
                 "repository_id": repository.id,
@@ -739,6 +743,11 @@ async def wiki_tree_resource_payload(
                 "resources": _wiki_resource_uris(repository=repository),
                 "items": tree,
                 "total": total,
+                # The compacted whole-wiki map (~2-3k tokens): every page's
+                # lead prose, section headings, and covered questions. This is
+                # the served wiki — the agent reads it here, then fetches a
+                # full page via `page_template` only when a map entry matches.
+                "compact": compact,
             }
         )
 
