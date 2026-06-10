@@ -1,7 +1,7 @@
 import type { Repository } from "@/api/types";
 import { type AuthConfig, AuthContext, type User } from "@/contexts/AuthContext";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { SyncSettings } from "../SyncSettings";
 
@@ -21,6 +21,14 @@ const adminUser: User = {
   auth_source: "password",
   last_login_at: null,
   created_at: "2026-01-01T00:00:00Z",
+};
+
+const ownerUser: User = {
+  ...adminUser,
+  id: "owner-1",
+  email: "owner@example.com",
+  name: "Owner",
+  role: "owner",
 };
 
 const repo: Repository = {
@@ -72,6 +80,21 @@ describe("SyncSettings", () => {
       "text-xs",
       "font-mono",
     );
+  });
+
+  it("shows the wiki rebuild flow to the owner, behind a confirm dialog", () => {
+    renderSyncSettings({ user: ownerUser });
+
+    expect(screen.getByRole("heading", { level: 3, name: "Wiki" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Rebuild wiki" }));
+    // Destructive-cost action: never fires straight from the button.
+    expect(screen.getByText("Rebuild wiki from scratch?")).toBeInTheDocument();
+  });
+
+  it("hides the wiki rebuild button from admins (owner-only, not hasAdminAccess)", () => {
+    renderSyncSettings({ user: adminUser });
+
+    expect(screen.queryByRole("button", { name: "Rebuild wiki" })).toBeNull();
   });
 
   it("keeps the read-only timestamp summary for non-admin viewers", () => {

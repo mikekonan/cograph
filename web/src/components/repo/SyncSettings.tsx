@@ -1,14 +1,27 @@
 import { apiJson } from "@/api/client";
 import type { RepoVisibility, Repository, SyncSchedule, UpdateRepoRequest } from "@/api/types";
 import { RepoVisibilityBadge } from "@/components/repo/RepoVisibilityBadge";
+import { Button } from "@/components/ui/Button";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/Dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/Select";
 import { useAuth } from "@/hooks/useAuth";
+import { useRebuildWiki } from "@/hooks/useRepos";
 import { hasAdminAccess } from "@/lib/auth";
 import { repoApiPath } from "@/lib/repoPath";
 import { cn, formatUtcTimestamp } from "@/lib/utils";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Calendar, Check, Clock, Eye, RefreshCw, Webhook } from "lucide-react";
+import { BookOpen, Calendar, Check, Clock, Eye, RefreshCw, Webhook } from "lucide-react";
 import type { ComponentType, ReactNode, SVGProps } from "react";
+import { useState } from "react";
 
 type SyncSettingsProps = {
   repo: Repository;
@@ -53,6 +66,11 @@ export function SyncSettings({ repo, className, compact = false }: SyncSettingsP
 
   const current = OPTIONS.find((o) => o.value === repo.sync_schedule);
   const canManage = hasAdminAccess(user?.role);
+  // Full wiki rebuild re-pays the entire first-run LLM cost, so the
+  // backend gates it to OWNER specifically — not `hasAdminAccess`.
+  const isOwner = user?.role === "owner";
+  const [rebuildOpen, setRebuildOpen] = useState(false);
+  const rebuildMutation = useRebuildWiki();
   const visibility = repo.visibility;
   const selectTriggerClassName = compact ? "w-full" : "w-36 flex-shrink-0";
   const syncSummary = [
@@ -146,6 +164,50 @@ export function SyncSettings({ repo, className, compact = false }: SyncSettingsP
               </SelectContent>
             </Select>
           </SettingBlock>
+
+          {isOwner && (
+            <SettingBlock title="Wiki" icon={BookOpen}>
+              <Dialog open={rebuildOpen} onOpenChange={setRebuildOpen}>
+                <DialogTrigger asChild>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={rebuildMutation.isPending}
+                    className="w-fit"
+                  >
+                    Rebuild wiki
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Rebuild wiki from scratch?</DialogTitle>
+                    <DialogDescription>
+                      This re-plans and regenerates every wiki page, bypassing incremental reuse,
+                      and costs the full LLM price of a first indexing run. Routine syncs already
+                      rewrite only the pages whose sources changed.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <DialogFooter>
+                    <DialogClose asChild>
+                      <Button variant="ghost" size="sm">
+                        Cancel
+                      </Button>
+                    </DialogClose>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      onClick={() => {
+                        rebuildMutation.mutate(repo);
+                        setRebuildOpen(false);
+                      }}
+                    >
+                      Rebuild wiki
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            </SettingBlock>
+          )}
         </>
       ) : (
         <div>
@@ -178,6 +240,11 @@ export function SyncSettings({ repo, className, compact = false }: SyncSettingsP
       {mutation.isError && (
         <p role="alert" className="text-xs text-[color:var(--color-danger)]">
           Couldn't update repository settings. Try again.
+        </p>
+      )}
+      {rebuildMutation.isError && (
+        <p role="alert" className="text-xs text-[color:var(--color-danger)]">
+          Couldn't start the wiki rebuild. Try again.
         </p>
       )}
     </section>
