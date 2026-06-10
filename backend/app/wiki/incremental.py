@@ -32,6 +32,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.llm.usage import llm_stage
 from backend.app.models.wiki_artifact import WikiArtifact
 from backend.app.wiki.retrieval import PageBundle, WikiRetrievalService
 from backend.app.wiki.schemas import (
@@ -304,17 +305,18 @@ async def compute_dirty_slugs(
         if reason is None:
             assert record is not None  # cheap pass returns missing_row otherwise
             try:
-                bundle = await retriever.for_page(
-                    session=session,
-                    repository_id=repository_id,
-                    purpose=spec.purpose,
-                    sources_hint=spec.sources_hint,
-                    code_top_k=code_top_k,
-                    docs_top_k=docs_top_k,
-                    graph_pivot_top_k=graph_pivot_top_k,
-                    domain_concepts=list(overview.business_context.domain_concepts),
-                    business_confidence=overview.business_context.confidence,
-                )
+                with llm_stage("wiki.retrieval"):
+                    bundle = await retriever.for_page(
+                        session=session,
+                        repository_id=repository_id,
+                        purpose=spec.purpose,
+                        sources_hint=spec.sources_hint,
+                        code_top_k=code_top_k,
+                        docs_top_k=docs_top_k,
+                        graph_pivot_top_k=graph_pivot_top_k,
+                        domain_concepts=list(overview.business_context.domain_concepts),
+                        business_confidence=overview.business_context.confidence,
+                    )
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "compute_dirty_slugs: retrieval failed for slug=%s (%s); "

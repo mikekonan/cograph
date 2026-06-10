@@ -369,6 +369,27 @@ export type SyncJob = {
   units: { done: number; total: number; unit: string } | null;
   error_code: string | null;
   error_msg: string | null;
+  /**
+   * LLM usage attributed to this step. Null = the step made no LLM calls
+   * (clone, parse, …) or the run predates accounting — render as nothing,
+   * not as zero. `cost_usd_micros` is integer micro-USD and stays null
+   * when the model has no price on file ("no price", not "free").
+   */
+  tokens_input: number | null;
+  tokens_output: number | null;
+  cost_usd_micros: number | null;
+  llm_model: string | null;
+  /** Stage label → usage detail, e.g. "wiki.write" → {calls, tokens_in, …}. */
+  cost_breakdown: Record<
+    string,
+    {
+      calls: number;
+      tokens_in: number;
+      tokens_out: number;
+      model: string;
+      cost_usd_micros: number | null;
+    }
+  > | null;
   started_at: ISODateTime | null;
   finished_at: ISODateTime | null;
   created_at: ISODateTime;
@@ -410,6 +431,10 @@ export type SyncBatchSummary = {
   started_at: ISODateTime;
   /** All-terminal if every job is skipped|success|error|cancelled. */
   is_complete: boolean;
+  /** Rollup over child jobs; null when no job recorded any LLM usage. */
+  tokens_input: number | null;
+  tokens_output: number | null;
+  cost_usd_micros: number | null;
 };
 
 // --- docs ------------------------------------------------------------------

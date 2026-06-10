@@ -21,6 +21,7 @@ from backend.app.graph.go_variants import (
 from backend.app.llm.code_embedder import CodeEmbedderService, EmbedResult
 from backend.app.llm.repo_document_embedder import RepoDocumentEmbedderService
 from backend.app.llm.summary_generator import SummaryGenerator, SummaryResult
+from backend.app.llm.usage import LlmUsageTally, llm_stage, rollup_stages
 from backend.app.models.enums import (
     RepoSyncRunStatus,
     RepoSyncTriggerKind,
@@ -48,6 +49,16 @@ _TRIGGER_MAP: dict[RepoSyncTriggerKind, SyncBatchTrigger] = {
     RepoSyncTriggerKind.MANUAL: SyncBatchTrigger.MANUAL,
     RepoSyncTriggerKind.SCHEDULE: SyncBatchTrigger.SCHEDULE,
     RepoSyncTriggerKind.WEBHOOK: SyncBatchTrigger.WEBHOOK,
+}
+
+# Which usage-tally stage labels each pipeline step owns. Steps run
+# sequentially, so by the time a step completes its stages are final;
+# absent steps (clone, parse, …) make no LLM calls and keep NULL columns.
+_STEP_STAGE_PREFIXES: dict[SyncStep, tuple[str, ...]] = {
+    SyncStep.EMBED: ("embed.code",),
+    SyncStep.EMBED_REPO_DOCS: ("embed.repo_docs",),
+    SyncStep.GENERATE_SUMMARIES: ("summaries",),
+    SyncStep.GENERATE_WIKI: ("wiki.",),
 }
 
 
@@ -103,6 +114,7 @@ class RepoSyncProcessor:
         summary_generator: SummaryGenerator | None = None,
         wiki_generator: LLMWikiGenerator | None = None,
         timeouts: PipelineTimeoutsSettings | None = None,
+        usage_tally: LlmUsageTally | None = None,
     ) -> None:
         self._graph_ingest_service = graph_ingest_service or GraphIngestService()
         self._repo_document_indexer = repo_document_indexer or RepoDocumentIndexer()
@@ -114,6 +126,9 @@ class RepoSyncProcessor:
         # Defaults match the prod yaml — keeps the tests / CLI working
         # without each caller having to construct a settings object.
         self._timeouts = timeouts or PipelineTimeoutsSettings()
+        # Shared with the providers built for this job; `_complete_step`
+        # rolls the relevant stages up onto the sync_jobs row.
+        self._usage_tally = usage_tally
 
     async def process_checkout(
         self,
@@ -266,14 +281,15 @@ class RepoSyncProcessor:
             running_job_id = embed_job.id if embed_job is not None else None
             await self._start_step(session, embed_job)
             if self._code_embedder_service is not None:
-                embed_result = await _run_step_with_timeout(
-                    self._code_embedder_service.embed_repository(
-                        session=session,
-                        repository_id=repository_id,
-                    ),
-                    timeout_seconds=self._timeouts.embed_seconds,
-                    step=SyncStep.EMBED,
-                )
+                with llm_stage("embed.code"):
+                    embed_result = await _run_step_with_timeout(
+                        self._code_embedder_service.embed_repository(
+                            session=session,
+                            repository_id=repository_id,
+                        ),
+                        timeout_seconds=self._timeouts.embed_seconds,
+                        step=SyncStep.EMBED,
+                    )
                 await self._complete_step(
                     session,
                     embed_job,
@@ -321,14 +337,15 @@ class RepoSyncProcessor:
             )
             await self._start_step(session, repo_doc_embed_job)
             if self._repo_document_embedder_service is not None:
-                repo_doc_embed_result = await _run_step_with_timeout(
-                    self._repo_document_embedder_service.embed_repository(
-                        session=session,
-                        repository_id=repository_id,
-                    ),
-                    timeout_seconds=self._timeouts.embed_repo_docs_seconds,
-                    step=SyncStep.EMBED_REPO_DOCS,
-                )
+                with llm_stage("embed.repo_docs"):
+                    repo_doc_embed_result = await _run_step_with_timeout(
+                        self._repo_document_embedder_service.embed_repository(
+                            session=session,
+                            repository_id=repository_id,
+                        ),
+                        timeout_seconds=self._timeouts.embed_repo_docs_seconds,
+                        step=SyncStep.EMBED_REPO_DOCS,
+                    )
                 await self._complete_step(
                     session,
                     repo_doc_embed_job,
@@ -356,14 +373,15 @@ class RepoSyncProcessor:
             running_job_id = summary_job.id if summary_job is not None else None
             await self._start_step(session, summary_job)
             if self._summary_generator is not None:
-                summary_result = await _run_step_with_timeout(
-                    self._summary_generator.generate(
-                        session=session,
-                        repository_id=repository_id,
-                    ),
-                    timeout_seconds=self._timeouts.generate_summaries_seconds,
-                    step=SyncStep.GENERATE_SUMMARIES,
-                )
+                with llm_stage("summaries"):
+                    summary_result = await _run_step_with_timeout(
+                        self._summary_generator.generate(
+                            session=session,
+                            repository_id=repository_id,
+                        ),
+                        timeout_seconds=self._timeouts.generate_summaries_seconds,
+                        step=SyncStep.GENERATE_SUMMARIES,
+                    )
                 await self._complete_step(
                     session,
                     summary_job,
@@ -596,7 +614,29 @@ class RepoSyncProcessor:
             job.units_total = units_total
         if units_unit is not None:
             job.units_unit = units_unit
+        self._stamp_usage(job)
         await session.commit()
+
+    def _stamp_usage(self, job: SyncJob) -> None:
+        """Roll the tally stages owned by this step onto the job row.
+
+        No-op without a tally (tests / CLI) or when the step made no LLM
+        calls — the columns stay NULL, which the UI renders as "—".
+        """
+        if self._usage_tally is None:
+            return
+        step = job.step if isinstance(job.step, SyncStep) else SyncStep(str(job.step))
+        prefixes = _STEP_STAGE_PREFIXES.get(step)
+        if prefixes is None:
+            return
+        rollup = rollup_stages(self._usage_tally.stages_with_prefix(prefixes))
+        if rollup is None:
+            return
+        job.tokens_input = rollup.tokens_input
+        job.tokens_output = rollup.tokens_output
+        job.cost_usd_micros = rollup.cost_usd_micros
+        job.llm_model = rollup.llm_model
+        job.cost_breakdown = rollup.cost_breakdown
 
     async def _skip_step(
         self,

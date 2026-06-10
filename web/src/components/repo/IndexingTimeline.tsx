@@ -123,6 +123,7 @@ export function IndexingTimeline({ batch, jobs, isPending, className }: Indexing
         <span className="text-xs text-[color:var(--color-fg-muted)]">
           {batch.is_complete ? "Last run · " : "In progress · "}
           {formatDuration(totalMs)} total
+          {usageSuffix(batch.tokens_input, batch.tokens_output, batch.cost_usd_micros)}
         </span>
       </header>
 
@@ -248,7 +249,49 @@ function legendValue(job: SyncJob, durationMs: number): string {
   if (job.status === "skipped") {
     return "Skipped";
   }
-  return formatDuration(durationMs);
+  return (
+    formatDuration(durationMs) +
+    usageSuffix(job.tokens_input, job.tokens_output, job.cost_usd_micros)
+  );
+}
+
+/**
+ * " · 84.2k tok · $0.31" — appended to a duration when the step (or batch)
+ * recorded LLM usage. Null usage renders nothing: most steps make no LLM
+ * calls and a "0 tok" suffix on clone/parse would read as a bug. A null
+ * cost with non-null tokens means "no price on file" — tokens only.
+ */
+function usageSuffix(
+  tokensInput: number | null,
+  tokensOutput: number | null,
+  costUsdMicros: number | null,
+): string {
+  if (tokensInput === null && tokensOutput === null) {
+    return "";
+  }
+  let suffix = ` · ${formatTokens((tokensInput ?? 0) + (tokensOutput ?? 0))}`;
+  if (costUsdMicros !== null) {
+    suffix += ` · ${formatCost(costUsdMicros)}`;
+  }
+  return suffix;
+}
+
+function formatTokens(count: number): string {
+  if (count >= 1_000_000) {
+    return `${(count / 1_000_000).toFixed(1)}M tok`;
+  }
+  if (count >= 1_000) {
+    return `${(count / 1_000).toFixed(1)}k tok`;
+  }
+  return `${count} tok`;
+}
+
+function formatCost(micros: number): string {
+  const usd = micros / 1_000_000;
+  if (usd > 0 && usd < 0.01) {
+    return "<$0.01";
+  }
+  return `$${usd.toFixed(2)}`;
 }
 
 function stepDurationMs(j: SyncJob): number {

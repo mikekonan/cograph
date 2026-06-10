@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.graph.traversal import GraphTraversalService
 from backend.app.llm.embedder import EmbedProvider
+from backend.app.llm.usage import llm_stage
 from backend.app.models.repository import Repository
 from backend.app.rag.lexical import LexicalRetriever, SymbolLookup
 from backend.app.rag.pivot import GraphPivot, PivotNode
@@ -299,13 +300,14 @@ async def analyze_repo(
     last_err: Exception | None = None
     for attempt in range(2):
         try:
-            overview = await llm.complete_json(
-                system=REPO_ANALYZER_SYSTEM,
-                blocks=blocks,
-                schema=RepoOverview,
-                max_tokens=config.structured_max_tokens,
-                temperature=0.0,
-            )
+            with llm_stage("wiki.analyze"):
+                overview = await llm.complete_json(
+                    system=REPO_ANALYZER_SYSTEM,
+                    blocks=blocks,
+                    schema=RepoOverview,
+                    max_tokens=config.structured_max_tokens,
+                    temperature=0.0,
+                )
             logger.info(
                 "wiki stage 2: analyze_repo done (one_line=%r)",
                 overview.one_line[:80],
@@ -344,13 +346,14 @@ async def generate_mindmap(
     last_err: Exception | None = None
     for attempt in range(2):
         try:
-            mindmap = await llm.complete_json(
-                system=MINDMAP_GENERATOR_SYSTEM,
-                blocks=blocks,
-                schema=MindMap,
-                max_tokens=config.structured_max_tokens,
-                temperature=0.0,
-            )
+            with llm_stage("wiki.mindmap"):
+                mindmap = await llm.complete_json(
+                    system=MINDMAP_GENERATOR_SYSTEM,
+                    blocks=blocks,
+                    schema=MindMap,
+                    max_tokens=config.structured_max_tokens,
+                    temperature=0.0,
+                )
             logger.info(
                 "wiki stage 1.5: mindmap done (modules=%d, flows=%d)",
                 len(mindmap.layered_modules),
@@ -419,13 +422,14 @@ async def plan_pages(
     last_err: Exception | None = None
     for attempt in range(2):
         try:
-            plan = await llm.complete_json(
-                system=PAGE_PLANNER_SYSTEM,
-                blocks=blocks,
-                schema=PagePlan,
-                max_tokens=config.structured_max_tokens,
-                temperature=0.0,
-            )
+            with llm_stage("wiki.plan"):
+                plan = await llm.complete_json(
+                    system=PAGE_PLANNER_SYSTEM,
+                    blocks=blocks,
+                    schema=PagePlan,
+                    max_tokens=config.structured_max_tokens,
+                    temperature=0.0,
+                )
             break
         except (StructuredCompletionError, ValidationError) as exc:
             last_err = exc
@@ -910,10 +914,14 @@ async def write_pages(
                 agent=telemetry,
             )
 
-    results = await asyncio.gather(
-        *[_agent_write_one(spec) for spec in pages_to_write],
-        return_exceptions=False,
-    )
+    # One stage label around the gather: page-writer tasks inherit the
+    # context they are created under, so every nested call — agent turns,
+    # citation/coverage repairs, retrieval embeds — books to wiki.write.
+    with llm_stage("wiki.write"):
+        results = await asyncio.gather(
+            *[_agent_write_one(spec) for spec in pages_to_write],
+            return_exceptions=False,
+        )
 
     drafts: list[PageDraft] = []
     failures: list[str] = []
@@ -2358,10 +2366,11 @@ async def synthesize_diagrams(
             return None
         return slug, body
 
-    results = await asyncio.gather(
-        *[_diagram_for(slug) for slug in diagram_specs],
-        return_exceptions=False,
-    )
+    with llm_stage("wiki.diagram"):
+        results = await asyncio.gather(
+            *[_diagram_for(slug) for slug in diagram_specs],
+            return_exceptions=False,
+        )
 
     diagrams_by_slug: dict[str, str] = dict(r for r in results if r is not None)
 

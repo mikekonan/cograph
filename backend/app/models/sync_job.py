@@ -4,7 +4,19 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Index, Integer, String, Text, Uuid
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    Uuid,
+)
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.app.db.base import Base, CreatedAtMixin
@@ -85,6 +97,19 @@ class SyncJob(CreatedAtMixin, Base):
 
     attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+
+    # LLM usage attributed to this step (null = step made no LLM calls or
+    # predates accounting). `cost_usd_micros` stays null for models without
+    # a price on file — "no price", not "free". `cost_breakdown` maps stage
+    # label → {calls, tokens_in, tokens_out, model, cost_usd_micros}.
+    tokens_input: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tokens_output: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cost_usd_micros: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    llm_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    cost_breakdown: Mapped[dict | None] = mapped_column(
+        JSONB().with_variant(JSON(), "sqlite"),
+        nullable=True,
+    )
 
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

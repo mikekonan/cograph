@@ -30,6 +30,8 @@ from typing import Any, Protocol, TypeVar, runtime_checkable
 
 from pydantic import BaseModel, ValidationError
 
+from backend.app.llm.usage import LlmUsageTally
+
 T = TypeVar("T", bound=BaseModel)
 
 _TOOL_RESULT_COMPACT_CHAR_CAP = 4_000
@@ -140,6 +142,12 @@ class StructuredCompletionProvider(Protocol):
     ) -> ToolUseResult: ...
 
 
+def _approx_tokens(text: str) -> int:
+    """Deterministic synthetic token count for the fake provider (~4 chars
+    per token, floored at 1 so any non-trivial turn registers usage)."""
+    return max(1, len(text) // 4)
+
+
 @dataclass(slots=True, frozen=True)
 class FakeAssistantTurn:
     """One turn the `FakeStructuredProvider` will play during a tool-use loop.
@@ -150,10 +158,17 @@ class FakeAssistantTurn:
     terminates with `stop_reason='end_turn'`; when it's non-empty, the
     loop dispatches each tool, records the result, and consumes the next
     queued turn.
+
+    `tokens_in`/`tokens_out` are the synthetic usage this turn reports;
+    `None` derives them from the prompt/output text lengths so cost
+    accounting tests see non-zero, deterministic numbers without every
+    queue site having to invent counts.
     """
 
     text: str = ""
     tool_uses: tuple[tuple[str, dict[str, Any]], ...] = ()
+    tokens_in: int | None = None
+    tokens_out: int | None = None
 
 
 class FakeStructuredProvider:
@@ -166,8 +181,14 @@ class FakeStructuredProvider:
     multi-turn loop.
     """
 
-    def __init__(self, *, model: str = "fake-structured-v1") -> None:
+    def __init__(
+        self,
+        *,
+        model: str = "fake-structured-v1",
+        usage_tally: LlmUsageTally | None = None,
+    ) -> None:
         self._model = model
+        self._tally = usage_tally
         self._responses: list[str] = []
         self._tool_turns: list[FakeAssistantTurn] = []
         self.calls: list[dict[str, Any]] = []
@@ -185,9 +206,16 @@ class FakeStructuredProvider:
         *,
         text: str = "",
         tool_uses: list[tuple[str, dict[str, Any]]] | None = None,
+        tokens_in: int | None = None,
+        tokens_out: int | None = None,
     ) -> None:
         self._tool_turns.append(
-            FakeAssistantTurn(text=text, tool_uses=tuple(tool_uses or ()))
+            FakeAssistantTurn(
+                text=text,
+                tool_uses=tuple(tool_uses or ()),
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+            )
         )
 
     async def complete_text(
@@ -208,7 +236,14 @@ class FakeStructuredProvider:
                 "temperature": temperature,
             }
         )
-        return self._responses.pop(0)
+        response = self._responses.pop(0)
+        if self._tally is not None:
+            self._tally.record(
+                model=self._model,
+                tokens_in=_approx_tokens(system + "".join(b.text for b in blocks)),
+                tokens_out=_approx_tokens(response),
+            )
+        return response
 
     async def complete_json(
         self,
@@ -256,7 +291,13 @@ class FakeStructuredProvider:
         tools_called: dict[str, int] = {}
         final_parts: list[str] = []
         turns = 0
+        tokens_in = 0
+        tokens_out = 0
         stop_reason = "end_turn"
+        # The full block prefix is re-sent on every turn, mirroring how
+        # the real provider's prompt grows; per-turn synthetic input
+        # defaults to that prefix size.
+        prompt_chars = system + "".join(b.text for b in blocks)
         # Snapshot the cache anchors so tests can assert byte-equality
         # (the real provider asserts this internally).
         anchor_system = system
@@ -268,10 +309,23 @@ class FakeStructuredProvider:
                 break
             turns += 1
             turn = self._tool_turns.pop(0)
-            if anchor_system != system or (blocks and anchor_first_block != blocks[0].text):
+            if anchor_system != system or (
+                blocks and anchor_first_block != blocks[0].text
+            ):
                 raise StructuredCompletionError(
                     "FakeStructuredProvider: cache anchor mutated mid-loop"
                 )
+            tokens_in += (
+                turn.tokens_in
+                if turn.tokens_in is not None
+                else _approx_tokens(prompt_chars)
+            )
+            tokens_out += (
+                turn.tokens_out
+                if turn.tokens_out is not None
+                else _approx_tokens(turn.text)
+                + sum(_approx_tokens(json.dumps(p)) for _, p in turn.tool_uses)
+            )
             if turn.text:
                 final_parts.append(turn.text)
             if not turn.tool_uses:
@@ -289,12 +343,19 @@ class FakeStructuredProvider:
         else:
             stop_reason = "budget_exhausted"
 
+        if self._tally is not None and turns:
+            self._tally.record(
+                model=self._model,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                calls=turns,
+            )
         return ToolUseResult(
             final_text="\n".join(p for p in final_parts if p),
             turns_used=turns,
             tools_called=tools_called,
-            tokens_in=0,
-            tokens_out=0,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
             cache_read_tokens=0,
             cache_creation_tokens=0,
             stop_reason=stop_reason,
@@ -354,6 +415,7 @@ class OpenAICompatibleStructuredProvider:
         wait_max: float = 30.0,
         request_timeout_seconds: float = 120.0,
         connect_timeout_seconds: float = 10.0,
+        usage_tally: LlmUsageTally | None = None,
     ) -> None:
         import httpx
         from openai import AsyncOpenAI
@@ -376,6 +438,7 @@ class OpenAICompatibleStructuredProvider:
         self._max_attempts = max_attempts
         self._wait_initial = wait_initial
         self._wait_max = wait_max
+        self._tally = usage_tally
 
     @property
     def model(self) -> str:
@@ -384,6 +447,18 @@ class OpenAICompatibleStructuredProvider:
     @staticmethod
     def _join_blocks(blocks: list[CacheBlock]) -> str:
         return "\n\n".join(block.text for block in blocks if block.text)
+
+    def _record_usage(self, resp: Any) -> None:
+        if self._tally is None:
+            return
+        usage = getattr(resp, "usage", None)
+        if usage is None:
+            return
+        self._tally.record(
+            model=self._model,
+            tokens_in=int(getattr(usage, "prompt_tokens", 0) or 0),
+            tokens_out=int(getattr(usage, "completion_tokens", 0) or 0),
+        )
 
     async def _create(
         self,
@@ -453,6 +528,7 @@ class OpenAICompatibleStructuredProvider:
             raise StructuredCompletionError(
                 "retry budget exhausted with no successful attempt"
             )
+        self._record_usage(resp)
         return resp.choices[0].message.content or ""
 
     async def complete_text(
@@ -576,9 +652,8 @@ class OpenAICompatibleStructuredProvider:
 
         while turns < max_turns:
             turns += 1
-            if (
-                anchor_system != system
-                or anchor_first_user != self._join_blocks(blocks)
+            if anchor_system != system or anchor_first_user != self._join_blocks(
+                blocks
             ):
                 raise StructuredCompletionError(
                     "complete_with_tools: cache anchor mutated mid-loop "
@@ -678,6 +753,7 @@ class OpenAICompatibleStructuredProvider:
                 details = getattr(usage, "prompt_tokens_details", None)
                 if details is not None:
                     cache_read += int(getattr(details, "cached_tokens", 0) or 0)
+            self._record_usage(resp)
 
             choice = resp.choices[0]
             message = choice.message
@@ -709,9 +785,7 @@ class OpenAICompatibleStructuredProvider:
                         raw = {"result": raw}
                     body_str = json.dumps(raw, default=str)
                 except Exception as exc:
-                    body_str = json.dumps(
-                        {"error": f"{type(exc).__name__}: {exc}"}
-                    )
+                    body_str = json.dumps({"error": f"{type(exc).__name__}: {exc}"})
                 messages.append(
                     {
                         "role": "tool",

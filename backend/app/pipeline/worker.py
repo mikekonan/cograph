@@ -16,6 +16,7 @@ from backend.app.llm.runtime_providers import (
     build_runtime_providers,
     resolve_runtime_provider_assignments,
 )
+from backend.app.llm.usage import LlmUsageTally
 from backend.app.llm.repo_document_embedder import RepoDocumentEmbedderService
 from backend.app.md_rag.worker import embed_md_collection, resolve_md_links
 from backend.app.repos.purge_worker import purge_repository
@@ -44,10 +45,15 @@ async def _build_processor(
     summary_generator = None
     wiki_generator = None
 
+    # One tally per job: every provider built below records its usage here
+    # and the processor stamps per-step rollups onto sync_jobs rows.
+    usage_tally = LlmUsageTally()
+
     async with session_manager.session() as session:
         providers = await build_runtime_providers(
             session=session,
             settings=settings,
+            usage_tally=usage_tally,
         )
         assignments = await resolve_runtime_provider_assignments(
             session=session,
@@ -85,6 +91,7 @@ async def _build_processor(
                 model=structured_model,
                 request_timeout_seconds=settings.completion.request_timeout_seconds,
                 connect_timeout_seconds=settings.completion.connect_timeout_seconds,
+                usage_tally=usage_tally,
             )
             wiki_retriever = WikiRetrievalService(
                 hybrid=build_hybrid_retriever(settings),
@@ -108,6 +115,7 @@ async def _build_processor(
         summary_generator=summary_generator,
         wiki_generator=wiki_generator,
         timeouts=settings.pipeline_timeouts,
+        usage_tally=usage_tally,
     )
 
 
@@ -118,6 +126,7 @@ def _build_structured_llm(
     model: str,
     request_timeout_seconds: float,
     connect_timeout_seconds: float,
+    usage_tally: LlmUsageTally | None = None,
 ) -> OpenAICompatibleStructuredProvider:
     """Build the structured-output provider from the runtime LLM assignment.
 
@@ -132,6 +141,7 @@ def _build_structured_llm(
         model=model,
         request_timeout_seconds=request_timeout_seconds,
         connect_timeout_seconds=connect_timeout_seconds,
+        usage_tally=usage_tally,
     )
 
 
