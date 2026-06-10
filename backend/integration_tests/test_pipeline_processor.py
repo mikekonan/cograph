@@ -32,6 +32,7 @@ async def test_live_postgres_repo_sync_processor_updates_durable_state(
     async with integration_session_manager.session() as session:
         repository = Repository(
             git_url="git@github.com:mikekonan/cograph.git",
+            host="example.com",
             name="cograph",
             owner="mikekonan",
             branch="main",
@@ -59,14 +60,17 @@ async def test_live_postgres_repo_sync_processor_updates_durable_state(
         persisted_documents = list(
             (
                 await session.scalars(
-                    select(RepoDocument).where(RepoDocument.repository_id == repository.id)
+                    select(RepoDocument).where(
+                        RepoDocument.repository_id == repository.id
+                    )
                 )
             ).all()
         )
         persisted_chunks = list(
             (
                 await session.scalars(
-                    select(RepoDocumentChunk).join(RepoDocument)
+                    select(RepoDocumentChunk)
+                    .join(RepoDocument)
                     .where(RepoDocument.repository_id == repository.id)
                 )
             ).all()

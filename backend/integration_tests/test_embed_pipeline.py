@@ -5,6 +5,7 @@ Verifies:
 - content_hash deduplication works on re-run
 - HNSW index is present (information_schema check)
 """
+
 from __future__ import annotations
 
 import pytest
@@ -39,6 +40,7 @@ async def test_embed_pipeline_writes_vector_rows(
     async with integration_session_manager.session() as session:
         repo = Repository(
             git_url="git@github.com:it/test.git",
+            host="example.com",
             name="test",
             owner="it",
             branch="main",
@@ -92,6 +94,7 @@ async def test_embed_pipeline_deduplicates_unchanged_nodes(
     async with integration_session_manager.session() as session:
         repo = Repository(
             git_url="git@github.com:it/dedup.git",
+            host="example.com",
             name="dedup",
             owner="it",
             branch="main",

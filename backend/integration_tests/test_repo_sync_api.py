@@ -15,7 +15,13 @@ from backend.app.models.enums import RepoSyncRunStatus, RepositoryStatus, UserRo
 from backend.app.models.repo_sync_run import RepoSyncRun
 from backend.app.models.repository import Repository
 from backend.app.models.user import User
-from backend.app.pipeline.worker import REPO_SYNC_QUEUE_NAME, build_redis_settings, run_repo_sync, worker_shutdown, worker_startup
+from backend.app.pipeline.worker import (
+    REPO_SYNC_QUEUE_NAME,
+    build_redis_settings,
+    run_repo_sync,
+    worker_shutdown,
+    worker_startup,
+)
 
 _ACTOR = Actor("Cograph Tests", "tests@example.com")
 
@@ -71,6 +77,7 @@ async def test_live_repo_reindex_api_enqueues_and_processes_sync_job(
         )
         repository = Repository(
             git_url=str(source_repo_path),
+            host="example.com",
             name="demo",
             owner="acme",
             branch="main",
@@ -90,8 +97,12 @@ async def test_live_repo_reindex_api_enqueues_and_processes_sync_job(
     integration_client.cookies.set(integration_settings.auth.access_cookie_name, token)
     integration_client.headers["X-CSRF-Token"] = "csrf-token"
 
-    first_response = await integration_client.post(f"/api/repos/{repository_id}/reindex")
-    second_response = await integration_client.post(f"/api/repos/{repository_id}/reindex")
+    first_response = await integration_client.post(
+        f"/api/repos/{repository_id}/reindex"
+    )
+    second_response = await integration_client.post(
+        f"/api/repos/{repository_id}/reindex"
+    )
 
     assert first_response.status_code == 202
     assert second_response.status_code == 202
@@ -102,7 +113,9 @@ async def test_live_repo_reindex_api_enqueues_and_processes_sync_job(
         sync_runs = list(
             (
                 await session.scalars(
-                    select(RepoSyncRun).where(RepoSyncRun.repository_id == repository_id)
+                    select(RepoSyncRun).where(
+                        RepoSyncRun.repository_id == repository_id
+                    )
                 )
             ).all()
         )
@@ -146,7 +159,9 @@ async def test_live_repo_reindex_api_enqueues_and_processes_sync_job(
         repo_documents = list(
             (
                 await session.scalars(
-                    select(RepoDocument).where(RepoDocument.repository_id == repository_id)
+                    select(RepoDocument).where(
+                        RepoDocument.repository_id == repository_id
+                    )
                 )
             ).all()
         )
@@ -163,11 +178,15 @@ async def test_live_repo_reindex_api_enqueues_and_processes_sync_job(
         assert len(code_nodes) == 2
         assert len(repo_documents) == 1
 
-    documents_response = await integration_client.get(f"/api/repos/{repository_id}/documents")
+    documents_response = await integration_client.get(
+        f"/api/repos/{repository_id}/documents"
+    )
     assert documents_response.status_code == 200
     document_id = documents_response.json()["items"][0]["id"]
 
-    detail_response = await integration_client.get(f"/api/repos/{repository_id}/documents/{document_id}")
+    detail_response = await integration_client.get(
+        f"/api/repos/{repository_id}/documents/{document_id}"
+    )
     assert detail_response.status_code == 200
     assert detail_response.json()["file_path"] == "README.md"
     assert detail_response.json()["chunks"][0]["mentions"][0]["name"] == "helper"

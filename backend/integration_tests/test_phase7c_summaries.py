@@ -9,6 +9,7 @@ Tests:
 Run:
     COGRAPH_RUN_INTEGRATION=1 uv run pytest backend/integration_tests/test_phase7c_summaries.py -q
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -22,7 +23,13 @@ from backend.app.llm.summary_generator import SummaryGenerator
 from backend.app.models.code_node import CodeNode
 from backend.app.models.code_node_summary import CodeNodeSummary
 from backend.app.models.code_subgraph_summary import CodeSubgraphSummary
-from backend.app.models.enums import CodeNodeType, RepositoryStatus, SyncErrorCode, SyncSchedule, SyncStep
+from backend.app.models.enums import (
+    CodeNodeType,
+    RepositoryStatus,
+    SyncErrorCode,
+    SyncSchedule,
+    SyncStep,
+)
 from backend.app.models.repository import Repository
 from backend.app.pipeline.steps import REPO_SYNC_STEPS as _REPO_SYNC_STEPS
 from backend.app.pipeline.processor import _sync_error_code
@@ -88,6 +95,7 @@ async def _create_chain_repo(session) -> tuple:
     """
     repo = Repository(
         git_url="git@github.com:test/phase7c-chain.git",
+        host="example.com",
         name="phase7c-chain",
         owner="test",
         branch="main",
@@ -164,7 +172,9 @@ async def test_summary_generator_populates_rows(integration_session_manager):
     )
     assert result.skipped_nodes == 0, "first run must skip nothing"
     assert result.generated_subgraphs <= top_subgraph_count
-    assert result.generated_subgraphs > 0, "at least one subgraph summary must be generated"
+    assert result.generated_subgraphs > 0, (
+        "at least one subgraph summary must be generated"
+    )
     assert result.model == FakeCompletionProvider().model
 
     async with integration_session_manager.session() as session:
@@ -173,8 +183,9 @@ async def test_summary_generator_populates_rows(integration_session_manager):
 
         # All node summaries must have importance > 0.
         min_importance = await session.scalar(
-            select(func.min(CodeNodeSummary.importance))
-            .where(CodeNodeSummary.repository_id == repo_id)
+            select(func.min(CodeNodeSummary.importance)).where(
+                CodeNodeSummary.repository_id == repo_id
+            )
         )
 
     assert node_count == expected_node_rows
@@ -213,7 +224,9 @@ async def test_summary_generator_incremental_second_run(integration_session_mana
     assert second.skipped_subgraphs == first.generated_subgraphs
 
 
-async def test_summary_generator_regenerates_on_content_change(integration_session_manager):
+async def test_summary_generator_regenerates_on_content_change(
+    integration_session_manager,
+):
     """Changing one node's content causes exactly that node's summary to be regenerated."""
     async with integration_session_manager.session() as session:
         repo_id, nodes = await _create_chain_repo(session)

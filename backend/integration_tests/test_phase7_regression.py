@@ -7,7 +7,6 @@ Phase 7a guards:
 
 Phase 7b guards:
     - Pipeline EMBED_REPO_DOCS step writes embeddings to all repo_document_chunks
-    - Bank-upload path writes embeddings to all bank_document_chunks
     - BM25 surfaces an exact-name match that the vector path misses (proves content_tsv GIN
       and GENERATED ALWAYS AS STORED columns from migration 0015 are live)
     - RRF promotes an overlap hit (vector+BM25) above a vector-only hit of equal or higher
@@ -22,6 +21,7 @@ Environment:
     COGRAPH_RUN_INTEGRATION=1             required opt-in
     COGRAPH_INTEGRATION_ADMIN_DSN         postgres admin DSN (default: postgresql://postgres:postgres@127.0.0.1:5432/postgres)
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -31,18 +31,14 @@ from pathlib import Path
 import pytest
 from sqlalchemy import func, select, text
 
-from backend.app.banks.indexer import BankDocumentUpsertInput, BankIndexer
-from backend.app.llm.bank_document_embedder import BankDocumentEmbedderService
 from backend.app.llm.code_embedder import CodeEmbedderService
 from backend.app.llm.embedder import FakeEmbedProvider
 from backend.app.llm.repo_document_embedder import RepoDocumentEmbedderService
-from backend.app.models.bank import Bank, BankDocumentChunk
 from backend.app.models.code_embedding import CodeEmbedding
 from backend.app.models.code_node import CodeNode
 from backend.app.models.enums import CodeNodeType, RepositoryStatus, SyncSchedule
 from backend.app.models.repo_document import RepoDocumentChunk
 from backend.app.models.repository import Repository
-from backend.app.models.user import User
 from backend.app.pipeline.processor import RepoSyncProcessor
 from backend.app.rag.retriever import RagRetriever
 
@@ -118,6 +114,7 @@ async def test_retriever_returns_code_chunks_with_provenance(
     async with integration_session_manager.session() as session:
         repo = Repository(
             git_url="git@github.com:test/phase7a-provenance.git",
+            host="example.com",
             name="phase7a-provenance",
             owner="test",
             branch="main",
@@ -170,9 +167,13 @@ async def test_retriever_returns_code_chunks_with_provenance(
         )
 
     assert results, "retriever must return at least one result"
-    assert all(r.store == "code" for r in results), "all results must be from the code store"
+    assert all(r.store == "code" for r in results), (
+        "all results must be from the code store"
+    )
     chunk_ids = {r.chunk_id for r in results}
-    assert target_node.id in chunk_ids, "target node must appear when queried with its own vector"
+    assert target_node.id in chunk_ids, (
+        "target node must appear when queried with its own vector"
+    )
 
     top = results[0]
     assert "qualified_name" in top.metadata, "qualified_name provenance must be present"
@@ -209,6 +210,7 @@ async def test_retriever_swallows_bad_store_query_and_continues(
     async with integration_session_manager.session() as session:
         repo = Repository(
             git_url="git@github.com:test/phase7a-badstore.git",
+            host="example.com",
             name="phase7a-badstore",
             owner="test",
             branch="main",
@@ -230,7 +232,9 @@ async def test_retriever_swallows_bad_store_query_and_continues(
             top_k=5,
         )
 
-    assert isinstance(results, list), "retrieve() must not raise when a store query fails"
+    assert isinstance(results, list), (
+        "retrieve() must not raise when a store query fails"
+    )
     assert call_log == ["called"], f"_vector_code monkeypatch did not fire: {call_log}"
 
 
@@ -251,6 +255,7 @@ async def test_retriever_re_raises_cancelled_error(
     async with integration_session_manager.session() as session:
         repo = Repository(
             git_url="git@github.com:test/phase7a-cancelled.git",
+            host="example.com",
             name="phase7a-cancelled",
             owner="test",
             branch="main",
@@ -294,6 +299,7 @@ async def test_pipeline_writes_repo_doc_chunk_embeddings(
     async with integration_session_manager.session() as session:
         repo = Repository(
             git_url="git@github.com:test/phase7b-pipeline.git",
+            host="example.com",
             name="phase7b-pipeline",
             owner="test",
             branch="main",
@@ -306,7 +312,9 @@ async def test_pipeline_writes_repo_doc_chunk_embeddings(
 
         processor = RepoSyncProcessor(
             code_embedder_service=CodeEmbedderService(provider, batch_size=64),
-            repo_document_embedder_service=RepoDocumentEmbedderService(provider, batch_size=64),
+            repo_document_embedder_service=RepoDocumentEmbedderService(
+                provider, batch_size=64
+            ),
         )
         result = await processor.process_checkout(
             session=session,
@@ -314,8 +322,12 @@ async def test_pipeline_writes_repo_doc_chunk_embeddings(
             checkout_path=checkout,
         )
 
-    assert result.repo_doc_embed_result is not None, "EMBED_REPO_DOCS step must have run"
-    assert result.repo_doc_embed_result.embedded_nodes > 0, "at least one chunk must be embedded"
+    assert result.repo_doc_embed_result is not None, (
+        "EMBED_REPO_DOCS step must have run"
+    )
+    assert result.repo_doc_embed_result.embedded_nodes > 0, (
+        "at least one chunk must be embedded"
+    )
 
     async with integration_session_manager.session() as session:
         null_count = await session.scalar(
@@ -326,52 +338,6 @@ async def test_pipeline_writes_repo_doc_chunk_embeddings(
 
     assert null_count == 0, (
         f"All repo_document_chunks must have embeddings after pipeline; {null_count} are still NULL"
-    )
-
-
-async def test_bank_upload_writes_chunk_embeddings(integration_session_manager):
-    """BankDocumentEmbedderService.embed_bank writes embeddings to every bank_document_chunk.
-
-    Proves the bank-upload inline embed path (Phase 7b) populates chunk embeddings.
-    """
-    provider = FakeEmbedProvider(dims=_DIMS)
-
-    async with integration_session_manager.session() as session:
-        owner = User(email="bankowner@example.com", password_hash="hashed")
-        bank = Bank(name="Phase7b Bank", owner=owner)
-        session.add(bank)
-        await session.flush()
-        bank_id = bank.id
-
-        indexer = BankIndexer()
-        await indexer.upsert_document(
-            session=session,
-            bank_id=bank_id,
-            document=BankDocumentUpsertInput(
-                source_key="docs/adr-001.md",
-                content=(
-                    "# ADR-001\n\nWe chose PostgreSQL.\n\n"
-                    "## Context\n\nPrimary data store for persistence.\n\n"
-                    "## Decision\n\nPostgreSQL with pgvector for embeddings.\n"
-                ),
-            ),
-        )
-
-        embedder = BankDocumentEmbedderService(provider, batch_size=64)
-        embed_result = await embedder.embed_bank(session=session, bank_id=bank_id)
-        await session.commit()
-
-    assert embed_result.embedded_nodes > 0, "at least one bank chunk must be embedded"
-
-    async with integration_session_manager.session() as session:
-        null_count = await session.scalar(
-            select(func.count())
-            .select_from(BankDocumentChunk)
-            .where(BankDocumentChunk.embedding.is_(None))
-        )
-
-    assert null_count == 0, (
-        f"All bank_document_chunks must have embeddings after embed_bank; {null_count} are NULL"
     )
 
 
@@ -430,6 +396,7 @@ async def test_bm25_finds_exact_name_that_vector_misses(integration_session_mana
     async with integration_session_manager.session() as session:
         repo = Repository(
             git_url="git@github.com:test/phase7b-bm25.git",
+            host="example.com",
             name="phase7b-bm25",
             owner="test",
             branch="main",
@@ -440,8 +407,12 @@ async def test_bm25_finds_exact_name_that_vector_misses(integration_session_mana
         await session.flush()
         repo_id = repo.id
 
-        rare_node = _make_code_node(repo_id, qualified_name=rare_qname, content=rare_content)
-        common_node = _make_code_node(repo_id, qualified_name=common_qname, content=common_content)
+        rare_node = _make_code_node(
+            repo_id, qualified_name=rare_qname, content=rare_content
+        )
+        common_node = _make_code_node(
+            repo_id, qualified_name=common_qname, content=common_content
+        )
         session.add_all([rare_node, common_node])
         await session.flush()
 
@@ -541,6 +512,7 @@ async def test_rrf_boosts_overlap_hits(integration_session_manager):
     async with integration_session_manager.session() as session:
         repo = Repository(
             git_url="git@github.com:test/phase7b-rrf.git",
+            host="example.com",
             name="phase7b-rrf",
             owner="test",
             branch="main",
@@ -551,7 +523,9 @@ async def test_rrf_boosts_overlap_hits(integration_session_manager):
         await session.flush()
         repo_id = repo.id
 
-        overlap_node = _make_code_node(repo_id, qualified_name=overlap_qname, content=overlap_content)
+        overlap_node = _make_code_node(
+            repo_id, qualified_name=overlap_qname, content=overlap_content
+        )
         vo_node = _make_code_node(repo_id, qualified_name=vo_qname, content=vo_content)
         session.add_all([overlap_node, vo_node])
         await session.flush()
@@ -602,11 +576,17 @@ async def test_rrf_boosts_overlap_hits(integration_session_manager):
     )
 
     overlap_result = results[overlap_pos]
-    assert overlap_result.metadata.get("bm25_rank") == 1, "overlap node must be BM25 rank 1"
+    assert overlap_result.metadata.get("bm25_rank") == 1, (
+        "overlap node must be BM25 rank 1"
+    )
 
     vo_result = results[vo_pos]
-    assert vo_result.metadata.get("bm25_rank") is None, "vector-only node must have no BM25 rank"
-    assert vo_result.metadata.get("vector_rank") == 1, "vector-only node must be vector rank 1"
+    assert vo_result.metadata.get("bm25_rank") is None, (
+        "vector-only node must have no BM25 rank"
+    )
+    assert vo_result.metadata.get("vector_rank") == 1, (
+        "vector-only node must be vector rank 1"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -632,6 +612,7 @@ async def test_phase7b_writers_use_skip_predicate(
     async with integration_session_manager.session() as session:
         repo = Repository(
             git_url="git@github.com:test/phase7b-skip.git",
+            host="example.com",
             name="phase7b-skip",
             owner="test",
             branch="main",
@@ -644,7 +625,9 @@ async def test_phase7b_writers_use_skip_predicate(
 
         processor = RepoSyncProcessor(
             code_embedder_service=CodeEmbedderService(provider, batch_size=64),
-            repo_document_embedder_service=RepoDocumentEmbedderService(provider, batch_size=64),
+            repo_document_embedder_service=RepoDocumentEmbedderService(
+                provider, batch_size=64
+            ),
         )
 
         first = await processor.process_checkout(

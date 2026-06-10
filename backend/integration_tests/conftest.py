@@ -16,7 +16,16 @@ from alembic.config import Config
 from arq import create_pool
 from sqlalchemy import text
 
-from backend.app.config import AuthSettings, CorsSettings, DatabaseSettings, EmbeddingSettings, Environment, GitSettings, RedisSettings, Settings
+from backend.app.config import (
+    AuthSettings,
+    CorsSettings,
+    DatabaseSettings,
+    EmbeddingSettings,
+    Environment,
+    GitSettings,
+    RedisSettings,
+    Settings,
+)
 from backend.app.db.session import SessionManager
 from backend.app.main import create_app
 from backend.app.pipeline.worker import build_redis_settings
@@ -27,8 +36,10 @@ from unittest.mock import patch
 def _patch_openai_embed_provider():
     async def _fake_embed(self, texts: list[str]) -> list[list[float]]:
         return [[0.1] * self.dimensions for _ in texts]
+
     with patch("backend.app.llm.embedder.OpenAIEmbedProvider.embed", new=_fake_embed):
         yield
+
 
 _RUN_INTEGRATION = os.environ.get("COGRAPH_RUN_INTEGRATION") == "1"
 _POSTGRES_ADMIN_DSN = os.environ.get(
@@ -46,7 +57,9 @@ def _require_integration_opt_in() -> None:
 
 def _to_sqlalchemy_url(raw_dsn: str, database_name: str) -> str:
     base_dsn = raw_dsn.rsplit("/", 1)[0]
-    return f"{base_dsn}/{database_name}".replace("postgresql://", "postgresql+asyncpg://", 1)
+    return f"{base_dsn}/{database_name}".replace(
+        "postgresql://", "postgresql+asyncpg://", 1
+    )
 
 
 def _build_alembic_config(database_url: str) -> Config:
@@ -108,7 +121,9 @@ def integration_settings(
     return Settings(
         environment=Environment.TESTING,
         database=DatabaseSettings(url=integration_database_url, echo=False),
-        redis=RedisSettings(url=os.environ.get("COGRAPH_REDIS_URL", "redis://127.0.0.1:6379/15")),
+        redis=RedisSettings(
+            url=os.environ.get("COGRAPH_REDIS_URL", "redis://127.0.0.1:6379/15")
+        ),
         git=GitSettings(checkouts_root=integration_checkout_root),
         auth=AuthSettings(
             jwt_secret="integration-secret",
@@ -135,7 +150,6 @@ async def integration_session_manager(
             await connection.execute(
                 text(
                     "TRUNCATE TABLE code_node_summaries, code_subgraph_summaries, "
-                    "bank_document_chunks, bank_documents, banks, "
                     "documents, repo_document_chunks, repo_documents, code_nodes, "
                     "md_chunks, md_documents, md_collections, md_links, md_jobs, "
                     "repo_sync_runs, repositories, users RESTART IDENTITY CASCADE"
