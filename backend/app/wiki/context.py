@@ -101,6 +101,62 @@ def _first_heading(content: str) -> str | None:
     return None
 
 
+def compute_structural_hash(context: RepoContext) -> str:
+    """Commit-free hash of the repo's *shape* — the wiki-plan reuse key.
+
+    Deliberately excludes everything that churns on ordinary commits:
+    `commit_sha`, summaries (regenerate whenever code changes),
+    `FileTreeEntry.bytes` / `.importance` (per-file code-node counts), and
+    all line numbers / snippets inside manifests. What's left changes only
+    when the repo's structure or public surface changes — files appear,
+    move, or disappear; docs are added; an exported type gains a field —
+    which is exactly when the page *plan* deserves a re-think.
+    """
+    manifests = context.manifests
+    manifests_projection = {
+        "runtimes": sorted((r.name, r.version or "") for r in manifests.runtimes),
+        "run_commands": sorted(
+            (c.label, c.kind) for c in manifests.run_commands
+        ),
+        "config_keys": sorted((k.key, k.kind) for k in manifests.config_keys),
+        "dependencies": sorted(
+            (d.name, d.version or "", d.ecosystem) for d in manifests.dependencies
+        ),
+        "public_api": sorted(
+            (e.qualified_name, e.kind, e.file_path) for e in manifests.public_api
+        ),
+        "exported_types": sorted(
+            (
+                t.qualified_name,
+                t.kind,
+                t.file_path,
+                tuple(sorted((f.name, f.type_signature or "") for f in t.fields)),
+                tuple(sorted(t.methods)),
+            )
+            for t in manifests.exported_types
+        ),
+        "error_types": sorted(
+            (e.qualified_name, e.file_path, e.language)
+            for e in manifests.error_types
+        ),
+        "use_cases": sorted(u.label for u in manifests.use_cases),
+    }
+    payload = {
+        "files": sorted(
+            (entry.file_path, entry.language) for entry in context.file_tree
+        ),
+        "docs": sorted(
+            (d.file_path, d.title or "", d.first_heading or "")
+            for d in context.repo_doc_index
+        ),
+        "manifests": manifests_projection,
+        "readme_sha": hashlib.sha256(
+            (context.readme_text or "").encode("utf-8")
+        ).hexdigest(),
+    }
+    return _hash_payload(payload)
+
+
 async def build_repo_context(
     *,
     session: AsyncSession,

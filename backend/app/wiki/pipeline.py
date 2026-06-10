@@ -60,7 +60,17 @@ from backend.app.wiki.citations import (
     auto_link_qualified_names,
 )
 from backend.app.wiki.clustering import NodeCluster, cluster_nodes
-from backend.app.wiki.context import RepoContext, build_repo_context
+from backend.app.wiki.context import (
+    RepoContext,
+    build_repo_context,
+    compute_structural_hash,
+)
+from backend.app.wiki.incremental import (
+    bundle_fingerprint,
+    save_artifact,
+    spec_hash,
+)
+from backend.app.wiki.version import WIKI_SCHEMA_VERSION
 from backend.app.wiki.repo_signals import build_repo_signals
 from backend.app.wiki.tier_quotas import quotas_for
 from backend.app.wiki.llm_client import (
@@ -2961,6 +2971,15 @@ async def run_wiki_generation(
             len(resolved),
         )
         plan_hash = _plan_hash(stages_1_4.plan)
+        embed_model = retriever.embedder.model
+        spec_hashes_by_slug = {
+            page_spec.slug: spec_hash(page_spec)
+            for page_spec in stages_1_4.plan.pages
+        }
+        fingerprints_by_slug = {
+            slug: bundle_fingerprint(embed_model=embed_model, bundle=bundle)
+            for slug, bundle in stages_1_4.bundles_by_slug.items()
+        }
         (
             persisted_ids,
             skipped_slugs,
@@ -2973,6 +2992,9 @@ async def run_wiki_generation(
             plan_hash=plan_hash,
             model=llm.model,
             pages=resolved,
+            wiki_schema_version=WIKI_SCHEMA_VERSION,
+            spec_hashes_by_slug=spec_hashes_by_slug,
+            fingerprints_by_slug=fingerprints_by_slug,
         )
         # Stage-4 failures must not orphan-delete the previously good row;
         # include them in `keep_slugs` alongside the resolved set.
@@ -2983,6 +3005,19 @@ async def run_wiki_generation(
             session=session,
             repository_id=repository_id,
             keep_slugs=keep_slugs,
+        )
+        await save_artifact(
+            session,
+            repository_id=repository_id,
+            sync_run_id=sync_run_id,
+            source_commit=source_commit,
+            structural_hash=compute_structural_hash(stages_1_4.context),
+            plan_hash=plan_hash,
+            chat_model=llm.model,
+            embed_model=embed_model,
+            overview=stages_1_4.overview,
+            mindmap=stages_1_4.context.mindmap or MindMap(),
+            plan=stages_1_4.plan,
         )
         await session.commit()
         logger.info(

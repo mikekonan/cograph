@@ -68,3 +68,11 @@ class Document(TimestampMixin, Base):
         JSONB().with_variant(JSON(), "sqlite"),
         nullable=True,
     )
+    # Incremental-wiki stamps (mig 0058). NULL on legacy rows and on rows
+    # kept by the quality-keep path — the dirty predicate treats NULL as
+    # "must regenerate".
+    spec_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    retrieval_fingerprint: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+    wiki_schema_version: Mapped[int | None] = mapped_column(Integer, nullable=True)

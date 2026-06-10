@@ -69,6 +69,7 @@ from backend.app.models.sync_batch import SyncBatch
 from backend.app.models.sync_job import SyncJob
 from backend.app.models.user import User
 from backend.app.models.user_identity import UserIdentity
+from backend.app.models.wiki_artifact import WikiArtifact
 
 __all__ = [
     "AuditEvent",
@@ -135,4 +136,5 @@ __all__ = [
     "User",
     "UserIdentity",
     "UserRole",
+    "WikiArtifact",
 ]
