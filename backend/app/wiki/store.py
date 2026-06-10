@@ -78,8 +78,18 @@ class WikiDocumentStore:
         plan_hash: str,
         model: str,
         pages: list[ResolvedPage],
+        wiki_schema_version: int | None = None,
+        spec_hashes_by_slug: dict[str, str] | None = None,
+        fingerprints_by_slug: dict[str, str] | None = None,
     ) -> tuple[list[UUID], list[str], list[str]]:
         """Upsert pages keyed on `(repository_id, slug)`.
+
+        The three incremental-reuse stamps (`spec_hash`,
+        `retrieval_fingerprint`, `wiki_schema_version`) are written on the
+        full-write and content-hash-skip paths but NOT on the quality-keep
+        path: a kept row still holds the *old* content and citations, so its
+        old fingerprint must keep marking it dirty until a better rewrite
+        lands.
 
         Returns:
             `(persisted_document_ids, skipped_slugs, kept_for_quality_slugs)` —
@@ -90,6 +100,8 @@ class WikiDocumentStore:
         """
         if not pages:
             return [], [], []
+        spec_hashes = spec_hashes_by_slug or {}
+        fingerprints = fingerprints_by_slug or {}
 
         slugs = [page.slug for page in pages]
         existing_stmt = select(Document).where(
@@ -148,6 +160,9 @@ class WikiDocumentStore:
                 existing.source_hash = source_hash
                 existing.sort_order = page.sort_order
                 existing.parent_slug = page.parent_slug
+                existing.spec_hash = spec_hashes.get(page.slug)
+                existing.retrieval_fingerprint = fingerprints.get(page.slug)
+                existing.wiki_schema_version = wiki_schema_version
                 persisted_ids.append(existing.id)
                 continue
 
@@ -171,6 +186,9 @@ class WikiDocumentStore:
                     source_repo_doc_chunk_ids=source_repo_doc_chunk_ids,
                     citations=citations_payload,
                     quality=quality_payload,
+                    spec_hash=spec_hashes.get(page.slug),
+                    retrieval_fingerprint=fingerprints.get(page.slug),
+                    wiki_schema_version=wiki_schema_version,
                 )
                 session.add(row)
                 await session.flush()
@@ -189,6 +207,9 @@ class WikiDocumentStore:
                 existing.source_repo_doc_chunk_ids = source_repo_doc_chunk_ids
                 existing.citations = citations_payload
                 existing.quality = quality_payload
+                existing.spec_hash = spec_hashes.get(page.slug)
+                existing.retrieval_fingerprint = fingerprints.get(page.slug)
+                existing.wiki_schema_version = wiki_schema_version
                 await session.flush()
                 persisted_ids.append(existing.id)
 
