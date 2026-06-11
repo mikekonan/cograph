@@ -8,12 +8,12 @@ import AdminQueryLogsPage from "@/pages/AdminQueryLogsPage";
 import AdminScimClientsPage from "@/pages/AdminScimClientsPage";
 import AdminUsersPage from "@/pages/AdminUsersPage";
 import {
+  BarChart3,
   BookOpen,
   Bot,
   Globe,
   type LucideIcon,
   Plug,
-  Search,
   Settings2,
   ShieldCheck,
   Users,
@@ -51,7 +51,7 @@ const TABS: TabSpec[] = [
   },
   { id: "scim", label: "SCIM", icon: Plug, Component: AdminScimClientsPage },
   { id: "git-hosts", label: "Git hosts", icon: Globe, Component: AdminGitHostsPage },
-  { id: "query-logs", label: "Query logs", icon: Search, Component: AdminQueryLogsPage },
+  { id: "query-logs", label: "Usage", icon: BarChart3, Component: AdminQueryLogsPage },
   { id: "mcp", label: "MCP", icon: BookOpen, Component: AdminMcpPage },
 ];
 

@@ -60,12 +60,16 @@ async def _seed_row(
     created_at: datetime | None = None,
     user_email: str | None = "alice@example.com",
     repository_id=None,
+    source: QueryLogSource = QueryLogSource.REST,
+    tokens_input: int | None = None,
+    tokens_output: int | None = None,
+    cost_usd_micros: int | None = None,
 ) -> QueryLog:
     row = QueryLog(
         id=uuid4(),
         user_id=user_id,
         user_email_snapshot=user_email,
-        source=QueryLogSource.REST.value,
+        source=source.value,
         tool_name=tool_name,
         repository_id=repository_id,
         query_text=query_text,
@@ -75,6 +79,9 @@ async def _seed_row(
         duration_ms=duration_ms,
         status=status.value,
         created_at=created_at or datetime.now(UTC),
+        tokens_input=tokens_input,
+        tokens_output=tokens_output,
+        cost_usd_micros=cost_usd_micros,
     )
     db_session.add(row)
     await db_session.commit()
@@ -205,6 +212,192 @@ async def test_admin_query_logs_stats_basic(client, db_session, settings):
     top_q = {row["query_text"]: row["count"] for row in body["top_queries"]}
     assert top_q.get("popular") == 2
     assert top_q.get("rare") == 1
+
+
+async def test_admin_user_stats_requires_admin(client, db_session, settings):
+    user = await _make_user(db_session, email="plain@example.com")
+    await _authenticate(client, settings, user)
+    response = await client.get("/api/admin/query-logs/stats/users")
+    assert response.status_code == 403
+
+
+async def test_admin_user_stats_includes_silent_users(client, db_session, settings):
+    # The whole point of the per-user view: bob ran nothing and must
+    # still appear with a zero row — "who is NOT using cograph" is what
+    # the operator opens the page for.
+    admin = await _make_user(db_session, email="root@example.com", role=UserRole.ADMIN)
+    alice = await _make_user(db_session, email="alice@example.com")
+    await _make_user(db_session, email="bob@example.com")
+
+    await _seed_row(
+        db_session,
+        user_id=alice.id,
+        user_email="alice@example.com",
+        source=QueryLogSource.MCP,
+        tokens_input=100,
+        tokens_output=20,
+        cost_usd_micros=150,
+    )
+    await _seed_row(
+        db_session,
+        user_id=alice.id,
+        user_email="alice@example.com",
+        source=QueryLogSource.REST,
+        result_count=0,
+        status=QueryLogStatus.EMPTY,
+        tokens_input=50,
+        tokens_output=10,
+        cost_usd_micros=50,
+    )
+
+    await _authenticate(client, settings, admin)
+    response = await client.get("/api/admin/query-logs/stats/users")
+    assert response.status_code == 200
+    body = response.json()
+    # admin + alice + bob are current users; nobody is deleted.
+    assert body["total_users"] == 3
+    assert body["active_users"] == 1
+
+    by_email = {item["user_email"]: item for item in body["items"]}
+    assert set(by_email) == {
+        "root@example.com",
+        "alice@example.com",
+        "bob@example.com",
+    }
+
+    alice_row = by_email["alice@example.com"]
+    assert alice_row["query_count"] == 2
+    assert alice_row["mcp_count"] == 1
+    assert alice_row["rest_count"] == 1
+    assert alice_row["zero_result_count"] == 1
+    assert alice_row["tokens_input"] == 150
+    assert alice_row["tokens_output"] == 30
+    assert alice_row["cost_usd_micros"] == 200
+    assert alice_row["last_query_at"] is not None
+    assert alice_row["is_deleted"] is False
+
+    bob_row = by_email["bob@example.com"]
+    assert bob_row["query_count"] == 0
+    assert bob_row["last_query_at"] is None
+    assert bob_row["cost_usd_micros"] == 0
+
+    # Most-active first, silent users after.
+    assert body["items"][0]["user_email"] == "alice@example.com"
+
+
+async def test_admin_user_stats_groups_deleted_users_by_snapshot(
+    client, db_session, settings
+):
+    admin = await _make_user(db_session, email="root@example.com", role=UserRole.ADMIN)
+    # Rows whose user was deleted: user_id is NULL, snapshot remains.
+    await _seed_row(db_session, user_id=None, user_email="ghost@example.com")
+    await _seed_row(db_session, user_id=None, user_email="ghost@example.com")
+
+    await _authenticate(client, settings, admin)
+    response = await client.get("/api/admin/query-logs/stats/users")
+    body = response.json()
+
+    ghost = next(i for i in body["items"] if i["user_email"] == "ghost@example.com")
+    assert ghost["is_deleted"] is True
+    assert ghost["user_id"] is None
+    assert ghost["query_count"] == 2
+    # Deleted users don't inflate the current-user denominator.
+    assert body["total_users"] == 1
+
+
+async def test_admin_user_stats_respects_since(client, db_session, settings):
+    admin = await _make_user(db_session, email="root@example.com", role=UserRole.ADMIN)
+    alice = await _make_user(db_session, email="alice@example.com")
+    now = datetime.now(UTC)
+    await _seed_row(
+        db_session, user_id=alice.id, created_at=now - timedelta(days=10)
+    )
+    await _seed_row(
+        db_session, user_id=alice.id, created_at=now - timedelta(minutes=5)
+    )
+
+    await _authenticate(client, settings, admin)
+    since = (now - timedelta(days=1)).isoformat()
+    response = await client.get(
+        "/api/admin/query-logs/stats/users", params={"since": since}
+    )
+    body = response.json()
+    alice_row = next(
+        i for i in body["items"] if i["user_email"] == "alice@example.com"
+    )
+    assert alice_row["query_count"] == 1
+
+
+async def test_admin_timeseries_requires_admin(client, db_session, settings):
+    user = await _make_user(db_session, email="plain@example.com")
+    await _authenticate(client, settings, user)
+    response = await client.get("/api/admin/query-logs/stats/timeseries")
+    assert response.status_code == 403
+
+
+async def test_admin_timeseries_buckets_and_zero_fill(client, db_session, settings):
+    admin = await _make_user(db_session, email="root@example.com", role=UserRole.ADMIN)
+    alice = await _make_user(db_session, email="alice@example.com")
+    now = datetime.now(UTC)
+
+    # Two queries two days ago, one (mcp, error) today, nothing yesterday.
+    await _seed_row(
+        db_session,
+        user_id=alice.id,
+        created_at=now - timedelta(days=2),
+        tokens_input=100,
+        tokens_output=10,
+        cost_usd_micros=300,
+    )
+    await _seed_row(
+        db_session, user_id=alice.id, created_at=now - timedelta(days=2)
+    )
+    await _seed_row(
+        db_session,
+        user_id=alice.id,
+        created_at=now,
+        source=QueryLogSource.MCP,
+        status=QueryLogStatus.ERROR,
+        result_count=None,
+    )
+
+    await _authenticate(client, settings, admin)
+    response = await client.get(
+        "/api/admin/query-logs/stats/timeseries",
+        params={"since": (now - timedelta(days=3)).isoformat(), "bucket": "day"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["bucket"] == "day"
+    # 3-day window → 3 or 4 day buckets depending on UTC-midnight
+    # alignment; every bucket present, gaps zero-filled.
+    assert 3 <= len(body["items"]) <= 4
+    counts = [item["query_count"] for item in body["items"]]
+    assert sum(counts) == 3
+    assert 0 in counts  # the silent day is present, not skipped
+
+    day_two = next(item for item in body["items"] if item["query_count"] == 2)
+    assert day_two["rest_count"] == 2
+    assert day_two["tokens_input"] == 100
+    assert day_two["cost_usd_micros"] == 300
+
+    day_now = next(item for item in body["items"] if item["query_count"] == 1)
+    assert day_now["mcp_count"] == 1
+    assert day_now["error_count"] == 1
+
+
+async def test_admin_timeseries_rejects_oversized_range(client, db_session, settings):
+    admin = await _make_user(db_session, email="root@example.com", role=UserRole.ADMIN)
+    await _authenticate(client, settings, admin)
+    now = datetime.now(UTC)
+    response = await client.get(
+        "/api/admin/query-logs/stats/timeseries",
+        params={
+            "since": (now - timedelta(days=30)).isoformat(),
+            "bucket": "hour",
+        },
+    )
+    assert response.status_code == 422
 
 
 async def test_me_query_logs_returns_only_own(client, db_session, settings):

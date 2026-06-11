@@ -1,4 +1,10 @@
-import type { QueryLogItem, QueryLogStatus } from "@/api/queryLogs";
+import type {
+  QueryLogItem,
+  QueryLogStatus,
+  TimeseriesBucket,
+  UserUsageItem,
+  UserUsageStats,
+} from "@/api/queryLogs";
 import { Skeleton } from "@/components/shared/Skeleton";
 import { StateBoundary } from "@/components/shared/StateBoundary";
 import { Input } from "@/components/ui/Input";
@@ -9,10 +15,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/Select";
-import { useAdminQueryLogs, useAdminQueryLogsStats } from "@/hooks/useQueryLogs";
+import {
+  useAdminQueryLogs,
+  useAdminQueryLogsStats,
+  useAdminUsageTimeseries,
+  useAdminUserUsageStats,
+} from "@/hooks/useQueryLogs";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import {
   AlertCircle,
+  BarChart3,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -22,6 +34,8 @@ import {
   Filter,
   Search,
   TrendingUp,
+  Users,
+  X,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -29,25 +43,44 @@ const PAGE_SIZE = 50;
 
 type StatusFilter = QueryLogStatus | "all";
 
+type RangeId = "24h" | "7d" | "30d";
+
+const RANGES: { id: RangeId; label: string; hours: number; bucket: "hour" | "day" }[] = [
+  { id: "24h", label: "24 hours", hours: 24, bucket: "hour" },
+  { id: "7d", label: "7 days", hours: 24 * 7, bucket: "day" },
+  { id: "30d", label: "30 days", hours: 24 * 30, bucket: "day" },
+];
+
 /**
- * AdminQueryLogsPage — `/admin?tab=query-logs`.
+ * AdminQueryLogsPage — `/admin?tab=query-logs`, labelled "Usage".
  *
- * Browse every authenticated search/retrieve call recorded by
- * `query_logs`: who asked what, against which repo, how long it took,
- * and whether anything came back. The page powers the admin's "what is
- * cograph being used for" question — the corresponding backend lives in
- * `backend/app/api/query_logs.py` and the table in `backend/app/models/
- * query_log.py`.
- *
- * Filters (`?tab=query-logs&...`) are NOT URL-synced for v1 — the search
- * state is page-local. Pagination is server-side via `page` / `per_page`.
+ * The admin's "who actually uses cograph and what does it cost" page:
+ * a time-range selector drives everything below it — totals, the
+ * queries/spend charts, the per-user activity table (INCLUDING users
+ * with zero queries — silence is the interesting half), and the raw
+ * query log. Backend lives in `backend/app/api/query_logs.py`; rows are
+ * retained for `query_log.retention_days` (default 30), which is why
+ * the widest range preset is 30 days.
  */
 export default function AdminQueryLogsPage() {
+  const [rangeId, setRangeId] = useState<RangeId>("7d");
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [zeroResultsOnly, setZeroResultsOnly] = useState(false);
   const [searchInput, setSearchInput] = useState("");
   const [searchApplied, setSearchApplied] = useState("");
+  const [userFilter, setUserFilter] = useState<{ id: string; email: string } | null>(null);
+
+  const range = RANGES.find((r) => r.id === rangeId) ?? RANGES[1];
+
+  // Rounded to the minute so the value (and therefore every react-query
+  // key derived from it) is stable across re-renders instead of
+  // refetching on each keystroke elsewhere on the page.
+  const sinceIso = useMemo(() => {
+    const d = new Date(Date.now() - range.hours * 3_600_000);
+    d.setSeconds(0, 0);
+    return d.toISOString();
+  }, [range.hours]);
 
   const filters = useMemo(
     () => ({
@@ -56,12 +89,16 @@ export default function AdminQueryLogsPage() {
       status: statusFilter === "all" ? undefined : statusFilter,
       zero_results: zeroResultsOnly || undefined,
       q: searchApplied || undefined,
+      user_id: userFilter?.id,
+      since: sinceIso,
     }),
-    [page, statusFilter, zeroResultsOnly, searchApplied],
+    [page, statusFilter, zeroResultsOnly, searchApplied, userFilter, sinceIso],
   );
 
   const logsQuery = useAdminQueryLogs(filters);
-  const statsQuery = useAdminQueryLogsStats({ top_n: 10 });
+  const statsQuery = useAdminQueryLogsStats({ top_n: 10, since: sinceIso });
+  const timeseriesQuery = useAdminUsageTimeseries({ since: sinceIso, bucket: range.bucket });
+  const userStatsQuery = useAdminUserUsageStats({ since: sinceIso });
 
   const state = useMemo<"loading" | "empty" | "error" | "ok">(() => {
     if (logsQuery.isError) return "error";
@@ -72,23 +109,27 @@ export default function AdminQueryLogsPage() {
 
   return (
     <section className="flex flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <h2 className="flex items-center gap-2 text-lg font-semibold tracking-tight">
-          <Search className="h-5 w-5" aria-hidden="true" /> Query logs
-        </h2>
-        <p className="max-w-3xl text-sm text-[color:var(--color-fg-muted)]">
-          Every authenticated search and retrieve from REST and MCP — who asked, against which repo,
-          how long it took, and what came back. Rows are retained for{" "}
-          <code className="rounded bg-[color:var(--color-bg-elevated)] px-1 py-0.5 text-xs">
-            query_log.retention_days
-          </code>{" "}
-          (default 30 days).
-        </p>
-        <p className="max-w-3xl text-xs text-[color:var(--color-fg-subtle)]">
-          Note: result counts logged before <strong>2026-05-18</strong> are unreliable — a backend
-          bug recorded <code>0</code> regardless of actual hits. Rows after the fix are accurate;
-          the original responses are not stored, so old rows can't be backfilled.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex flex-col gap-1">
+          <h2 className="flex items-center gap-2 text-lg font-semibold tracking-tight">
+            <BarChart3 className="h-5 w-5" aria-hidden="true" /> Usage
+          </h2>
+          <p className="max-w-3xl text-sm text-[color:var(--color-fg-muted)]">
+            Every authenticated search and retrieve from REST and MCP — who asked, how often, and
+            what it cost. Rows are retained for{" "}
+            <code className="rounded bg-[color:var(--color-bg-elevated)] px-1 py-0.5 text-xs">
+              query_log.retention_days
+            </code>{" "}
+            (default 30 days), so 30 days is the widest window.
+          </p>
+        </div>
+        <RangeTabs
+          value={rangeId}
+          onChange={(id) => {
+            setPage(1);
+            setRangeId(id);
+          }}
+        />
       </header>
 
       <StatsCards
@@ -96,50 +137,118 @@ export default function AdminQueryLogsPage() {
         stats={statsQuery.data ?? null}
       />
 
-      <FiltersBar
-        statusFilter={statusFilter}
-        setStatusFilter={(v) => {
+      <div className="grid gap-3 lg:grid-cols-2">
+        <ChartCard
+          title="Queries"
+          subtitle="stacked REST / MCP per bucket"
+          loading={timeseriesQuery.isPending && !timeseriesQuery.data}
+          items={timeseriesQuery.data?.items ?? []}
+          bucket={range.bucket}
+          mode="queries"
+        />
+        <ChartCard
+          title="Spend"
+          subtitle="LLM cost (USD) per bucket"
+          loading={timeseriesQuery.isPending && !timeseriesQuery.data}
+          items={timeseriesQuery.data?.items ?? []}
+          bucket={range.bucket}
+          mode="spend"
+        />
+      </div>
+
+      <UserUsageSection
+        loading={userStatsQuery.isPending && !userStatsQuery.data}
+        stats={userStatsQuery.data ?? null}
+        selectedUserId={userFilter?.id ?? null}
+        onSelectUser={(id, email) => {
           setPage(1);
-          setStatusFilter(v);
-        }}
-        zeroResultsOnly={zeroResultsOnly}
-        setZeroResultsOnly={(v) => {
-          setPage(1);
-          setZeroResultsOnly(v);
-        }}
-        searchInput={searchInput}
-        setSearchInput={setSearchInput}
-        onApplySearch={() => {
-          setPage(1);
-          setSearchApplied(searchInput.trim());
+          setUserFilter((prev) => (prev?.id === id ? null : { id, email }));
         }}
       />
 
-      <StateBoundary
-        state={state}
-        error={logsQuery.error instanceof Error ? logsQuery.error : null}
-        onRetry={() => logsQuery.refetch()}
-        loadingFallback={<TableSkeleton />}
-        emptyFallback={
-          <div className="rounded-[var(--radius-md)] border border-dashed border-[color:var(--color-border-subtle)] p-8 text-center text-sm text-[color:var(--color-fg-muted)]">
-            No queries match the current filters.
-          </div>
-        }
-      >
-        {logsQuery.data ? (
-          <>
-            <QueryLogsTable items={logsQuery.data.items} />
-            <Pager
-              page={logsQuery.data.page}
-              totalPages={logsQuery.data.total_pages}
-              total={logsQuery.data.total}
-              onPrev={() => setPage((p) => Math.max(1, p - 1))}
-              onNext={() => setPage((p) => p + 1)}
-            />
-          </>
-        ) : null}
-      </StateBoundary>
+      <div className="flex flex-col gap-3">
+        <h3 className="flex items-center gap-2 text-sm font-semibold">
+          <Search className="h-4 w-4" aria-hidden="true" /> Recent queries
+        </h3>
+
+        <FiltersBar
+          statusFilter={statusFilter}
+          setStatusFilter={(v) => {
+            setPage(1);
+            setStatusFilter(v);
+          }}
+          zeroResultsOnly={zeroResultsOnly}
+          setZeroResultsOnly={(v) => {
+            setPage(1);
+            setZeroResultsOnly(v);
+          }}
+          searchInput={searchInput}
+          setSearchInput={setSearchInput}
+          onApplySearch={() => {
+            setPage(1);
+            setSearchApplied(searchInput.trim());
+          }}
+          userFilter={userFilter}
+          onClearUserFilter={() => {
+            setPage(1);
+            setUserFilter(null);
+          }}
+        />
+
+        <StateBoundary
+          state={state}
+          error={logsQuery.error instanceof Error ? logsQuery.error : null}
+          onRetry={() => logsQuery.refetch()}
+          loadingFallback={<TableSkeleton />}
+          emptyFallback={
+            <div className="rounded-[var(--radius-md)] border border-dashed border-[color:var(--color-border-subtle)] p-8 text-center text-sm text-[color:var(--color-fg-muted)]">
+              No queries match the current filters.
+            </div>
+          }
+        >
+          {logsQuery.data ? (
+            <>
+              <QueryLogsTable items={logsQuery.data.items} />
+              <Pager
+                page={logsQuery.data.page}
+                totalPages={logsQuery.data.total_pages}
+                total={logsQuery.data.total}
+                onPrev={() => setPage((p) => Math.max(1, p - 1))}
+                onNext={() => setPage((p) => p + 1)}
+              />
+            </>
+          ) : null}
+        </StateBoundary>
+      </div>
     </section>
+  );
+}
+
+function RangeTabs({ value, onChange }: { value: RangeId; onChange: (id: RangeId) => void }) {
+  return (
+    <div
+      role="tablist"
+      aria-label="Time range"
+      className="inline-flex rounded-[var(--radius-md)] border border-[color:var(--color-border-subtle)] p-0.5"
+    >
+      {RANGES.map((r) => (
+        <button
+          key={r.id}
+          type="button"
+          role="tab"
+          aria-selected={value === r.id}
+          onClick={() => onChange(r.id)}
+          className={cn(
+            "rounded-[var(--radius-sm)] px-3 py-1.5 text-xs font-medium transition-colors",
+            value === r.id
+              ? "bg-[color:var(--color-accent)]/10 text-[color:var(--color-accent)]"
+              : "text-[color:var(--color-fg-muted)] hover:bg-[color:var(--color-bg-hover)]",
+          )}
+        >
+          {r.label}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -166,7 +275,7 @@ function StatsCards({
       : undefined;
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
-      <StatCard label="Queries total" value={stats.total_count.toLocaleString()} icon={Search} />
+      <StatCard label="Queries" value={stats.total_count.toLocaleString()} icon={Search} />
       <StatCard
         label="Zero-result"
         value={stats.zero_result_count.toLocaleString()}
@@ -196,12 +305,302 @@ function StatsCards({
       />
       <StatCard
         label="Tokens (in / out)"
-        value={`${stats.tokens_input_total.toLocaleString()} / ${stats.tokens_output_total.toLocaleString()}`}
+        value={`${formatTokens(stats.tokens_input_total)} / ${formatTokens(stats.tokens_output_total)}`}
         icon={Coins}
       />
     </div>
   );
 }
+
+/* ------------------------------ charts ------------------------------ */
+
+function ChartCard({
+  title,
+  subtitle,
+  loading,
+  items,
+  bucket,
+  mode,
+}: {
+  title: string;
+  subtitle: string;
+  loading: boolean;
+  items: TimeseriesBucket[];
+  bucket: "hour" | "day";
+  mode: "queries" | "spend";
+}) {
+  if (loading) {
+    return <Skeleton className="h-56 rounded-[var(--radius-md)]" />;
+  }
+  const max = Math.max(
+    1,
+    ...items.map((b) => (mode === "queries" ? b.query_count : b.cost_usd_micros)),
+  );
+  const total = items.reduce(
+    (acc, b) => acc + (mode === "queries" ? b.query_count : b.cost_usd_micros),
+    0,
+  );
+  const allZero = total === 0;
+
+  return (
+    <div className="flex flex-col gap-2 rounded-[var(--radius-md)] border border-[color:var(--color-border-subtle)] p-3">
+      <div className="flex items-baseline justify-between">
+        <div className="flex items-baseline gap-2">
+          <span className="text-sm font-semibold">{title}</span>
+          <span className="text-xs text-[color:var(--color-fg-subtle)]">{subtitle}</span>
+        </div>
+        <span className="text-sm font-semibold tabular-nums">
+          {mode === "queries" ? total.toLocaleString() : formatUsdMicros(total)}
+        </span>
+      </div>
+
+      {allZero ? (
+        <div className="flex h-36 items-center justify-center text-xs text-[color:var(--color-fg-muted)]">
+          {mode === "queries" ? "No queries in this range." : "No priced rows in this range."}
+        </div>
+      ) : (
+        <div className="flex h-36 items-end gap-px" role="img" aria-label={`${title} per bucket`}>
+          {items.map((b) => (
+            <ChartBar key={b.bucket_start} bucketItem={b} max={max} mode={mode} bucket={bucket} />
+          ))}
+        </div>
+      )}
+
+      <div className="flex justify-between text-[10px] text-[color:var(--color-fg-subtle)]">
+        <span>{items.length ? formatBucketLabel(items[0].bucket_start, bucket) : ""}</span>
+        <span>
+          {items.length ? formatBucketLabel(items[items.length - 1].bucket_start, bucket) : ""}
+        </span>
+      </div>
+
+      {mode === "queries" ? (
+        <div className="flex items-center gap-3 text-[10px] text-[color:var(--color-fg-muted)]">
+          <span className="flex items-center gap-1">
+            <span className="h-2 w-2 rounded-sm bg-[color:var(--color-accent)]" /> REST
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="h-2 w-2 rounded-sm bg-[color:var(--color-info)]" /> MCP
+          </span>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ChartBar({
+  bucketItem: b,
+  max,
+  mode,
+  bucket,
+}: {
+  bucketItem: TimeseriesBucket;
+  max: number;
+  mode: "queries" | "spend";
+  bucket: "hour" | "day";
+}) {
+  const label = formatBucketLabel(b.bucket_start, bucket);
+  const tooltip = [
+    label,
+    `${b.query_count} queries (${b.rest_count} rest / ${b.mcp_count} mcp)`,
+    b.error_count > 0 ? `${b.error_count} errors` : null,
+    `tokens ${formatTokens(b.tokens_input)} in / ${formatTokens(b.tokens_output)} out`,
+    `cost ${formatUsdMicros(b.cost_usd_micros)}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  if (mode === "spend") {
+    const h = b.cost_usd_micros === 0 ? 0 : Math.max(2, (b.cost_usd_micros / max) * 100);
+    return (
+      <div className="group relative flex h-full flex-1 items-end" title={tooltip}>
+        <div
+          className="w-full rounded-t-[2px] bg-[color:var(--color-success)]/70 group-hover:bg-[color:var(--color-success)]"
+          style={{ height: `${h}%` }}
+        />
+      </div>
+    );
+  }
+
+  const total = b.query_count;
+  const totalH = total === 0 ? 0 : Math.max(2, (total / max) * 100);
+  const mcpShare = total === 0 ? 0 : b.mcp_count / total;
+  return (
+    <div className="group relative flex h-full flex-1 items-end" title={tooltip}>
+      <div className="flex w-full flex-col rounded-t-[2px]" style={{ height: `${totalH}%` }}>
+        <div
+          className="w-full rounded-t-[2px] bg-[color:var(--color-info)]/70 group-hover:bg-[color:var(--color-info)]"
+          style={{ height: `${mcpShare * 100}%` }}
+        />
+        <div className="w-full flex-1 bg-[color:var(--color-accent)]/70 group-hover:bg-[color:var(--color-accent)]" />
+      </div>
+    </div>
+  );
+}
+
+function formatBucketLabel(iso: string, bucket: "hour" | "day"): string {
+  const d = new Date(iso);
+  if (bucket === "hour") {
+    return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  }
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+/* --------------------------- per-user table -------------------------- */
+
+function UserUsageSection({
+  loading,
+  stats,
+  selectedUserId,
+  onSelectUser,
+}: {
+  loading: boolean;
+  stats: UserUsageStats | null;
+  selectedUserId: string | null;
+  onSelectUser: (id: string, email: string) => void;
+}) {
+  if (loading) {
+    return <Skeleton className="h-48 rounded-[var(--radius-md)]" />;
+  }
+  if (!stats) return null;
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-baseline justify-between">
+        <h3 className="flex items-center gap-2 text-sm font-semibold">
+          <Users className="h-4 w-4" aria-hidden="true" /> By user
+        </h3>
+        <span className="text-xs text-[color:var(--color-fg-muted)]">
+          {stats.active_users} of {stats.total_users} users active in this range
+        </span>
+      </div>
+      <div className="overflow-x-auto rounded-[var(--radius-md)] border border-[color:var(--color-border-subtle)]">
+        <table className="w-full text-sm">
+          <thead className="bg-[color:var(--color-bg-elevated)] text-left text-xs uppercase tracking-wide text-[color:var(--color-fg-muted)]">
+            <tr>
+              <th className="px-3 py-2 font-medium">User</th>
+              <th className="px-3 py-2 text-right font-medium">Queries</th>
+              <th className="px-3 py-2 text-right font-medium">MCP / REST</th>
+              <th className="px-3 py-2 text-right font-medium">Errors</th>
+              <th className="px-3 py-2 text-right font-medium">Zero-result</th>
+              <th className="px-3 py-2 text-right font-medium">Tokens (in / out)</th>
+              <th className="px-3 py-2 text-right font-medium">Cost</th>
+              <th className="px-3 py-2 text-right font-medium">Last active</th>
+            </tr>
+          </thead>
+          <tbody>
+            {stats.items.map((row) => (
+              <UserUsageRow
+                key={row.user_id ?? `deleted:${row.user_email ?? "unknown"}`}
+                row={row}
+                selected={row.user_id !== null && row.user_id === selectedUserId}
+                onSelect={onSelectUser}
+              />
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[10px] text-[color:var(--color-fg-subtle)]">
+        Click a row to filter the query list below to that user.
+      </p>
+    </div>
+  );
+}
+
+function UserUsageRow({
+  row,
+  selected,
+  onSelect,
+}: {
+  row: UserUsageItem;
+  selected: boolean;
+  onSelect: (id: string, email: string) => void;
+}) {
+  const silent = row.query_count === 0;
+  const clickable = row.user_id !== null;
+  const select = clickable
+    ? () => onSelect(row.user_id as string, row.user_email ?? "")
+    : undefined;
+  return (
+    <tr
+      onClick={select}
+      onKeyDown={
+        select
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                select();
+              }
+            }
+          : undefined
+      }
+      tabIndex={clickable ? 0 : undefined}
+      className={cn(
+        "border-t border-[color:var(--color-border-subtle)]",
+        clickable && "cursor-pointer hover:bg-[color:var(--color-bg-hover)]",
+        selected && "bg-[color:var(--color-accent)]/5",
+        silent && "text-[color:var(--color-fg-muted)]",
+      )}
+    >
+      <td className="px-3 py-2">
+        <span className={cn("font-medium", silent && "font-normal")}>
+          {row.user_email ?? "(unknown)"}
+        </span>
+        {row.is_deleted ? (
+          <span className="ml-2 rounded-[var(--radius-sm)] bg-[color:var(--color-bg-elevated)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-fg-muted)]">
+            deleted
+          </span>
+        ) : null}
+        {row.is_active === false ? (
+          <span className="ml-2 rounded-[var(--radius-sm)] bg-[color:var(--color-warning)]/10 px-1.5 py-0.5 text-[10px] text-[color:var(--color-warning)]">
+            deactivated
+          </span>
+        ) : null}
+      </td>
+      <td className="px-3 py-2 text-right tabular-nums">
+        {silent ? (
+          <span title="No queries in this range">0</span>
+        ) : (
+          row.query_count.toLocaleString()
+        )}
+      </td>
+      <td className="px-3 py-2 text-right tabular-nums text-xs">
+        {row.mcp_count.toLocaleString()} / {row.rest_count.toLocaleString()}
+      </td>
+      <td className="px-3 py-2 text-right tabular-nums">
+        {row.error_count > 0 ? (
+          <span className="text-[color:var(--color-danger)]">{row.error_count}</span>
+        ) : (
+          <span className="text-[color:var(--color-fg-subtle)]">0</span>
+        )}
+      </td>
+      <td className="px-3 py-2 text-right tabular-nums">
+        {row.zero_result_count > 0 ? (
+          <span className="text-[color:var(--color-warning)]">{row.zero_result_count}</span>
+        ) : (
+          <span className="text-[color:var(--color-fg-subtle)]">0</span>
+        )}
+      </td>
+      <td className="px-3 py-2 text-right tabular-nums text-xs">
+        {formatTokens(row.tokens_input)} / {formatTokens(row.tokens_output)}
+      </td>
+      <td className="px-3 py-2 text-right tabular-nums text-xs">
+        {row.cost_usd_micros === 0 ? (
+          <span className="text-[color:var(--color-fg-subtle)]">—</span>
+        ) : (
+          formatUsdMicros(row.cost_usd_micros)
+        )}
+      </td>
+      <td className="px-3 py-2 text-right text-xs text-[color:var(--color-fg-muted)]">
+        {row.last_query_at ? (
+          <span title={row.last_query_at}>{formatRelativeTime(row.last_query_at)}</span>
+        ) : (
+          "never"
+        )}
+      </td>
+    </tr>
+  );
+}
+
+/* ------------------------------ helpers ------------------------------ */
 
 function costTitle(row: QueryLogItem): string | undefined {
   const parts: string[] = [];
@@ -218,6 +617,12 @@ function formatUsdMicros(micros: number | null | undefined): string {
   if (usd < 0.01) return `$${usd.toFixed(6)}`;
   if (usd < 1) return `$${usd.toFixed(4)}`;
   return `$${usd.toFixed(2)}`;
+}
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return n.toLocaleString();
 }
 
 function StatCard({
@@ -260,6 +665,8 @@ function FiltersBar({
   searchInput,
   setSearchInput,
   onApplySearch,
+  userFilter,
+  onClearUserFilter,
 }: {
   statusFilter: StatusFilter;
   setStatusFilter: (v: StatusFilter) => void;
@@ -268,6 +675,8 @@ function FiltersBar({
   searchInput: string;
   setSearchInput: (v: string) => void;
   onApplySearch: () => void;
+  userFilter: { id: string; email: string } | null;
+  onClearUserFilter: () => void;
 }) {
   return (
     <div className="flex flex-wrap items-end gap-3">
@@ -319,6 +728,18 @@ function FiltersBar({
         />
         Zero-result only
       </label>
+
+      {userFilter ? (
+        <button
+          type="button"
+          onClick={onClearUserFilter}
+          className="inline-flex h-9 items-center gap-1.5 rounded-[var(--radius-md)] bg-[color:var(--color-accent)]/10 px-2.5 text-xs font-medium text-[color:var(--color-accent)] hover:bg-[color:var(--color-accent)]/20"
+          title="Clear user filter"
+        >
+          {userFilter.email}
+          <X className="h-3.5 w-3.5" aria-hidden="true" />
+        </button>
+      ) : null}
     </div>
   );
 }

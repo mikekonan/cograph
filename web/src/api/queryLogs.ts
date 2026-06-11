@@ -52,6 +52,46 @@ export type QueryLogStats = {
   rows_with_cost: number;
 };
 
+export type UserUsageItem = {
+  user_id: string | null;
+  user_email: string | null;
+  is_active: boolean | null;
+  is_deleted: boolean;
+  query_count: number;
+  mcp_count: number;
+  rest_count: number;
+  error_count: number;
+  zero_result_count: number;
+  tokens_input: number;
+  tokens_output: number;
+  cost_usd_micros: number;
+  last_query_at: string | null;
+};
+
+export type UserUsageStats = {
+  items: UserUsageItem[];
+  total_users: number;
+  active_users: number;
+};
+
+export type TimeseriesBucket = {
+  bucket_start: string;
+  query_count: number;
+  mcp_count: number;
+  rest_count: number;
+  error_count: number;
+  tokens_input: number;
+  tokens_output: number;
+  cost_usd_micros: number;
+};
+
+export type UsageTimeseries = {
+  bucket: "hour" | "day";
+  since: string;
+  until: string;
+  items: TimeseriesBucket[];
+};
+
 export type AdminQueryLogsFilters = {
   page?: number;
   per_page?: number;
@@ -85,6 +125,21 @@ export async function fetchAdminQueryLogsStats(filters: {
   top_n?: number;
 }): Promise<QueryLogStats> {
   return apiJson<QueryLogStats>(`/api/admin/query-logs/stats${buildQuery(filters)}`);
+}
+
+export async function fetchAdminUserUsageStats(filters: {
+  since?: string;
+  until?: string;
+}): Promise<UserUsageStats> {
+  return apiJson<UserUsageStats>(`/api/admin/query-logs/stats/users${buildQuery(filters)}`);
+}
+
+export async function fetchAdminUsageTimeseries(filters: {
+  since?: string;
+  until?: string;
+  bucket?: "hour" | "day";
+}): Promise<UsageTimeseries> {
+  return apiJson<UsageTimeseries>(`/api/admin/query-logs/stats/timeseries${buildQuery(filters)}`);
 }
 
 export type MeQueryLogsFilters = Omit<AdminQueryLogsFilters, "user_id" | "zero_results">;
