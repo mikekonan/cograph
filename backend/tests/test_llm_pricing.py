@@ -77,6 +77,19 @@ def test_cost_micros_zero_tokens_is_none() -> None:
     )
 
 
+def test_cost_micros_gpt_5_4_wiki_scale() -> None:
+    # gpt-5.4 @ $2.50 input + $15.00 output per 1M — the model the
+    # sync pipeline actually runs. Numbers mirror a real full wiki
+    # rebuild (6.37M in / 205k out ≈ $19) so a price-table typo is
+    # caught at the magnitude that matters, not on toy inputs.
+    cost = cost_micros(
+        model="gpt-5.4",
+        tokens_input=6_369_244,
+        tokens_output=205_458,
+    )
+    assert cost == 19_004_980  # ceil(6369244*2.50 + 205458*15.00)
+
+
 def test_micros_to_usd_round_trip() -> None:
     assert micros_to_usd(0) == 0.0
     assert micros_to_usd(1234567) == pytest.approx(1.234567)

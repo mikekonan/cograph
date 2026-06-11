@@ -38,7 +38,7 @@ class ModelPrice:
     output_per_million: float | None
 
 
-# Pricing snapshot — public OpenAI list price as of 2026-05.
+# Pricing snapshot — public OpenAI list price as of 2026-06.
 # Update with a PR when OpenAI bumps prices; keep keys lowercase.
 _PRICES: dict[str, ModelPrice] = {
     # Embeddings — output cost is N/A.
@@ -46,6 +46,9 @@ _PRICES: dict[str, ModelPrice] = {
     "text-embedding-3-large": ModelPrice(0.13, None),
     "text-embedding-ada-002": ModelPrice(0.10, None),
     # Chat — input / output split.
+    "gpt-5.4": ModelPrice(2.50, 15.00),
+    "gpt-5.4-mini": ModelPrice(0.75, 4.50),
+    "gpt-5.4-nano": ModelPrice(0.20, 1.25),
     "gpt-4o": ModelPrice(2.50, 10.00),
     "gpt-4o-mini": ModelPrice(0.15, 0.60),
     "gpt-4o-2024-08-06": ModelPrice(2.50, 10.00),
