@@ -16,7 +16,6 @@ Row lifecycle under incremental control flow (PR2):
   transiently failed pages; re-planned-away slugs still get deleted.
 - A transient page failure leaves the old row serving and the page dirty,
   so the next sync retries it.
-- `force_full` rewrites everything even with perfectly reusable artifacts.
 - Decision 4 (content skip) upgrades recorded quality when the rewrite
   healed the page, and backfills it when it was unknown.
 """
@@ -628,29 +627,3 @@ async def test_transient_failure_keeps_old_row_then_retries_next_sync(
     ).hexdigest()[:12]
     view = await business_view(db_session, repo)
     assert new_digest in view["alpha"]["content"]
-
-
-async def test_force_full_rewrites_everything_despite_valid_artifacts(
-    db_session: AsyncSession,
-) -> None:
-    """The OWNER rebuild button: artifacts and stamps are perfectly
-    reusable, yet `force_full=True` re-plans and rewrites every page."""
-    repo = await ScriptedRepo.create(db_session, "wiki-life-force")
-    await seed_standard(db_session, repo)
-    await run_full(db_session, repo, STANDARD_PAGES, source_commit="c1")
-
-    provider = FakeStructuredProvider()
-    queue_full_run(provider, repo, STANDARD_PAGES)
-    result = await run_pipeline(
-        db_session,
-        repo,
-        llm=provider,
-        source_commit="c2",
-        force_full=True,
-    )
-    assert result.errors == []
-    assert result.mode == "full"
-    assert result.pages_written == len(STANDARD_PAGES)
-    assert result.pages_clean_skipped == 0
-    assert result.dirty_reasons == {}
-    assert_drained(provider)

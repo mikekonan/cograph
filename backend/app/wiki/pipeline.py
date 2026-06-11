@@ -2968,13 +2968,13 @@ async def run_wiki_generation(
     config: WikiGenerationConfig | None = None,
     session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]]
     | None = None,
-    force_full: bool = False,
 ) -> WikiGenerationResult:
     """Run all 5 stages and persist.
 
     Incremental control flow (`config.incremental`, default on; requires
-    `config.persist`; `force_full=True` overrides everything — the
-    OWNER "Rebuild wiki" button):
+    `config.persist`). There is no manual full-rebuild override: a full
+    re-plan is reached adaptively (no reusable artifact, a structural-hash
+    change, or the dirty set crossing `full_rebuild_dirty_ratio`):
 
         1. Stage 1+0 always run (no LLM).
         2. When the persisted artifact is reusable (structural hash,
@@ -3014,14 +3014,13 @@ async def run_wiki_generation(
 
     logger.info(
         "wiki regen starting: repository_id=%s commit=%s run_id=%s model=%s "
-        "persist=%s incremental=%s force_full=%s",
+        "persist=%s incremental=%s",
         repository_id,
         source_commit,
         run_id,
         llm.model,
         cfg.persist,
         cfg.incremental,
-        force_full,
     )
 
     repo_slug = await _load_repository_slug(
@@ -3036,7 +3035,7 @@ async def run_wiki_generation(
     )
     structural_hash = compute_structural_hash(context)
     embed_model = retriever.embedder.model
-    incremental_enabled = cfg.incremental and cfg.persist and not force_full
+    incremental_enabled = cfg.incremental and cfg.persist
 
     # --- Plan acquisition: artifact reuse vs LLM planning -----------------
     mode = "full"
@@ -3112,9 +3111,10 @@ async def run_wiki_generation(
             embedder=retriever.embedder,
         )
         if incremental_enabled:
-            # Salvage pass: even a full re-plan rewrites only pages whose
-            # spec/sources/fingerprint actually moved. `force_full` is the
-            # only path that rewrites unconditionally.
+            # Salvage pass: even an adaptive full re-plan rewrites only pages
+            # whose spec/sources/fingerprint actually moved, so a "documentation
+            # changed significantly" rebuild never re-pays for pages that did
+            # not change (savings only ever shrink LLM work).
             records = await load_page_records(session, repository_id=repository_id)
             report = await compute_dirty_slugs(
                 session,

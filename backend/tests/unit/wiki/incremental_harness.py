@@ -559,7 +559,6 @@ async def run_pipeline(
     llm: Any,
     source_commit: str,
     config: WikiGenerationConfig | None = None,
-    force_full: bool = False,
     retriever: WikiRetrievalService | None = None,
 ) -> WikiGenerationResult:
     return await run_wiki_generation(
@@ -570,7 +569,6 @@ async def run_pipeline(
         llm=llm,
         retriever=retriever or make_retriever(),
         config=config or harness_config(),
-        force_full=force_full,
     )
 
 

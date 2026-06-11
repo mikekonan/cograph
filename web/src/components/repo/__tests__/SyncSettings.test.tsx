@@ -1,7 +1,7 @@
 import type { Repository } from "@/api/types";
 import { type AuthConfig, AuthContext, type User } from "@/contexts/AuthContext";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { SyncSettings } from "../SyncSettings";
 
@@ -82,18 +82,13 @@ describe("SyncSettings", () => {
     );
   });
 
-  it("shows the wiki rebuild flow to the owner, behind a confirm dialog", () => {
+  it("exposes no separate wiki-rebuild affordance — a single Sync drives wiki regen", () => {
+    // Routine syncs already regenerate the wiki incrementally; a full
+    // re-plan is reached adaptively, so there is no manual Rebuild button
+    // (not even for the owner).
     renderSyncSettings({ user: ownerUser });
 
-    expect(screen.getByRole("heading", { level: 3, name: "Wiki" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Rebuild wiki" }));
-    // Destructive-cost action: never fires straight from the button.
-    expect(screen.getByText("Rebuild wiki from scratch?")).toBeInTheDocument();
-  });
-
-  it("hides the wiki rebuild button from admins (owner-only, not hasAdminAccess)", () => {
-    renderSyncSettings({ user: adminUser });
-
+    expect(screen.queryByRole("heading", { level: 3, name: "Wiki" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Rebuild wiki" })).toBeNull();
   });
 

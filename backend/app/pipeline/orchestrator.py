@@ -87,7 +87,6 @@ class RepoSyncOrchestrator:
         requested_by: UUID | None = None,
         requested_ref: str | None = None,
         auto_detect_branch: bool = False,
-        wiki_rebuild: bool = False,
     ) -> RepoSyncEnqueueResult:
         repository = await session.get(Repository, repository_id)
         if repository is None:
@@ -113,7 +112,6 @@ class RepoSyncOrchestrator:
             status=RepoSyncRunStatus.QUEUED,
             requested_by=requested_by,
             requested_ref=requested_ref,
-            wiki_rebuild_requested=wiki_rebuild,
         )
         session.add(sync_run)
         repository.status = RepositoryStatus.CLONING

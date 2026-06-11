@@ -1,8 +1,9 @@
-"""`LLMWikiGenerator` adapter contract — the `force_full` plumbing.
+"""`LLMWikiGenerator` adapter contract.
 
-The OWNER rebuild button travels: API → sync_run.wiki_rebuild_requested →
-processor → `generate(force_full=…)` → `run_wiki_generation(force_full=…)`.
-This pins the last hop so a refactor can't silently drop the flag.
+The adapter is the single construction site between the sync processor and
+`run_wiki_generation`: processor → `generate(...)` → `run_wiki_generation(...)`.
+This pins the last hop so a refactor can't silently drop an argument or
+mis-map the result shape the processor depends on.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from backend.app.wiki.schemas import WikiGenerationResult
 pytestmark = pytest.mark.asyncio
 
 
-async def test_generate_forwards_force_full(monkeypatch: Any) -> None:
+async def test_generate_forwards_core_args_and_maps_result(monkeypatch: Any) -> None:
     seen: dict[str, Any] = {}
 
     async def _fake_run(**kwargs: Any) -> WikiGenerationResult:
@@ -32,9 +33,9 @@ async def test_generate_forwards_force_full(monkeypatch: Any) -> None:
             model="fake",
             pages_planned=0,
             pages_written=0,
-            pages_persisted=0,
-            pages_skipped=0,
-            pages_orphaned_deleted=0,
+            pages_persisted=3,
+            pages_skipped=2,
+            pages_orphaned_deleted=1,
             unresolved_placeholders_total=0,
             wall_clock_ms=0,
         )
@@ -45,17 +46,34 @@ async def test_generate_forwards_force_full(monkeypatch: Any) -> None:
         retriever=None,  # type: ignore[arg-type]
     )
 
-    await generator.generate(
+    repository_id = uuid4()
+    result = await generator.generate(
         session=None,  # type: ignore[arg-type]
-        repository_id=uuid4(),
+        repository_id=repository_id,
         verified_commit="abc123",
-        force_full=True,
     )
-    assert seen["force_full"] is True
 
-    await generator.generate(
+    # The verified commit becomes the source commit; force_full is gone —
+    # routine syncs are always incremental, with an adaptive full re-plan.
+    assert seen["repository_id"] == repository_id
+    assert seen["source_commit"] == "abc123"
+    assert "force_full" not in seen
+    # Result shape the processor's GENERATE_WIKI step consumes.
+    assert result.generated_documents == 3
+    assert result.skipped_documents == 2
+    assert result.pruned_documents == 1
+
+
+async def test_generate_skips_without_verified_commit() -> None:
+    generator = LLMWikiGenerator(
+        llm=FakeStructuredProvider(),
+        retriever=None,  # type: ignore[arg-type]
+    )
+
+    result = await generator.generate(
         session=None,  # type: ignore[arg-type]
         repository_id=uuid4(),
-        verified_commit="abc123",
+        verified_commit=None,
     )
-    assert seen["force_full"] is False
+    assert result.generated_documents == 0
+    assert result.skipped_documents == 0

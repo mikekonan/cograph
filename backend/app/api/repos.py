@@ -65,7 +65,6 @@ from backend.app.models.enums import (
     RepositoryStatus,
     RepositoryVisibility,
     SyncSchedule,
-    UserRole,
 )
 from backend.app.models.repo_document import RepoDocument
 from backend.app.models.repo_sync_run import RepoSyncRun
@@ -203,12 +202,6 @@ class UpdateRepositoryRequest(BaseModel):
         if not self.model_fields_set:
             raise ValueError("Provide at least one updatable repository field")
         return self
-
-
-class RepoReindexRequest(BaseModel):
-    # OWNER-only: re-plan and rewrite the entire wiki from scratch,
-    # bypassing incremental reuse. Costs the full LLM price of a first run.
-    wiki_rebuild: bool = False
 
 
 class RepoReindexResponse(BaseModel):
@@ -1094,23 +1087,12 @@ async def reindex_repository(
     owner: str,
     name: str,
     request: Request,
-    payload: RepoReindexRequest | None = None,
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_current_user),
     _csrf: User = Depends(require_csrf),
     settings: Settings = Depends(get_settings_dep),
 ) -> RepoReindexResponse:
     del _csrf
-    wiki_rebuild = payload.wiki_rebuild if payload is not None else False
-    # Full wiki rebuild burns the entire first-run LLM budget, so it is
-    # gated stricter than the WRITE grant: OWNER only (`require_admin`
-    # would also let ADMIN through).
-    if wiki_rebuild and current_user.role is not UserRole.OWNER:
-        raise ApiError(
-            403,
-            "OWNER_REQUIRED",
-            "Full wiki rebuild is restricted to the instance owner.",
-        )
     repository = await _require_repository_for_mutation(
         session=session,
         host=host,
@@ -1135,7 +1117,6 @@ async def reindex_repository(
             repository_id=repository.id,
             trigger_kind=RepoSyncTriggerKind.MANUAL,
             requested_by=current_user.id,
-            wiki_rebuild=wiki_rebuild,
         )
     except GitCheckoutError as exc:
         raise ApiError(502, "GIT_CLONE_FAILED", str(exc)) from exc
