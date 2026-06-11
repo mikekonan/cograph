@@ -184,3 +184,75 @@ async def test_mcp_anonymous_ctx_writes_no_row(app, db_session, monkeypatch) -> 
 
     rows = (await db_session.scalars(select(QueryLog))).all()
     assert rows == [], f"expected no rows, got {len(rows)}"
+
+
+async def test_mcp_error_row_records_domain_code_not_class_name(
+    app, db_session, monkeypatch
+) -> None:
+    """An ApiError raised inside the scope must persist its domain code
+    ("VALIDATION_FAILED"), not the useless class name "ApiError".
+
+    Investigating prod errors required correlating raw rows by hand
+    because every ApiError — embedding outage, missing repository,
+    bad scope — collapsed into the same `error_code='ApiError'`.
+    """
+    import pytest
+
+    from backend.app.core.errors import ApiError
+
+    _wire_inline_recorder(monkeypatch, app)
+
+    owner = await _make_user(db_session, email="err-owner@example.com")
+    plaintext = "cgr_pat_test_error_code_token"
+    await _make_pat(db_session, user=owner, plaintext=plaintext)
+    actor = await _resolve_pat(plaintext, db_session, client_ip="127.0.0.1")
+    ctx = _fake_mcp_ctx(app, actor)
+
+    with pytest.raises(ApiError):
+        async with mcp_query_log_scope(
+            ctx=ctx,
+            tool_name="cograph_retrieve",
+            query_text="boom",
+            top_k=10,
+        ):
+            raise ApiError(422, "VALIDATION_FAILED", "repository_id is required")
+
+    row = (
+        await db_session.scalars(
+            select(QueryLog).where(QueryLog.query_text == "boom")
+        )
+    ).one()
+    assert row.status == QueryLogStatus.ERROR.value
+    assert row.error_code == "VALIDATION_FAILED", (
+        f"expected the ApiError domain code, got {row.error_code!r}"
+    )
+
+
+async def test_mcp_error_row_falls_back_to_class_name(
+    app, db_session, monkeypatch
+) -> None:
+    import pytest
+
+    _wire_inline_recorder(monkeypatch, app)
+
+    owner = await _make_user(db_session, email="err-fallback@example.com")
+    plaintext = "cgr_pat_test_error_fallback_token"
+    await _make_pat(db_session, user=owner, plaintext=plaintext)
+    actor = await _resolve_pat(plaintext, db_session, client_ip="127.0.0.1")
+    ctx = _fake_mcp_ctx(app, actor)
+
+    with pytest.raises(ValueError):
+        async with mcp_query_log_scope(
+            ctx=ctx,
+            tool_name="cograph_search_code",
+            query_text="boom-fallback",
+            top_k=10,
+        ):
+            raise ValueError("bad argument")
+
+    row = (
+        await db_session.scalars(
+            select(QueryLog).where(QueryLog.query_text == "boom-fallback")
+        )
+    ).one()
+    assert row.error_code == "ValueError"

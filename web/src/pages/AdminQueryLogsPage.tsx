@@ -43,13 +43,39 @@ const PAGE_SIZE = 50;
 
 type StatusFilter = QueryLogStatus | "all";
 
-type RangeId = "24h" | "7d" | "30d";
+type RangeId = "24h" | "7d" | "30d" | "custom";
 
-const RANGES: { id: RangeId; label: string; hours: number; bucket: "hour" | "day" }[] = [
+const RANGES: {
+  id: Exclude<RangeId, "custom">;
+  label: string;
+  hours: number;
+  bucket: "hour" | "day";
+}[] = [
   { id: "24h", label: "24 hours", hours: 24, bucket: "hour" },
   { id: "7d", label: "7 days", hours: 24 * 7, bucket: "day" },
   { id: "30d", label: "30 days", hours: 24 * 30, bucket: "day" },
 ];
+
+// The timeseries endpoint rejects windows wider than 400 buckets; with
+// day buckets that's 400 days, so 365 keeps a comfortable margin while
+// still covering "show me the whole year".
+const MAX_CUSTOM_SPAN_DAYS = 365;
+
+function localDateString(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+// `new Date("YYYY-MM-DD")` parses as UTC midnight; the admin thinks in
+// local days, so build the date from local components instead.
+function parseLocalDate(s: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return null;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
 
 /**
  * AdminQueryLogsPage — `/admin?tab=query-logs`, labelled "Usage".
@@ -70,17 +96,50 @@ export default function AdminQueryLogsPage() {
   const [searchInput, setSearchInput] = useState("");
   const [searchApplied, setSearchApplied] = useState("");
   const [userFilter, setUserFilter] = useState<{ id: string; email: string } | null>(null);
+  const [customSince, setCustomSince] = useState<string>(() =>
+    localDateString(new Date(Date.now() - 7 * 86_400_000)),
+  );
+  const [customUntil, setCustomUntil] = useState<string>(() => localDateString(new Date()));
 
-  const range = RANGES.find((r) => r.id === rangeId) ?? RANGES[1];
-
-  // Rounded to the minute so the value (and therefore every react-query
-  // key derived from it) is stable across re-renders instead of
-  // refetching on each keystroke elsewhere on the page.
-  const sinceIso = useMemo(() => {
-    const d = new Date(Date.now() - range.hours * 3_600_000);
-    d.setSeconds(0, 0);
-    return d.toISOString();
-  }, [range.hours]);
+  // One window object drives everything below the selector. For presets
+  // `untilIso` stays undefined (backend defaults to "now"); for custom
+  // ranges both ends come from the date pickers. Rounded values keep
+  // react-query keys stable across re-renders instead of refetching on
+  // each keystroke elsewhere on the page.
+  const reportWindow = useMemo<{
+    sinceIso: string;
+    untilIso?: string;
+    bucket: "hour" | "day";
+  }>(() => {
+    if (rangeId !== "custom") {
+      const preset = RANGES.find((r) => r.id === rangeId) ?? RANGES[1];
+      const d = new Date(Date.now() - preset.hours * 3_600_000);
+      d.setSeconds(0, 0);
+      return { sinceIso: d.toISOString(), bucket: preset.bucket };
+    }
+    let since = parseLocalDate(customSince);
+    let until = parseLocalDate(customUntil);
+    if (!since || !until) {
+      // Transient invalid input (cleared field) — fall back to 7d rather
+      // than firing requests with garbage bounds.
+      const d = new Date(Date.now() - RANGES[1].hours * 3_600_000);
+      d.setSeconds(0, 0);
+      return { sinceIso: d.toISOString(), bucket: RANGES[1].bucket };
+    }
+    if (since > until) [since, until] = [until, since];
+    if (until.getTime() - since.getTime() > MAX_CUSTOM_SPAN_DAYS * 86_400_000) {
+      since = new Date(until.getTime() - MAX_CUSTOM_SPAN_DAYS * 86_400_000);
+    }
+    // Exclusive end: start of the next local day, so the picked end date
+    // is fully included.
+    const untilEnd = new Date(until.getTime() + 86_400_000);
+    const spanHours = (untilEnd.getTime() - since.getTime()) / 3_600_000;
+    return {
+      sinceIso: since.toISOString(),
+      untilIso: untilEnd.toISOString(),
+      bucket: spanHours <= 48 ? "hour" : "day",
+    };
+  }, [rangeId, customSince, customUntil]);
 
   const filters = useMemo(
     () => ({
@@ -90,15 +149,27 @@ export default function AdminQueryLogsPage() {
       zero_results: zeroResultsOnly || undefined,
       q: searchApplied || undefined,
       user_id: userFilter?.id,
-      since: sinceIso,
+      since: reportWindow.sinceIso,
+      until: reportWindow.untilIso,
     }),
-    [page, statusFilter, zeroResultsOnly, searchApplied, userFilter, sinceIso],
+    [page, statusFilter, zeroResultsOnly, searchApplied, userFilter, reportWindow],
   );
 
   const logsQuery = useAdminQueryLogs(filters);
-  const statsQuery = useAdminQueryLogsStats({ top_n: 10, since: sinceIso });
-  const timeseriesQuery = useAdminUsageTimeseries({ since: sinceIso, bucket: range.bucket });
-  const userStatsQuery = useAdminUserUsageStats({ since: sinceIso });
+  const statsQuery = useAdminQueryLogsStats({
+    top_n: 10,
+    since: reportWindow.sinceIso,
+    until: reportWindow.untilIso,
+  });
+  const timeseriesQuery = useAdminUsageTimeseries({
+    since: reportWindow.sinceIso,
+    until: reportWindow.untilIso,
+    bucket: reportWindow.bucket,
+  });
+  const userStatsQuery = useAdminUserUsageStats({
+    since: reportWindow.sinceIso,
+    until: reportWindow.untilIso,
+  });
 
   const state = useMemo<"loading" | "empty" | "error" | "ok">(() => {
     if (logsQuery.isError) return "error";
@@ -129,6 +200,16 @@ export default function AdminQueryLogsPage() {
             setPage(1);
             setRangeId(id);
           }}
+          customSince={customSince}
+          customUntil={customUntil}
+          onCustomSince={(v) => {
+            setPage(1);
+            setCustomSince(v);
+          }}
+          onCustomUntil={(v) => {
+            setPage(1);
+            setCustomUntil(v);
+          }}
         />
       </header>
 
@@ -143,7 +224,7 @@ export default function AdminQueryLogsPage() {
           subtitle="stacked REST / MCP per bucket"
           loading={timeseriesQuery.isPending && !timeseriesQuery.data}
           items={timeseriesQuery.data?.items ?? []}
-          bucket={range.bucket}
+          bucket={reportWindow.bucket}
           mode="queries"
         />
         <ChartCard
@@ -151,7 +232,7 @@ export default function AdminQueryLogsPage() {
           subtitle="LLM cost (USD) per bucket"
           loading={timeseriesQuery.isPending && !timeseriesQuery.data}
           items={timeseriesQuery.data?.items ?? []}
-          bucket={range.bucket}
+          bucket={reportWindow.bucket}
           mode="spend"
         />
       </div>
@@ -224,30 +305,73 @@ export default function AdminQueryLogsPage() {
   );
 }
 
-function RangeTabs({ value, onChange }: { value: RangeId; onChange: (id: RangeId) => void }) {
+function RangeTabs({
+  value,
+  onChange,
+  customSince,
+  customUntil,
+  onCustomSince,
+  onCustomUntil,
+}: {
+  value: RangeId;
+  onChange: (id: RangeId) => void;
+  customSince: string;
+  customUntil: string;
+  onCustomSince: (v: string) => void;
+  onCustomUntil: (v: string) => void;
+}) {
+  const tabs: { id: RangeId; label: string }[] = [
+    ...RANGES.map((r) => ({ id: r.id as RangeId, label: r.label })),
+    { id: "custom", label: "Custom" },
+  ];
+  const dateInputClass =
+    "rounded-[var(--radius-sm)] border border-[color:var(--color-border-subtle)] bg-[color:var(--color-bg-elevated)] px-2 py-1 text-xs text-[color:var(--color-fg)]";
   return (
-    <div
-      role="tablist"
-      aria-label="Time range"
-      className="inline-flex rounded-[var(--radius-md)] border border-[color:var(--color-border-subtle)] p-0.5"
-    >
-      {RANGES.map((r) => (
-        <button
-          key={r.id}
-          type="button"
-          role="tab"
-          aria-selected={value === r.id}
-          onClick={() => onChange(r.id)}
-          className={cn(
-            "rounded-[var(--radius-sm)] px-3 py-1.5 text-xs font-medium transition-colors",
-            value === r.id
-              ? "bg-[color:var(--color-accent)]/10 text-[color:var(--color-accent)]"
-              : "text-[color:var(--color-fg-muted)] hover:bg-[color:var(--color-bg-hover)]",
-          )}
-        >
-          {r.label}
-        </button>
-      ))}
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      <div
+        role="tablist"
+        aria-label="Time range"
+        className="inline-flex rounded-[var(--radius-md)] border border-[color:var(--color-border-subtle)] p-0.5"
+      >
+        {tabs.map((r) => (
+          <button
+            key={r.id}
+            type="button"
+            role="tab"
+            aria-selected={value === r.id}
+            onClick={() => onChange(r.id)}
+            className={cn(
+              "rounded-[var(--radius-sm)] px-3 py-1.5 text-xs font-medium transition-colors",
+              value === r.id
+                ? "bg-[color:var(--color-accent)]/10 text-[color:var(--color-accent)]"
+                : "text-[color:var(--color-fg-muted)] hover:bg-[color:var(--color-bg-hover)]",
+            )}
+          >
+            {r.label}
+          </button>
+        ))}
+      </div>
+      {value === "custom" ? (
+        <div className="flex items-center gap-1.5">
+          <input
+            type="date"
+            aria-label="Report start date"
+            value={customSince}
+            max={customUntil || undefined}
+            onChange={(e) => onCustomSince(e.target.value)}
+            className={dateInputClass}
+          />
+          <span className="text-xs text-[color:var(--color-fg-muted)]">–</span>
+          <input
+            type="date"
+            aria-label="Report end date"
+            value={customUntil}
+            min={customSince || undefined}
+            onChange={(e) => onCustomUntil(e.target.value)}
+            className={dateInputClass}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

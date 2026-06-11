@@ -136,3 +136,29 @@ def test_do_not_use_clause_points_to_a_sibling_tool(all_tool_descriptions) -> No
             f"need an explicit redirect or they'll just ignore the warning.\n"
             f"L3 tail:\n{l3_tail}"
         )
+
+
+def test_retrieve_marks_repository_as_required() -> None:
+    """`cograph_retrieve` MUST declare `repository` as a required arg.
+
+    The retrieval engine validates repository scope server-side
+    (`validate_retrieval_scope` 422s without it), so an optional
+    `repository` in the schema is a trap: agents legitimately omit it
+    for cross-repo questions and hit a guaranteed runtime error. In
+    prod this produced a steady drip of VALIDATION_FAILED rows in
+    query_logs for weeks. The schema must match reality.
+    """
+    import asyncio
+
+    services, _ = build_mcp_services()
+    server = create_mcp_server(services=services)
+
+    async def _schema() -> dict:
+        tools = {t.name: t for t in await server.list_tools()}
+        return tools["cograph_retrieve"].inputSchema
+
+    schema = asyncio.run(_schema())
+    assert "repository" in schema.get("required", []), (
+        "cograph_retrieve must require `repository` — optional-in-schema "
+        f"but required-at-runtime is a guaranteed 422. Got: {schema.get('required')}"
+    )

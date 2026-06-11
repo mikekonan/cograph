@@ -212,7 +212,14 @@ async def mcp_query_log_scope(
             # admin's "zero results" filter doesn't fill with these.
             status = QueryLogStatus.OK
     except Exception as exc:
-        error_code = type(exc).__name__
+        # Prefer the domain code carried by ApiError ("VALIDATION_FAILED",
+        # "EMBEDDING_PROVIDER_FAILED", ...) over the bare class name — a
+        # column full of "ApiError" hides the actual cause.
+        domain_code = getattr(exc, "code", None)
+        if isinstance(domain_code, str) and domain_code:
+            error_code = domain_code[:64]
+        else:
+            error_code = type(exc).__name__[:64]
         raise
     finally:
         user = current_user_from_context(ctx)

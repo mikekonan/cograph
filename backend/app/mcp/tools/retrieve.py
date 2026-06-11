@@ -30,9 +30,12 @@ _MODE_TO_LAYERS: dict[RetrieveMode, set[RetrievalLayer]] = {
 }
 
 _RETRIEVE_DESCRIPTION = (
-    "Hybrid search across code, AST summaries, and repo docs. "
+    "Hybrid search across code, AST summaries, and repo docs of one repository. "
     "Returns query-anchored excerpts with citations and a "
     "`total_tokens_estimate` so the agent can self-budget.\n"
+    "`repository` is required — retrieval is always scoped to a single "
+    "repository slug. If you don't know which repository holds the answer, "
+    "call cograph_route first and retrieve from each candidate it returns.\n"
     "Use when: the user asks a natural-language question and needs "
     "file-anchored snippets back. Pick mode='code' for "
     "'where is X implemented', mode='wiki' for 'what is the auth flow about', "
@@ -44,7 +47,10 @@ _RETRIEVE_DESCRIPTION = (
 
 class RetrieveToolArgs(BaseModel):
     query: str = Field(min_length=1)
-    repository: str | None = None
+    # Required: the retrieval engine validates repository scope server-side
+    # (`validate_retrieval_scope`) and 422s without it. Advertising the arg
+    # as optional made every repo-less call a guaranteed runtime error.
+    repository: str = Field(min_length=1)
     mode: RetrieveMode = "mixed"
     stores: list[RetrievalLayer] | None = None
     top_k: int = Field(default=10, ge=1, le=100)
@@ -98,7 +104,7 @@ def register(server: FastMCP, services: MCPServices) -> None:
     )
     async def retrieve(
         query: str,
-        repository: str | None = None,
+        repository: str,
         mode: RetrieveMode = "mixed",
         stores: list[RetrievalLayer] | None = None,
         top_k: int = 10,
@@ -125,17 +131,15 @@ def register(server: FastMCP, services: MCPServices) -> None:
             include_graph=include_graph,
             include_scores=include_scores,
         )
-        repository_id: UUID | None = None
         current_user = current_user_from_context(ctx)
-        if args.repository is not None:
-            async with services.session_manager.session() as session:
-                repo = await resolve_readable_repository_by_slug(
-                    session=session,
-                    slug=args.repository,
-                    services=services,
-                    current_user=current_user,
-                )
-            repository_id = repo.id
+        async with services.session_manager.session() as session:
+            repo = await resolve_readable_repository_by_slug(
+                session=session,
+                slug=args.repository,
+                services=services,
+                current_user=current_user,
+            )
+        repository_id: UUID = repo.id
         async with mcp_query_log_scope(
             ctx=ctx,
             tool_name="cograph_retrieve",
