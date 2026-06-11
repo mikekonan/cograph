@@ -745,60 +745,25 @@ async def wiki_tree_resource_payload(
                 "total": total,
                 # The compacted whole-wiki map (~2-3k tokens): every page's
                 # lead prose, section headings, and covered questions. This is
-                # the served wiki — the agent reads it here, then fetches a
-                # full page via `page_template` only when a map entry matches.
+                # the ONLY form of the generated wiki served over MCP — full
+                # page bodies are deliberately not reachable from agents.
                 "compact": compact,
             }
         )
 
 
-async def wiki_page_resource_payload(
-    *,
-    services: MCPServices,
-    repository: Repository,
-    slug: str,
-) -> object:
-    async with services.session_manager.session() as session:
-        await require_ready_repository(
-            session=session,
-            repository_id=repository.id,
-        )
-        page = await services.wiki_queries.get_page_by_slug(
-            session=session,
-            repository_id=repository.id,
-            slug=slug,
-        )
-        if page is None:
-            raise ValueError("NOT_FOUND: Wiki page not found")
-        payload = encode_payload(page)
-        assert isinstance(payload, dict)
-        slug_path = f"{repository.host}/{repository.owner}/{repository.name}"
-        payload.update(
-            {
-                "resource_uri": f"cograph://repo/{slug_path}/wiki/{page.slug}",
-                "resources": _wiki_resource_uris(
-                    repository=repository,
-                    slug=page.slug,
-                ),
-            }
-        )
-        return payload
-
-
 def _wiki_resource_uris(
     *,
     repository: Repository,
-    slug: str | None = None,
 ) -> dict[str, str]:
+    # Deliberately no per-page URI: the compact map is the only form of the
+    # generated wiki served over MCP, so there is nothing to advertise beyond
+    # the tree itself and the graph.
     slug_path = f"{repository.host}/{repository.owner}/{repository.name}"
-    resources = {
+    return {
         "tree": f"cograph://repo/{slug_path}/wiki",
         "graph": f"cograph://repo/{slug_path}/graph",
-        "page_template": f"cograph://repo/{slug_path}/wiki/{{slug}}",
     }
-    if slug is not None:
-        resources["page"] = f"cograph://repo/{slug_path}/wiki/{slug}"
-    return resources
 
 
 async def graph_node_resource_payload(

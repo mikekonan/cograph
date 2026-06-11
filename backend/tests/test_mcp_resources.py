@@ -253,3 +253,43 @@ async def test_wiki_tree_resource_serves_compacted_wiki(app, db_session) -> None
     assert "func main" not in entry["lead"]  # code fence stripped
     assert entry["sections"] == ["What it does"]
     assert entry["covers_questions"] == ["use-cases"]
+    # The compact map is the ONLY form of the wiki over MCP: the payload
+    # must not advertise a per-page URI for agents to follow.
+    assert "page_template" not in payload["resources"]
+    assert "page" not in payload["resources"]
+
+
+@pytest.mark.asyncio
+async def test_wiki_page_resource_is_not_served_over_mcp(app, db_session) -> None:
+    # Full generated-wiki pages are deliberately unreachable from agents:
+    # the per-page resource was removed, so reading its old URI must fail.
+    repo = Repository(
+        host="github.com",
+        owner="acme",
+        name="kms",
+        git_url="https://github.com/acme/kms.git",
+        branch="main",
+        status=RepositoryStatus.READY,
+        visibility=RepositoryVisibility.PUBLIC,
+    )
+    db_session.add(repo)
+    await db_session.flush()
+    db_session.add(
+        Document(
+            repository_id=repo.id,
+            slug="index",
+            title="Overview",
+            doc_type="wiki",
+            sort_order=0,
+            content="# Overview\nFull prose agents must not receive.\n",
+            content_hash="hash-index",
+            source_hash="src-index",
+            model="test",
+            quality={},
+        )
+    )
+    await db_session.commit()
+
+    server = await _get_mcp_server(app)
+    with pytest.raises(Exception):
+        await server.read_resource("cograph://repo/github.com/acme/kms/wiki/index")

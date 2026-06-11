@@ -11,7 +11,8 @@ There is no LLM here. It operates on the markdown already stored in the
 the published page — recompute it on every read and it always reflects the
 current wiki. Assembled across a repo's pages the result is the "map":
 ~2-3k tokens that tell an agent what the service is, how it's structured,
-and which full page to fetch (via `.../wiki/{slug}`) for any given question.
+and which questions each page covers. Over MCP this map is the ONLY form
+of the generated wiki — full page bodies are served to the web UI only.
 """
 
 from __future__ import annotations

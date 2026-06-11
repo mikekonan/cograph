@@ -12,7 +12,6 @@ from backend.app.mcp.services import (
     graph_resource_payload,
     repositories_payload,
     resolve_readable_repository_by_slug,
-    wiki_page_resource_payload,
     wiki_tree_resource_payload,
 )
 from backend.app.models.mcp_operator_briefing import McpOperatorBriefing
@@ -49,13 +48,13 @@ def register_resources(server: FastMCP, services: MCPServices) -> None:
         name="cograph_wiki_tree",
         title="Repository wiki (compacted)",
         description=(
-            "The generated wiki for a ready repository, served as a compacted "
-            "map: the page tree plus, per page, its lead prose, section "
+            "The generated wiki for a ready repository, served compacted: "
+            "the page tree plus, per page, its lead prose, section "
             "headings, and the reader-questions it answers (~2-3k tokens for "
-            "the whole wiki). Read this to learn what the repo is and where "
-            "things are; fetch a full page via "
-            "`cograph://repo/{host}/{owner}/{name}/wiki/{slug}` only when a "
-            "map entry matches your question."
+            "the whole wiki). This is the ONLY form of the generated wiki "
+            "available over MCP — there is no full-page resource. Cite "
+            "entries as `wiki/<slug>`; drill into the underlying code via "
+            "retrieve/search instead of looking for longer wiki prose."
         ),
         mime_type="application/json",
     )
@@ -75,33 +74,6 @@ def register_resources(server: FastMCP, services: MCPServices) -> None:
         return await wiki_tree_resource_payload(
             services=services,
             repository=repository,
-        )
-
-    @server.resource(
-        "cograph://repo/{host}/{owner}/{name}/wiki/{slug}",
-        name="cograph_wiki_page",
-        title="Repository wiki page",
-        description="Single generated wiki page with citations and related nodes.",
-        mime_type="application/json",
-    )
-    async def repository_wiki_page(
-        host: str,
-        owner: str,
-        name: str,
-        slug: str,
-    ) -> object:
-        current_user = current_user_from_context(None)
-        async with services.session_manager.session() as session:
-            repository = await resolve_readable_repository_by_slug(
-                session=session,
-                slug=f"{host}/{owner}/{name}",
-                services=services,
-                current_user=current_user,
-            )
-        return await wiki_page_resource_payload(
-            services=services,
-            repository=repository,
-            slug=slug,
         )
 
     @server.resource(
@@ -195,8 +167,8 @@ def register_resources(server: FastMCP, services: MCPServices) -> None:
         )
         # Surface wiki_total per repository so the agent can see at session
         # start which repos actually have generated wiki pages — the playbook's
-        # "Wiki gate" rule keys off this to decide whether mode="wiki" retrieve
-        # is mandatory for that repo. Cost is one COUNT(*) per visible repo
+        # "Wiki gate" rule keys off this to decide whether reading the compact
+        # wiki resource is mandatory for that repo. Cost is one COUNT(*) per repo
         # (capped at 100 by the limit above), acceptable for a session-bootstrap
         # resource that the agent fetches once.
         repo_items = []

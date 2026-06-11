@@ -105,7 +105,8 @@ class WikiPage(BaseModel):
 
 class WikiCompactPage(BaseModel):
     """One page reduced to its map entry: what it's about, what's in it, and
-    which reader-questions it answers. The full body lives at `.../wiki/{slug}`.
+    which reader-questions it answers. Over MCP this entry is the only served
+    form; the full body is rendered by the web UI alone.
     """
 
     slug: str

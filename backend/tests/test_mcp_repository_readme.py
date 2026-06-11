@@ -142,7 +142,10 @@ async def test_repository_readme_picks_longest_when_multiple_matches(client, db_
     assert result["source_path"] == "README.md"
 
 
-async def test_repository_readme_falls_back_to_wiki_overview(client, db_session):
+async def test_repository_readme_falls_back_to_compacted_wiki_overview(client, db_session):
+    # The fallback must serve the COMPACT form (lead + section headings),
+    # never the full page body — full generated-wiki prose is deliberately
+    # unreachable over MCP.
     _, plaintext = await _seed_pat_user(db_session)
     repo = await _seed_repository(db_session)
 
@@ -154,7 +157,13 @@ async def test_repository_readme_falls_back_to_wiki_overview(client, db_session)
             doc_type=_WIKI_DOC_TYPE,
             title="Overview",
             slug="overview",
-            content="# Overview\n\nProject summary indexed by the wiki agent.",
+            content=(
+                "# Overview\n\n"
+                "Project summary indexed by the wiki agent.\n"
+                "```go\nfunc main() {}\n```\n"
+                "## Architecture\n"
+                "Deep prose the agent must not receive.\n"
+            ),
             content_hash="content-hash",
             source_hash="source-hash",
             sort_order=0,
@@ -173,7 +182,12 @@ async def test_repository_readme_falls_back_to_wiki_overview(client, db_session)
     result = json.loads(response.json()["result"]["content"][0]["text"])
     assert result["source"] == "wiki"
     assert result["wiki_slug"] == "overview"
-    assert "Project summary" in result["content"]
+    assert "Project summary" in result["lead"]
+    assert result["sections"] == ["Architecture"]
+    # Compact-only: no full body, no code fences, no section prose.
+    assert "content" not in result
+    assert "func main" not in json.dumps(result)
+    assert "Deep prose" not in json.dumps(result)
 
 
 async def test_repository_readme_returns_not_found_when_nothing_indexed(client, db_session):

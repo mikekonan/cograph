@@ -172,22 +172,21 @@ architectural prose the code itself does not encode — skipping it on a
 repo that has one collapses your answer to "what the code does" and
 loses "what the team says it does and why."
 
-That resource is the *compacted* whole wiki: the page tree plus, for
-every page, its lead prose, its section headings, and the
-reader-questions it answers — the full wiki reduced to ~2-3k tokens.
-Read it as the map:
-
-* find the page(s) whose lead / sections / covered-questions match the
-  user's question;
-* fetch each such page in full via
-  `cograph://repo/<host>/<owner>/<name>/wiki/<slug>` (the `page_template`
-  in the resource payload) to get the prose and code you will cite.
+That resource IS the wiki, in the only form it is served over MCP: the
+page tree plus, for every page, its lead prose, its section headings,
+and the reader-questions it answers — the whole wiki in ~2-3k tokens.
+There is no full-page wiki resource and no way to fetch longer wiki
+prose; do not look for one. Use the compacted wiki for the conceptual /
+architectural framing (what a component is, why it exists, how pieces
+relate), then go to the CODE for depth: `cograph_retrieve`,
+`cograph_search_code`, `cograph_read_node` give you the file-anchored
+evidence to cite.
 
 Do NOT reach for `cograph_retrieve(mode="wiki")` to surface the
 generated wiki — that mode searches the repository's own checked-in text
 files (README, docs, CI yaml), not the generated pages. The wiki
-resource above is the only path to the generated wiki. Wiki citations
-carry the form `wiki/<slug>` and count as full provenance, same as code
+resource above is the only path to the generated wiki. Cite compact
+entries as `wiki/<slug>`; that counts as full provenance, same as code
 citations.
 
 Repos with `wiki_total == 0` are exempt from this gate — there is

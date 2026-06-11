@@ -19,12 +19,13 @@ from backend.app.mcp.services import (
 )
 from backend.app.models.repo_document import RepoDocument
 from backend.app.rag.snippet import make_snippet
+from backend.app.wiki.compact import extract_lead, extract_sections
 
 _README_DESCRIPTION = (
     "Fetch the canonical README/Overview document for a repository in one call.\n"
     "Use when: the agent has a repo slug and wants to know what the project does, "
-    "its scope, or how to use it. Falls back to the wiki Overview page if no "
-    "README-named file is indexed.\n"
+    "its scope, or how to use it. Falls back to the compacted wiki Overview "
+    "(lead + section headings) if no README-named file is indexed.\n"
     "Do NOT use to search inside the readme (use cograph_retrieve mode='wiki') or "
     "to read other docs (use cograph_collection_search / cograph_read_chunk)."
 )
@@ -92,9 +93,9 @@ def register(server: FastMCP, services: MCPServices) -> None:
                     }
                 )
 
-            # Fallback: wiki Overview page. The repo wiki always has an
-            # 'overview' slug when wiki generation has run; missing means
-            # "no readable summary indexed yet".
+            # Fallback: wiki Overview page, served in its COMPACT form only
+            # (lead prose + section headings). Full generated-wiki bodies are
+            # deliberately unreachable over MCP — the compact map is the wiki.
             wiki_page = await services.wiki_queries.get_page_by_slug(
                 session=session,
                 repository_id=repository.id,
@@ -106,18 +107,13 @@ def register(server: FastMCP, services: MCPServices) -> None:
                 "NOT_FOUND: No README and no wiki overview indexed for this repo"
             )
 
-        snippet, truncated = make_snippet(
-            wiki_page.content,
-            None,
-            chars=_README_SNIPPET_CHARS,
-        )
         return encode_payload(
             {
                 "repository_slug": slug_path,
                 "source": "wiki",
                 "wiki_slug": wiki_page.slug,
                 "title": wiki_page.title,
-                "content": snippet,
-                "content_truncated": truncated,
+                "lead": extract_lead(wiki_page.content, max_chars=1200),
+                "sections": extract_sections(wiki_page.content),
             }
         )
