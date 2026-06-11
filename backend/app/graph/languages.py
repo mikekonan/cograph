@@ -47,3 +47,7 @@ def detect_graph_language(file_path: str | Path) -> GraphLanguage | None:
 
 def get_language_definition(language: GraphLanguage) -> LanguageDefinition:
     return _LANGUAGES[language]
+
+
+def iter_language_definitions() -> tuple[LanguageDefinition, ...]:
+    return tuple(_LANGUAGES.values())

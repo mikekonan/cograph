@@ -24,4 +24,13 @@ COPY backend /app/backend
 RUN python -m pip install --no-deps ./backend \
     && python -m pip uninstall -y uv
 
+# tree-sitter-language-pack v1.6+ bundles NO grammars — get_parser()
+# downloads them from GitHub releases on first use, with no timeout. A
+# stalled CDN connection froze a prod sync mid-transaction (2026-06-11).
+# Bake the grammars cograph parses into the image cache (/root/.cache)
+# so runtime never touches the network; `timeout` turns a stalled
+# download into a loud build failure. The set of grammars derives from
+# backend/app/graph/languages.py — no drift.
+RUN timeout 300 python -c "from backend.app.graph.parser import download_missing_grammars, missing_grammars; download_missing_grammars(); left = missing_grammars(); assert not left, f'grammars still missing: {left}'"
+
 EXPOSE 8000

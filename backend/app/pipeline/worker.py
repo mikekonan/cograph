@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 from urllib.parse import urlparse
@@ -11,6 +12,7 @@ from arq.connections import RedisSettings
 
 from backend.app.config import Settings, get_settings
 from backend.app.db.session import SessionManager
+from backend.app.graph.parser import download_missing_grammars, missing_grammars
 from backend.app.llm.code_embedder import CodeEmbedderService
 from backend.app.llm.runtime_providers import (
     build_runtime_providers,
@@ -156,12 +158,56 @@ def build_redis_settings(redis_url: str) -> RedisSettings:
     )
 
 
+_GRAMMAR_DOWNLOAD_TIMEOUT_SECONDS = 120.0
+
+
+async def _ensure_grammars_available() -> None:
+    """Hard-check: tree-sitter grammars must be loadable before any job runs.
+
+    The grammar cache is baked into the Docker image, so in prod this is
+    an instant no-op. If grammars are missing (local dev, broken image),
+    download them NOW under a hard timeout: the downloader inside
+    tree-sitter-language-pack has none of its own, and a stalled GitHub
+    CDN connection once froze a prod sync mid-transaction for 10+
+    minutes (2026-06-11). Failing here kills the worker at startup —
+    visible and recoverable — instead of hanging the first parse job.
+    """
+    missing = missing_grammars()
+    if not missing:
+        return
+    logger.warning(
+        "Tree-sitter grammars missing from cache (image not pre-baked?), "
+        "downloading: %s",
+        ", ".join(missing),
+    )
+    try:
+        await asyncio.wait_for(
+            asyncio.to_thread(download_missing_grammars),
+            timeout=_GRAMMAR_DOWNLOAD_TIMEOUT_SECONDS,
+        )
+    except TimeoutError as exc:
+        raise RuntimeError(
+            "Timed out downloading tree-sitter grammars "
+            f"({', '.join(missing)}) after "
+            f"{_GRAMMAR_DOWNLOAD_TIMEOUT_SECONDS:.0f}s. Bake them into "
+            "the image (see backend/Dockerfile) or fix egress to GitHub "
+            "releases."
+        ) from exc
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to download tree-sitter grammars ({', '.join(missing)}): {exc}"
+        ) from exc
+    logger.info("Tree-sitter grammars downloaded: %s", ", ".join(missing))
+
+
 async def worker_startup(ctx: dict) -> None:
     # arq only configures its own `arq` logger; the `backend.*` tree stays
     # at WARNING with no handler, which silently swallows the per-stage
     # INFO logs the wiki pipeline emits. Install a stream handler for the
     # `backend` root so `docker logs` shows real-time stage progress.
     _configure_backend_logging()
+
+    await _ensure_grammars_available()
 
     settings = ctx.get("settings")
     if not isinstance(settings, Settings):
