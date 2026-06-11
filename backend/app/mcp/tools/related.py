@@ -16,7 +16,11 @@ from backend.app.mcp.services import (
 class RelatedToolArgs(BaseModel):
     repository: str
     node_id: UUID
-    depth: int = Field(default=1, ge=1, le=5)
+    # depth is capped at 2: around a hub node every extra hop multiplies the
+    # result; one hop answers "what calls this / what does this call", two
+    # hops show the orchestration layer. Deeper tracing should be a chain of
+    # targeted calls, not one giant dump.
+    depth: int = Field(default=1, ge=1, le=2)
     direction: TraversalDirection = TraversalDirection.BOTH
 
 
@@ -25,8 +29,12 @@ def register(server: FastMCP, services: MCPServices) -> None:
         name="cograph_related",
         description=(
             "Traverse the caller/callee graph around a code node up to "
-            "`depth` hops. Returns nodes and edges, scoped by `direction` "
-            "(callers, callees, or both).\n"
+            "`depth` hops (max 2).\n"
+            "Returns nodes and edges, scoped by `direction` (callers, "
+            "callees, or both), capped at 50 nodes. `truncated: true` "
+            "means the neighbourhood exceeded the cap — narrow with "
+            "`direction` or continue from a more specific node instead "
+            "of asking for more.\n"
             "Use when: agent has a known node_id (from cograph_search_code "
             "or cograph_retrieve) and needs to trace control flow — what "
             "calls it, or what it calls.\n"

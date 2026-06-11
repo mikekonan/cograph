@@ -25,7 +25,6 @@ from backend.app.core.repository_access import (
     get_readable_repository_by_slug,
 )
 from backend.app.db.session import SessionManager
-from backend.app.graph.queries import GraphQueryFilters, GraphQueryService, GraphView
 from backend.app.graph.traversal import (
     GraphTraversalService,
     TraversalDirection,
@@ -65,7 +64,6 @@ class MCPServices:
     lexical: LexicalRetriever
     symbol: SymbolLookup
     context_builder: ContextBuilder
-    graph_queries: GraphQueryService
     graph_traversal: GraphTraversalService
     wiki_queries: WikiQueryService
 
@@ -400,6 +398,14 @@ async def search_code_payload(
         )
 
 
+# Hard ceiling on nodes returned by `cograph_related`. Without it a BFS
+# from a hub node (depth>1, direction=both) can return thousands of nodes
+# and blow the calling agent's context. 50 neighbours is plenty to spot
+# the orchestration layer; anything bigger should be a targeted
+# search/read, not a wider dump.
+RELATED_MAX_NODES = 50
+
+
 async def related_payload(
     *,
     services: MCPServices,
@@ -416,6 +422,7 @@ async def related_payload(
             node_id=node_id,
             depth=depth,
             direction=direction,
+            max_nodes=RELATED_MAX_NODES,
         )
         if result is None:
             raise ValueError("NOT_FOUND: Graph node not found")
@@ -694,24 +701,6 @@ async def read_chunk_payload(
         }
 
 
-async def graph_resource_payload(
-    *,
-    services: MCPServices,
-    repository: Repository,
-) -> object:
-    async with services.session_manager.session() as session:
-        await require_ready_repository(session=session, repository_id=repository.id)
-        graph = await services.graph_queries.list_graph(
-            session=session,
-            repository_id=repository.id,
-            filters=GraphQueryFilters(
-                view=GraphView.SYMBOLS,
-                limit=1000,
-            ),
-        )
-        return encode_payload(graph)
-
-
 async def wiki_tree_resource_payload(
     *,
     services: MCPServices,
@@ -756,51 +745,14 @@ def _wiki_resource_uris(
     *,
     repository: Repository,
 ) -> dict[str, str]:
-    # Deliberately no per-page URI: the compact map is the only form of the
-    # generated wiki served over MCP, so there is nothing to advertise beyond
-    # the tree itself and the graph.
+    # Deliberately no per-page URI (the compact map is the only form of the
+    # generated wiki served over MCP) and no graph URI (the whole-repo graph
+    # snapshot was a 40-60k-token dump; targeted tools — search_code,
+    # retrieve, read_node, related — cover every agent need).
     slug_path = f"{repository.host}/{repository.owner}/{repository.name}"
     return {
         "tree": f"cograph://repo/{slug_path}/wiki",
-        "graph": f"cograph://repo/{slug_path}/graph",
     }
-
-
-async def graph_node_resource_payload(
-    *,
-    services: MCPServices,
-    repository: Repository,
-    node_id: UUID,
-) -> object:
-    async with services.session_manager.session() as session:
-        await require_ready_repository(session=session, repository_id=repository.id)
-        node = await session.scalar(
-            select(CodeNode).where(
-                CodeNode.repository_id == repository.id,
-                CodeNode.id == node_id,
-            )
-        )
-        if node is None:
-            raise ValueError("NOT_FOUND: Graph node not found")
-        slug_path = f"{repository.host}/{repository.owner}/{repository.name}"
-        return encode_payload(
-            {
-                "repository_id": repository.id,
-                "repository_host": repository.host,
-                "repository_owner": repository.owner,
-                "repository_name": repository.name,
-                "node_id": str(node.id),
-                "node_name": node.name,
-                "node_type": node.node_type.value
-                if hasattr(node.node_type, "value")
-                else str(node.node_type),
-                "file_path": node.file_path,
-                "start_line": node.start_line,
-                "end_line": node.end_line,
-                "content": node.content,
-                "resource_uri": f"cograph://repo/{slug_path}/graph/node/{node_id}",
-            }
-        )
 
 
 async def require_ready_repository(

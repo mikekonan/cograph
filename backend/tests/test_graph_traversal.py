@@ -170,6 +170,7 @@ async def test_graph_traversal_walks_legacy_callers_and_callees(db_session):
 
     assert result is not None
     assert result.root.id == root.id
+    assert result.truncated is False
     assert [(node.name, node.distance) for node in result.nodes] == [
         ("caller", 1),
         ("callee", 1),
@@ -181,6 +182,32 @@ async def test_graph_traversal_walks_legacy_callers_and_callees(db_session):
         (str(root.id), str(callee.id), 1),
         (str(caller2.id), str(caller.id), 2),
         (str(callee.id), str(callee2.id), 2),
+    }
+
+    # Same graph with max_nodes=2: only the depth-1 ring fits, the hop-2
+    # nodes are dropped and the response says so. This is the cap
+    # `cograph_related` relies on to never dump an unbounded neighbourhood
+    # into an agent's context.
+    capped = await GraphTraversalService().traverse(
+        session=db_session,
+        repository_id=repository.id,
+        node_id=root.id,
+        depth=2,
+        direction=TraversalDirection.BOTH,
+        max_nodes=2,
+    )
+
+    assert capped is not None
+    assert capped.truncated is True
+    assert [(node.name, node.distance) for node in capped.nodes] == [
+        ("caller", 1),
+        ("callee", 1),
+    ]
+    # Edges are filtered to visible nodes, so nothing may reference the
+    # dropped hop-2 nodes.
+    assert {(str(edge.source), str(edge.target)) for edge in capped.edges} == {
+        (str(caller.id), str(root.id)),
+        (str(root.id), str(callee.id)),
     }
 
 

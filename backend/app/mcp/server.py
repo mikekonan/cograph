@@ -8,7 +8,6 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from backend.app.config import Settings, get_settings
 from backend.app.db.session import SessionManager
-from backend.app.graph.queries import GraphQueryService
 from backend.app.graph.traversal import GraphTraversalService
 from backend.app.llm.runtime_providers import assert_embedding_runtime_configured
 from backend.app.mcp.instructions import (
@@ -36,7 +35,6 @@ def build_mcp_services(
     lexical: LexicalRetriever | None = None,
     symbol: SymbolLookup | None = None,
     context_builder: ContextBuilder | None = None,
-    graph_queries: GraphQueryService | None = None,
     graph_traversal: GraphTraversalService | None = None,
     wiki_queries: WikiQueryService | None = None,
 ) -> tuple[MCPServices, bool]:
@@ -54,7 +52,6 @@ def build_mcp_services(
         lexical=lexical or LexicalRetriever(),
         symbol=symbol or SymbolLookup(),
         context_builder=context_builder or ContextBuilder(),
-        graph_queries=graph_queries or GraphQueryService(),
         graph_traversal=graph_traversal or GraphTraversalService(),
         wiki_queries=wiki_queries or WikiQueryService(),
     )

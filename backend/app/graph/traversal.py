@@ -46,6 +46,7 @@ class TraversalResponse(BaseModel):
     depth: int
     nodes: list[TraversalNode]
     edges: list[TraversalEdge]
+    truncated: bool = False
 
 
 class GraphTraversalService:
@@ -57,6 +58,7 @@ class GraphTraversalService:
         node_id: UUID,
         depth: int = 1,
         direction: TraversalDirection = TraversalDirection.BOTH,
+        max_nodes: int | None = None,
     ) -> TraversalResponse | None:
         root = await session.scalar(
             select(CodeNode).where(
@@ -73,6 +75,7 @@ class GraphTraversalService:
         visited_distance: dict[UUID, int] = {node_id: 0}
         edge_distance: dict[tuple[UUID, UUID], int] = {}
         frontier: list[UUID] = [node_id]
+        truncated = False
 
         for hop in range(1, depth + 1):
             if not frontier:
@@ -91,6 +94,12 @@ class GraphTraversalService:
                 for related_id, source_id, target_id in neighbour_map.get(current_id, []):
                     edge_distance.setdefault((source_id, target_id), hop)
                     if related_id in visited_distance:
+                        continue
+                    # Neighbour loading is deterministically ordered (SQL
+                    # order_by in v2, stored list order in legacy), so the
+                    # cap always keeps the same prefix of the expansion.
+                    if max_nodes is not None and len(visited_distance) - 1 >= max_nodes:
+                        truncated = True
                         continue
                     visited_distance[related_id] = hop
                     next_frontier.append(related_id)
@@ -163,6 +172,7 @@ class GraphTraversalService:
             depth=depth,
             nodes=related_nodes,
             edges=edges,
+            truncated=truncated,
         )
 
     async def _load_neighbours(
