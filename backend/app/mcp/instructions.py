@@ -151,26 +151,18 @@ broaden a stale candidate set.
   in the SAME source — that's a `cograph_retrieve` rephrase, not a
   re-route.
 
-### Step 1 — bootstrap each candidate
-
-For every slug from step 0, run `cograph_outline(slug)` once. The
-outline tells you the repository's top-level structure (modules,
-packages, key files) AND the titles of up to 30 generated wiki pages
-plus `wiki_total`. Use it to formulate better retrieval queries — a
-search for "session expiry" lands better when you know the auth code
-lives under `internal/auth/`, and wiki titles often surface the exact
-domain vocabulary the user is asking about.
-
-### Step 1.5 — Wiki gate (HARD RULE)
+### Step 1 — Wiki FIRST (HARD RULE)
 
 For every candidate repository where `wiki_total > 0` (visible in
 `cograph://my-context` at session start, or in the `cograph_outline`
-response), you MUST read the wiki resource
-`cograph://repo/<host>/<owner>/<name>/wiki` BEFORE you synthesise the
-answer. The generated wiki holds conceptual / definitional /
-architectural prose the code itself does not encode — skipping it on a
-repo that has one collapses your answer to "what the code does" and
-loses "what the team says it does and why."
+response), your FIRST read against that repository MUST be the wiki
+resource `cograph://repo/<host>/<owner>/<name>/wiki` — before any
+retrieve or search call touches it. The generated wiki holds
+conceptual / definitional / architectural prose the code itself does
+not encode — skipping it collapses your answer to "what the code does"
+and loses "what the team says it does and why." Reading it first also
+makes every later query better: you learn the repo's own vocabulary
+before you search with it.
 
 That resource IS the wiki, in the only form it is served over MCP: the
 page tree plus, for every page, its lead prose, its section headings,
@@ -191,9 +183,24 @@ citations.
 
 Repos with `wiki_total == 0` are exempt from this gate — there is
 nothing to read. Mention this explicitly in your reasoning if relevant
-("repo has no generated wiki, so this answer is code-only").
+("repo has no generated wiki, so this answer is code-only"). For those
+repos, `cograph_outline(slug)` is the bootstrap read instead: it gives
+the top-level structure (modules, packages, key files) to aim your
+retrieval queries at. Outline remains useful on wiki-bearing repos too
+— call it alongside the probes of step 2 when you need the file-tree
+shape.
 
-### Step 2 — multi-phrasing retrieve
+### Step 2 — fan out: docs and code IN PARALLEL
+
+With the wiki map in context, probe the other two source kinds
+CONCURRENTLY — they are independent, so issue the calls together in
+one turn rather than serially:
+
+* **collections** — `cograph_collection_search` for the domain terms
+  and business intent involved (the operator briefing says which
+  collections matter);
+* **code** — `cograph_retrieve` against each candidate repo, multiple
+  phrasings.
 
 One `cograph_retrieve` per source is NEVER enough. Always probe each
 source from several angles before deciding what it does or does not
@@ -216,8 +223,8 @@ of absence — it's evidence that one particular phrasing missed.
 
 ### Step 3 — broaden, then symbol-search
 
-If `mode=code` came back thin, try `mode=mixed` (which broadens to wiki
-and AST summaries within the same repo). If you have a distinctive
+If `mode=code` came back thin, try `mode=mixed` (which broadens to the
+repo's checked-in docs and AST summaries). If you have a distinctive
 identifier from a previous hit, follow up with `cograph_search_code` for
 exact-symbol matches.
 
@@ -270,7 +277,7 @@ user's ACL — repositories the operator hasn't granted access to are
 genuinely invisible, not hidden). Use the slugs from there as
 `repository=` values in your tool calls. Each repository entry also
 carries `wiki_total` — the count of generated wiki pages for that repo.
-A non-zero `wiki_total` makes the Wiki gate (Step 1.5) mandatory for
+A non-zero `wiki_total` makes the Wiki-FIRST rule (Step 1) mandatory for
 that repo on any question that involves it.
 
 There is also a resource `cograph://briefing` that returns the

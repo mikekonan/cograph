@@ -140,7 +140,7 @@ async def test_my_context_lists_public_repo_and_collection(app, db_session) -> N
     repo_slugs = [item["slug"] for item in payload["repositories"]["items"]]
     assert "github.com/acme/payments" in repo_slugs
     # A repo without any generated wiki must surface wiki_total: 0 so the
-    # agent can see the Wiki gate (Step 1.5 in the playbook) does NOT apply
+    # agent can see the Wiki-FIRST rule (Step 1 in the playbook) does NOT apply
     # to it. Absence of the field would force the agent to guess.
     repo_entry = next(
         item
