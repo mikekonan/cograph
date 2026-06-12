@@ -305,6 +305,55 @@ async def test_repo_sync_orchestrator_skips_unchanged_scheduled_commit(
 
 
 @pytest.mark.asyncio
+async def test_repo_sync_enqueue_keeps_ready_repo_ready(
+    db_session,
+    settings,
+    tmp_path,
+):
+    """A re-sync of a READY repo must not demote it to CLONING — the UI and
+    MCP both gate serving on READY while the indexed content is still there."""
+    source_repo_path = tmp_path / "source"
+    source_repo = _init_source_repo(source_repo_path)
+    commit_sha = _commit_file(
+        source_repo,
+        source_repo_path,
+        "api.py",
+        "def hello() -> str:\n    return 'world'\n",
+    )
+
+    repository = Repository(
+        host="example.com",
+        git_url=str(source_repo_path),
+        name="demo",
+        owner="acme",
+        branch="main",
+        status=RepositoryStatus.READY,
+        last_commit="0" * 40,  # stale — manual re-sync has real work to do
+    )
+    db_session.add(repository)
+    await db_session.commit()
+
+    queue = _RecordingQueue()
+    orchestrator = RepoSyncOrchestrator(
+        job_queue=queue,
+        checkout_adapter=GitCheckoutAdapter(checkouts_root=settings.git.checkouts_root),
+    )
+
+    result = await orchestrator.enqueue_repository_sync(
+        session=db_session,
+        repository_id=repository.id,
+        trigger_kind=RepoSyncTriggerKind.MANUAL,
+    )
+
+    persisted_repo = await db_session.get(Repository, repository.id)
+    assert persisted_repo is not None
+    assert result.status is RepoSyncRunStatus.QUEUED
+    assert result.requested_ref == commit_sha
+    assert persisted_repo.status is RepositoryStatus.READY
+    assert len(queue.calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_repo_sync_orchestrator_creates_sync_batch_and_jobs_on_enqueue(
     db_session,
     settings,

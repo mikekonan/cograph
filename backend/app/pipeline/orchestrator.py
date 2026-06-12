@@ -114,7 +114,13 @@ class RepoSyncOrchestrator:
             requested_ref=requested_ref,
         )
         session.add(sync_run)
-        repository.status = RepositoryStatus.CLONING
+        # The CLONING→…→READY lifecycle is first-index (and post-error) UX.
+        # A re-sync of a READY repo must not demote it: the UI hides
+        # wiki/docs/graph and MCP raises REPO_NOT_READY for any non-READY
+        # status, while everything already indexed is still in the DB and
+        # perfectly servable. Re-sync progress lives in the jobs timeline.
+        if repository.status is not RepositoryStatus.READY:
+            repository.status = RepositoryStatus.CLONING
         repository.error_msg = None
 
         # Create the FE-visible SyncBatch + seeded SyncJob rows immediately so

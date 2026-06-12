@@ -90,6 +90,18 @@ async def _run_step_with_timeout(coro, *, timeout_seconds: int, step: SyncStep):
         raise StepTimeoutError(step, timeout_seconds) from exc
 
 
+def _advance_phase(repository: Repository, status: RepositoryStatus) -> None:
+    """Walk the first-index lifecycle without demoting a READY repo.
+
+    Re-syncs of a READY repo keep serving: the UI hides wiki/docs/graph and
+    MCP raises REPO_NOT_READY for any non-READY status, while everything
+    already indexed is still in the DB. Re-sync progress is visible on the
+    jobs timeline instead.
+    """
+    if repository.status is not RepositoryStatus.READY:
+        repository.status = status
+
+
 @dataclass(slots=True, kw_only=True)
 class RepoSyncResult:
     repository_id: UUID
@@ -180,7 +192,7 @@ class RepoSyncProcessor:
                 )
 
         started_at = datetime.now(UTC)
-        repository.status = RepositoryStatus.INDEXING
+        _advance_phase(repository, RepositoryStatus.INDEXING)
         repository.error_msg = None
         sync_run.status = RepoSyncRunStatus.RUNNING
         sync_run.started_at = sync_run.started_at or started_at
@@ -274,7 +286,7 @@ class RepoSyncProcessor:
             # embed — real when code_embedder_service is provided; skipped otherwise
             repository = await session.get(Repository, repository_id)
             assert repository is not None
-            repository.status = RepositoryStatus.EMBEDDING
+            _advance_phase(repository, RepositoryStatus.EMBEDDING)
             repository.error_msg = None
             await session.commit()
             embed_job = _get_job(SyncStep.EMBED)
@@ -366,7 +378,7 @@ class RepoSyncProcessor:
             # generate_summaries — real when summary_generator is provided
             repository = await session.get(Repository, repository_id)
             assert repository is not None
-            repository.status = RepositoryStatus.GENERATING
+            _advance_phase(repository, RepositoryStatus.GENERATING)
             repository.error_msg = None
             await session.commit()
             summary_job = _get_job(SyncStep.GENERATE_SUMMARIES)
