@@ -1,5 +1,6 @@
 import type { SyncBatchSummary, SyncJob, SyncStep } from "@/api/types";
 import { Skeleton } from "@/components/shared/Skeleton";
+import { formatCost, formatTokens } from "@/lib/llmUsage";
 import { PIPELINE_ORDER } from "@/lib/pipeline";
 import { cn } from "@/lib/utils";
 import { AlertCircle, Check, Clock, Loader2 } from "lucide-react";
@@ -287,24 +288,6 @@ function usageSuffix(
     suffix += ` · ${formatCost(costUsdMicros)}`;
   }
   return suffix;
-}
-
-function formatTokens(count: number): string {
-  if (count >= 1_000_000) {
-    return `${(count / 1_000_000).toFixed(1)}M tok`;
-  }
-  if (count >= 1_000) {
-    return `${(count / 1_000).toFixed(1)}k tok`;
-  }
-  return `${count} tok`;
-}
-
-function formatCost(micros: number): string {
-  const usd = micros / 1_000_000;
-  if (usd > 0 && usd < 0.01) {
-    return "<$0.01";
-  }
-  return `$${usd.toFixed(2)}`;
 }
 
 function stepDurationMs(j: SyncJob): number {

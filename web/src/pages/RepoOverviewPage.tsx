@@ -2,6 +2,7 @@ import { NotFoundError } from "@/api/errors";
 import type { RepoSlug } from "@/api/types";
 import { IndexingTimeline } from "@/components/repo/IndexingTimeline";
 import { LanguageBarChart } from "@/components/repo/LanguageBarChart";
+import { LlmUsageCard } from "@/components/repo/LlmUsageCard";
 import { RepoHero } from "@/components/repo/RepoHero";
 import { RepoTabHeader } from "@/components/repo/RepoTabs";
 import { SyncSettings } from "@/components/repo/SyncSettings";
@@ -10,7 +11,7 @@ import { Skeleton } from "@/components/shared/Skeleton";
 import { StateBoundary } from "@/components/shared/StateBoundary";
 import { Button } from "@/components/ui/Button";
 import { useAuth } from "@/hooks/useAuth";
-import { useLatestRepoSync } from "@/hooks/useJobs";
+import { useJobBatches, useLatestRepoSync } from "@/hooks/useJobs";
 import { useRepo } from "@/hooks/useRepos";
 import { hasAdminAccess } from "@/lib/auth";
 import { getNativeDocsActionLabel, getNativeDocsSurfaceMode } from "@/lib/docsSurface";
@@ -36,6 +37,13 @@ export default function RepoOverviewPage() {
   const query = useRepo(slug);
   const showAdminTimeline = hasAdminAccess(user?.role);
   const latestSync = useLatestRepoSync(query.data?.id, { enabled: showAdminTimeline });
+  // Same query useLatestRepoSync issues internally — react-query dedupes, so
+  // this is a free read of the cached batch list for the history block.
+  const batchesQ = useJobBatches("repo_sync", { enabled: showAdminTimeline });
+  const repoBatches = useMemo(
+    () => (batchesQ.data?.items ?? []).filter((b) => b.repository_id === query.data?.id),
+    [batchesQ.data, query.data?.id],
+  );
   const repoErrorMessage =
     query.data?.error_msg ?? "The latest indexing run failed before this repository became ready.";
 
@@ -113,6 +121,14 @@ export default function RepoOverviewPage() {
                   className={showAdminTimeline ? "lg:col-span-4 xl:col-span-3" : "lg:col-span-12"}
                 />
               </section>
+
+              {showAdminTimeline && (
+                <LlmUsageCard
+                  batch={latestSync.batch}
+                  jobs={latestSync.jobs}
+                  history={repoBatches}
+                />
+              )}
 
               {query.data.stats.language_bytes && (
                 <LanguageBarChart languageBytes={query.data.stats.language_bytes} />
