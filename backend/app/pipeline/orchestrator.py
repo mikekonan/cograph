@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -231,6 +231,13 @@ class RepoSyncOrchestrator:
                 # Mark the pre-seeded batch as completed (skipped — no work needed).
                 sync_batch.status = SyncJobStatus.SUCCESS
                 sync_batch.finished_at = finished_at
+                # The seeded step rows would otherwise stay "queued" forever
+                # and read as a stuck sync on the timeline.
+                await session.execute(
+                    update(SyncJob)
+                    .where(SyncJob.batch_id == sync_batch.id)
+                    .values(status=SyncJobStatus.SKIPPED, finished_at=finished_at)
+                )
                 await session.commit()
                 return RepoSyncEnqueueResult(
                     repository_id=repository_id,

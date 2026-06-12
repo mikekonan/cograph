@@ -292,6 +292,15 @@ async def test_repo_sync_orchestrator_skips_unchanged_scheduled_commit(
     assert sync_run.finished_at is not None
     assert queue.calls == []
 
+    # The pre-seeded step rows must be stamped too — left "queued" they
+    # read as a stuck sync on the timeline.
+    batch_jobs = (
+        await db_session.scalars(select(SyncJob).where(SyncJob.batch_id == result.batch_id))
+    ).all()
+    assert batch_jobs
+    assert all(j.status is SyncJobStatus.SKIPPED for j in batch_jobs)
+    assert all(j.finished_at is not None for j in batch_jobs)
+
 
 @pytest.mark.asyncio
 async def test_repo_sync_orchestrator_creates_sync_batch_and_jobs_on_enqueue(
