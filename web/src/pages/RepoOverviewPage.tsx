@@ -112,6 +112,7 @@ export default function RepoOverviewPage() {
                   <IndexingTimeline
                     batch={latestSync.batch}
                     jobs={latestSync.jobs}
+                    skippedCheckAt={latestSync.skippedCheckAt}
                     isPending={latestSync.isPending}
                     className="lg:col-span-8 xl:col-span-9"
                   />

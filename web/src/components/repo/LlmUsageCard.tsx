@@ -7,7 +7,7 @@ import {
   SelectValue,
 } from "@/components/ui/Select";
 import { useJobBatch } from "@/hooks/useJobs";
-import { cachedShare, formatCost, formatTokens } from "@/lib/llmUsage";
+import { cachedShare, formatCost, formatRunDate, formatTokens } from "@/lib/llmUsage";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
 
@@ -155,7 +155,7 @@ function totalTokens(b: { tokens_input: number | null; tokens_output: number | n
 function runLabel(r: SyncBatchSummary, isLatest: boolean): string {
   const cost =
     r.cost_usd_micros !== null ? formatCost(r.cost_usd_micros) : formatTokens(totalTokens(r));
-  return `${runDate(r.started_at)}${isLatest ? " · latest" : ""} · ${cost}`;
+  return `${formatRunDate(r.started_at)}${isLatest ? " · latest" : ""} · ${cost}`;
 }
 
 function usageSummary(u: {
@@ -172,15 +172,6 @@ function usageSummary(u: {
     s += ` · ${pct}% cached`;
   }
   return s;
-}
-
-function runDate(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 function stepLabel(step: SyncStep): string {

@@ -1,6 +1,6 @@
 import type { SyncBatchSummary, SyncJob, SyncStep } from "@/api/types";
 import { Skeleton } from "@/components/shared/Skeleton";
-import { formatCost, formatTokens } from "@/lib/llmUsage";
+import { formatCost, formatRunDate, formatTokens } from "@/lib/llmUsage";
 import { PIPELINE_ORDER } from "@/lib/pipeline";
 import { cn } from "@/lib/utils";
 import { AlertCircle, Check, Clock, Loader2 } from "lucide-react";
@@ -8,6 +8,13 @@ import { AlertCircle, Check, Clock, Loader2 } from "lucide-react";
 type IndexingTimelineProps = {
   batch: SyncBatchSummary | null;
   jobs: SyncJob[];
+  /**
+   * When the newest batch is an all-skipped auto-sync check (no new
+   * commits), `batch` keeps pointing at the last real run and this carries
+   * the check's timestamp — rendered as a one-line note instead of eight
+   * 0ms "Skipped" bars.
+   */
+  skippedCheckAt?: string | null;
   /**
    * True while either the batches list or the per-batch detail is loading.
    * The component shows a skeleton in that window — without it the timeline
@@ -32,7 +39,13 @@ type IndexingTimelineProps = {
  * Shows only the core repo-sync pipeline steps. Confluence export steps are
  * unrelated to a repo's own indexing timeline and are excluded.
  */
-export function IndexingTimeline({ batch, jobs, isPending, className }: IndexingTimelineProps) {
+export function IndexingTimeline({
+  batch,
+  jobs,
+  skippedCheckAt,
+  isPending,
+  className,
+}: IndexingTimelineProps) {
   if (isPending && !batch) {
     return <TimelineSkeleton className={className} />;
   }
@@ -121,8 +134,11 @@ export function IndexingTimeline({ batch, jobs, isPending, className }: Indexing
     >
       <header className="flex items-center justify-between gap-3">
         <h3 className="text-sm font-semibold text-[color:var(--color-fg)]">Indexing timeline</h3>
-        <span className="text-xs text-[color:var(--color-fg-muted)]">
-          {batch.is_complete ? "Last run · " : "In progress · "}
+        <span className="text-xs tabular-nums text-[color:var(--color-fg-muted)]">
+          {batch.is_complete ? "Last run" : "In progress"}
+          {" · "}
+          {formatRunDate(batch.started_at)}
+          {" · "}
           {formatDuration(totalMs)} total
           {usageSuffix(
             batch.tokens_input,
@@ -132,6 +148,12 @@ export function IndexingTimeline({ batch, jobs, isPending, className }: Indexing
           )}
         </span>
       </header>
+
+      {skippedCheckAt && (
+        <p className="text-xs text-[color:var(--color-fg-muted)]">
+          Auto-sync checked {formatRunDate(skippedCheckAt)} — no new commits, run skipped.
+        </p>
+      )}
 
       <div className="flex h-7 w-full overflow-hidden rounded-[var(--radius-sm)]">
         {final.map((s, i) => (

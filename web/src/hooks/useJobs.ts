@@ -93,23 +93,43 @@ export function useJobStats(days = 7) {
 }
 
 /**
- * Latest repo_sync batch for a given repository. Picks the newest batch
- * whose `kind === "repo_sync"` and `repository_id === repoId`, then fetches
- * its full job list. Drives the IndexingTimeline on RepoOverview.
+ * A no-new-commits auto-sync exit: every seeded step was stamped skipped
+ * and the pipeline never ran. Distinct from real runs with individually
+ * skipped steps (e.g. a disabled capability), which still have timings.
+ */
+function isAllSkipped(b: SyncBatchSummary): boolean {
+  const c = b.counts;
+  return c.skipped > 0 && c.queued + c.running + c.paused + c.success + c.error + c.cancelled === 0;
+}
+
+/**
+ * Latest repo_sync batch for a given repository that did (or is doing)
+ * real pipeline work, with its full job list — drives the IndexingTimeline
+ * and LlmUsageCard on RepoOverview. All-skipped auto-sync checks are not
+ * "runs" for display purposes: they'd replace a meaningful per-step
+ * timeline with eight 0ms "Skipped" bars. The newest such check (when it's
+ * newer than the displayed run) is surfaced as `skippedCheckAt` instead.
  */
 export function useLatestRepoSync(repoId: string | undefined, options: JobQueryOptions = {}) {
   const enabled = options.enabled ?? true;
   const batchesQ = useJobBatches("repo_sync", { enabled });
-  const latestBatch = !repoId
-    ? null
-    : ((batchesQ.data?.items ?? [])
+  const repoBatches = !repoId
+    ? []
+    : (batchesQ.data?.items ?? [])
         .filter((b) => b.repository_id === repoId)
-        .sort((a, b) => b.started_at.localeCompare(a.started_at))[0] ?? null);
+        .sort((a, b) => b.started_at.localeCompare(a.started_at));
+  const latestBatch = repoBatches.find((b) => !isAllSkipped(b)) ?? null;
+  const newestBatch = repoBatches[0] ?? null;
+  const skippedCheckAt =
+    newestBatch && newestBatch.batch_id !== latestBatch?.batch_id && isAllSkipped(newestBatch)
+      ? newestBatch.started_at
+      : null;
   const detailQ = useJobBatch(latestBatch?.batch_id, { enabled });
 
   return {
     batch: detailQ.data?.batch ?? latestBatch,
     jobs: detailQ.data?.jobs ?? [],
+    skippedCheckAt,
     isPending: batchesQ.isPending || (!!latestBatch && detailQ.isPending),
     isError: batchesQ.isError || detailQ.isError,
     error: batchesQ.error ?? detailQ.error,

@@ -22,6 +22,16 @@ export function formatCost(micros: number): string {
   return `$${usd.toFixed(2)}`;
 }
 
+/** "Jun 12, 14:00" — when a sync run happened (timeline header, run picker). */
+export function formatRunDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 /** "87% cached" share of input served from the prompt cache, null when n/a. */
 export function cachedShare(
   tokensInput: number | null,

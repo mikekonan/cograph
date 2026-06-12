@@ -82,6 +82,17 @@ describe("IndexingTimeline", () => {
     expect(screen.getByLabelText(/embed code — skipped/i)).toBeInTheDocument();
   });
 
+  it("dates the displayed run and notes a newer no-commits auto-sync check", () => {
+    render(<IndexingTimeline batch={batch} jobs={jobs} skippedCheckAt="2026-06-12T14:00:00Z" />);
+
+    // Header carries when the displayed run happened…
+    expect(screen.getByText(/Last run · Apr 22/)).toBeInTheDocument();
+    // …and the newer cron check is a note, not eight 0ms "Skipped" bars.
+    expect(
+      screen.getByText(/Auto-sync checked Jun 12.*no new commits, run skipped/),
+    ).toBeInTheDocument();
+  });
+
   it("appends token and cost suffixes for steps that recorded LLM usage", () => {
     const usageJobs = jobs.map((job) =>
       job.step === "generate_wiki"
