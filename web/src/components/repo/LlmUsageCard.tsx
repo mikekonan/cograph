@@ -1,6 +1,9 @@
 import type { SyncBatchSummary, SyncJob, SyncStep } from "@/api/types";
+import { useJobBatch } from "@/hooks/useJobs";
 import { cachedShare, formatCost, formatTokens } from "@/lib/llmUsage";
 import { cn } from "@/lib/utils";
+import { ChevronDown, ChevronRight } from "lucide-react";
+import { useState } from "react";
 
 type LlmUsageCardProps = {
   /** Latest repo_sync batch — drives the "Last run" block. */
@@ -20,13 +23,16 @@ type LlmUsageCardProps = {
  *      that recorded LLM usage (model, in/out tokens, cached share, $).
  *   2. Run history: the last N runs with a relative spend bar, so a $19
  *      full rebuild visually dwarfs the ~$0 incremental syncs around it.
+ *      Each row expands in place to the same per-step breakdown (batch
+ *      detail is fetched on first expand and cached by react-query).
  *
  * Null-usage semantics follow the timeline: a step/run with NULL tokens
  * made no LLM calls (or predates accounting) and is simply not listed.
  * Cost NULL with tokens present = "no price on file" → tokens, no $.
  */
 export function LlmUsageCard({ batch, jobs, history, className }: LlmUsageCardProps) {
-  const usageJobs = jobs.filter((j) => j.tokens_input !== null || j.tokens_output !== null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const usageJobs = jobs.filter(hasUsage);
 
   const runs = history
     .filter((b) => b.tokens_input !== null || b.tokens_output !== null)
@@ -64,33 +70,9 @@ export function LlmUsageCard({ batch, jobs, history, className }: LlmUsageCardPr
         <div className="flex flex-col gap-2">
           <div className="flex items-baseline justify-between gap-2 text-xs text-[color:var(--color-fg-muted)]">
             <span>Last run</span>
-            <span className="tabular-nums">{lastRunSummary(batch)}</span>
+            <span className="tabular-nums">{usageSummary(batch)}</span>
           </div>
-          {usageJobs.length > 0 && (
-            <ol className="flex flex-col divide-y divide-[color:var(--color-border-subtle)]">
-              {usageJobs.map((j) => (
-                <li
-                  key={j.id}
-                  className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-baseline gap-x-3 py-1.5 text-xs"
-                >
-                  <span className="min-w-0">
-                    <span className="text-[color:var(--color-fg)]">{stepLabel(j.step)}</span>
-                    {j.llm_model && (
-                      <span className="ml-1.5 text-[color:var(--color-fg-muted)]">
-                        {j.llm_model}
-                      </span>
-                    )}
-                  </span>
-                  <span className="tabular-nums whitespace-nowrap text-[color:var(--color-fg-muted)]">
-                    {jobTokens(j)}
-                  </span>
-                  <span className="w-14 text-right tabular-nums text-[color:var(--color-fg)]">
-                    {j.cost_usd_micros !== null ? formatCost(j.cost_usd_micros) : "—"}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          )}
+          {usageJobs.length > 0 && <UsageJobRows jobs={usageJobs} />}
         </div>
       )}
 
@@ -99,34 +81,51 @@ export function LlmUsageCard({ batch, jobs, history, className }: LlmUsageCardPr
           <span className="text-xs text-[color:var(--color-fg-muted)]">
             Run history · last {runs.length}
           </span>
-          <ol className="flex flex-col gap-1.5">
-            {runs.map((r) => (
-              <li
-                key={r.batch_id}
-                className="grid grid-cols-[5.5rem_minmax(0,1fr)_auto_auto] items-center gap-x-3 text-xs"
-              >
-                <span className="tabular-nums text-[color:var(--color-fg-muted)]">
-                  {runDate(r.started_at)}
-                </span>
-                <span
-                  aria-hidden="true"
-                  className="h-1.5 min-w-0 rounded-full bg-[color:var(--color-bg-muted)]"
-                >
-                  <span
-                    className="block h-full rounded-full bg-[color:var(--color-accent)]"
-                    style={{ width: `${barPct(r, maxCost, maxTokens)}%` }}
-                  />
-                </span>
-                <span className="tabular-nums whitespace-nowrap text-[color:var(--color-fg-muted)]">
-                  {formatTokens(totalTokens(r))}
-                  {cachedShare(r.tokens_input, r.tokens_cached) !== null &&
-                    ` (${cachedShare(r.tokens_input, r.tokens_cached)}% cached)`}
-                </span>
-                <span className="w-14 text-right tabular-nums text-[color:var(--color-fg)]">
-                  {r.cost_usd_micros !== null ? formatCost(r.cost_usd_micros) : "—"}
-                </span>
-              </li>
-            ))}
+          <ol className="flex flex-col">
+            {runs.map((r) => {
+              const expanded = expandedId === r.batch_id;
+              return (
+                <li key={r.batch_id} className="flex flex-col">
+                  <button
+                    type="button"
+                    aria-expanded={expanded}
+                    onClick={() => setExpandedId(expanded ? null : r.batch_id)}
+                    className={cn(
+                      "grid grid-cols-[auto_5.5rem_minmax(0,1fr)_auto_auto] items-center gap-x-3",
+                      "rounded-[var(--radius-sm)] px-1 py-1 text-left text-xs",
+                      "hover:bg-[color:var(--color-bg-muted)]",
+                    )}
+                  >
+                    {expanded ? (
+                      <ChevronDown className="h-3 w-3 text-[color:var(--color-fg-muted)]" />
+                    ) : (
+                      <ChevronRight className="h-3 w-3 text-[color:var(--color-fg-muted)]" />
+                    )}
+                    <span className="tabular-nums text-[color:var(--color-fg-muted)]">
+                      {runDate(r.started_at)}
+                    </span>
+                    <span
+                      aria-hidden="true"
+                      className="h-1.5 min-w-0 rounded-full bg-[color:var(--color-bg-muted)]"
+                    >
+                      <span
+                        className="block h-full rounded-full bg-[color:var(--color-accent)]"
+                        style={{ width: `${barPct(r, maxCost, maxTokens)}%` }}
+                      />
+                    </span>
+                    <span className="tabular-nums whitespace-nowrap text-[color:var(--color-fg-muted)]">
+                      {formatTokens(totalTokens(r))}
+                      {cachedShare(r.tokens_input, r.tokens_cached) !== null &&
+                        ` (${cachedShare(r.tokens_input, r.tokens_cached)}% cached)`}
+                    </span>
+                    <span className="w-14 text-right tabular-nums text-[color:var(--color-fg)]">
+                      {r.cost_usd_micros !== null ? formatCost(r.cost_usd_micros) : "—"}
+                    </span>
+                  </button>
+                  {expanded && <RunDetail batchId={r.batch_id} />}
+                </li>
+              );
+            })}
           </ol>
         </div>
       )}
@@ -134,27 +133,77 @@ export function LlmUsageCard({ batch, jobs, history, className }: LlmUsageCardPr
   );
 }
 
+/** Expanded history row: fetch the batch's jobs and show per-step usage. */
+function RunDetail({ batchId }: { batchId: string }) {
+  const detailQ = useJobBatch(batchId);
+  const usageJobs = (detailQ.data?.jobs ?? []).filter(hasUsage);
+
+  return (
+    <div className="ml-6 border-l border-[color:var(--color-border-subtle)] pl-3 pb-1.5">
+      {detailQ.isPending ? (
+        <p className="py-1.5 text-xs text-[color:var(--color-fg-muted)]">Loading…</p>
+      ) : detailQ.isError ? (
+        <p className="py-1.5 text-xs text-[color:var(--color-fg-muted)]">
+          Couldn't load this run's breakdown.
+        </p>
+      ) : usageJobs.length === 0 ? (
+        <p className="py-1.5 text-xs text-[color:var(--color-fg-muted)]">
+          No LLM usage recorded for this run.
+        </p>
+      ) : (
+        <UsageJobRows jobs={usageJobs} />
+      )}
+    </div>
+  );
+}
+
+/** Per-step usage rows — shared by "Last run" and expanded history runs. */
+function UsageJobRows({ jobs }: { jobs: SyncJob[] }) {
+  return (
+    <ol className="flex flex-col divide-y divide-[color:var(--color-border-subtle)]">
+      {jobs.map((j) => (
+        <li
+          key={j.id}
+          className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-baseline gap-x-3 py-1.5 text-xs"
+        >
+          <span className="min-w-0">
+            <span className="text-[color:var(--color-fg)]">{stepLabel(j.step)}</span>
+            {j.llm_model && (
+              <span className="ml-1.5 text-[color:var(--color-fg-muted)]">{j.llm_model}</span>
+            )}
+          </span>
+          <span className="tabular-nums whitespace-nowrap text-[color:var(--color-fg-muted)]">
+            {usageSummary(j)}
+          </span>
+          <span className="w-14 text-right tabular-nums text-[color:var(--color-fg)]">
+            {j.cost_usd_micros !== null ? formatCost(j.cost_usd_micros) : "—"}
+          </span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 const HISTORY_LIMIT = 10;
 
-function totalTokens(b: SyncBatchSummary): number {
+function hasUsage(j: SyncJob): boolean {
+  return j.tokens_input !== null || j.tokens_output !== null;
+}
+
+function totalTokens(b: { tokens_input: number | null; tokens_output: number | null }): number {
   return (b.tokens_input ?? 0) + (b.tokens_output ?? 0);
 }
 
-function lastRunSummary(b: SyncBatchSummary): string {
-  if (b.tokens_input === null && b.tokens_output === null) {
+function usageSummary(u: {
+  tokens_input: number | null;
+  tokens_output: number | null;
+  tokens_cached: number | null;
+}): string {
+  if (u.tokens_input === null && u.tokens_output === null) {
     return "no LLM calls";
   }
-  let s = `${formatTokens(b.tokens_input ?? 0)} in · ${formatTokens(b.tokens_output ?? 0)} out`;
-  const pct = cachedShare(b.tokens_input, b.tokens_cached);
-  if (pct !== null) {
-    s += ` · ${pct}% cached`;
-  }
-  return s;
-}
-
-function jobTokens(j: SyncJob): string {
-  let s = `${formatTokens(j.tokens_input ?? 0)} in · ${formatTokens(j.tokens_output ?? 0)} out`;
-  const pct = cachedShare(j.tokens_input, j.tokens_cached);
+  let s = `${formatTokens(u.tokens_input ?? 0)} in · ${formatTokens(u.tokens_output ?? 0)} out`;
+  const pct = cachedShare(u.tokens_input, u.tokens_cached);
   if (pct !== null) {
     s += ` · ${pct}% cached`;
   }

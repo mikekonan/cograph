@@ -1,7 +1,14 @@
 import type { SyncBatchSummary, SyncJob } from "@/api/types";
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import { LlmUsageCard } from "../LlmUsageCard";
+
+// RunDetail (expanded history row) fetches the batch via useJobBatch; stub
+// it so expansion tests don't need a QueryClientProvider + network mocks.
+const useJobBatchMock = vi.hoisted(() =>
+  vi.fn(() => ({ isPending: false, isError: false, data: undefined })),
+);
+vi.mock("@/hooks/useJobs", () => ({ useJobBatch: useJobBatchMock }));
 
 const baseBatch: SyncBatchSummary = {
   batch_id: "batch-1",
@@ -95,5 +102,36 @@ describe("LlmUsageCard", () => {
   it("renders nothing when there is no batch and no usage history", () => {
     const { container } = render(<LlmUsageCard batch={null} jobs={[]} history={[]} />);
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it("expands a history row into that run's per-step breakdown", async () => {
+    useJobBatchMock.mockReturnValue({
+      isPending: false,
+      isError: false,
+      data: {
+        batch: fullRebuild,
+        jobs: [
+          makeUsageJob("generate_wiki", {
+            tokens_input: 6_369_244,
+            tokens_output: 205_458,
+            tokens_cached: 5_500_000,
+            cost_usd_micros: 19_004_980,
+            llm_model: "gpt-5.4",
+          }),
+        ],
+      },
+      // biome-ignore lint/suspicious/noExplicitAny: partial react-query result is enough for the component
+    } as any);
+
+    render(<LlmUsageCard batch={baseBatch} jobs={[]} history={[baseBatch, fullRebuild]} />);
+
+    const rows = screen.getAllByRole("button", { expanded: false });
+    fireEvent.click(rows[1]);
+
+    expect(useJobBatchMock).toHaveBeenCalledWith(fullRebuild.batch_id);
+    expect(screen.getByText("Wiki")).toBeInTheDocument();
+    expect(screen.getByText("gpt-5.4")).toBeInTheDocument();
+    // History row + expanded step row both carry the cached share.
+    expect(screen.getAllByText(/86% cached/).length).toBeGreaterThanOrEqual(2);
   });
 });
