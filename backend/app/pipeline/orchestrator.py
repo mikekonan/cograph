@@ -222,6 +222,11 @@ class RepoSyncOrchestrator:
                 finished_at = datetime.now(UTC)
                 repository.status = RepositoryStatus.READY
                 repository.error_msg = None
+                # A skip IS a successful sync: we went to the remote and
+                # confirmed there is nothing to pick up. Without this bump
+                # "Last sync" freezes at the last real pipeline run while
+                # hourly auto-sync keeps reporting the repo up to date.
+                repository.last_synced_at = finished_at
                 sync_run.status = RepoSyncRunStatus.SKIPPED
                 sync_run.finished_at = finished_at
                 sync_run.requested_ref = prepared_checkout.requested_ref

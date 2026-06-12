@@ -287,6 +287,8 @@ async def test_repo_sync_orchestrator_skips_unchanged_scheduled_commit(
     assert result.status is RepoSyncRunStatus.SKIPPED
     assert result.requested_ref == commit_sha
     assert persisted_repo.status is RepositoryStatus.READY
+    # The skip must still count as a sync — "Last sync" freezes otherwise.
+    assert persisted_repo.last_synced_at is not None
     assert sync_run.status is RepoSyncRunStatus.SKIPPED
     assert sync_run.arq_job_id is None
     assert sync_run.finished_at is not None
