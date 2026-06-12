@@ -14,6 +14,18 @@ Object.defineProperty(window.HTMLElement.prototype, "scrollIntoView", {
   writable: true,
 });
 
+// jsdom ships neither ResizeObserver nor the pointer-capture API; Radix
+// popper-positioned content (Select/Tooltip) needs both to mount.
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+window.ResizeObserver ??= ResizeObserverStub as unknown as typeof ResizeObserver;
+window.HTMLElement.prototype.hasPointerCapture ??= () => false;
+window.HTMLElement.prototype.setPointerCapture ??= () => {};
+window.HTMLElement.prototype.releasePointerCapture ??= () => {};
+
 afterEach(() => {
   cleanup();
 });

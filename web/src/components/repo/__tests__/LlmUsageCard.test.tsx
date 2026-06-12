@@ -3,8 +3,8 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { LlmUsageCard } from "../LlmUsageCard";
 
-// RunDetail (expanded history row) fetches the batch via useJobBatch; stub
-// it so expansion tests don't need a QueryClientProvider + network mocks.
+// Past-run selections fetch the batch via useJobBatch; stub it so the
+// tests don't need a QueryClientProvider + network mocks.
 const useJobBatchMock = vi.hoisted(() =>
   vi.fn(() => ({ isPending: false, isError: false, data: undefined })),
 );
@@ -86,17 +86,18 @@ describe("LlmUsageCard", () => {
     expect(screen.getByText("text-embedding-3-small")).toBeInTheDocument();
     // Steps without usage (clone) must not appear as rows.
     expect(screen.queryByText(/clone/i)).toBeNull();
+    // Single run on record → nothing to pick between.
+    expect(screen.queryByRole("combobox")).toBeNull();
   });
 
-  it("renders history rows with cached share and per-run cost", () => {
+  it("defaults the run picker to the latest run and shows its summary", () => {
     render(<LlmUsageCard batch={baseBatch} jobs={[]} history={[baseBatch, fullRebuild]} />);
 
-    expect(screen.getByText(/Run history · last 2/)).toBeInTheDocument();
-    // Full rebuild: 6.6M total tokens, 86% of input cached, $19.00.
-    expect(screen.getByText(/6\.6M tok \(86% cached\)/)).toBeInTheDocument();
-    expect(screen.getByText("$19.00")).toBeInTheDocument();
-    // Incremental run: tiny but never rendered as free.
-    expect(screen.getAllByText("<$0.01").length).toBeGreaterThan(0);
+    const trigger = screen.getByRole("combobox", { name: "Select run" });
+    expect(trigger).toHaveTextContent("latest");
+    expect(trigger).toHaveTextContent("<$0.01");
+    // Headline reflects the selected (latest) run, never rendered as free.
+    expect(screen.getByText("1.9k tok in · 0 tok out")).toBeInTheDocument();
   });
 
   it("renders nothing when there is no batch and no usage history", () => {
@@ -104,7 +105,7 @@ describe("LlmUsageCard", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("expands a history row into that run's per-step breakdown", async () => {
+  it("switches to a past run's per-step breakdown via the picker", () => {
     useJobBatchMock.mockReturnValue({
       isPending: false,
       isError: false,
@@ -125,13 +126,17 @@ describe("LlmUsageCard", () => {
 
     render(<LlmUsageCard batch={baseBatch} jobs={[]} history={[baseBatch, fullRebuild]} />);
 
-    const rows = screen.getAllByRole("button", { expanded: false });
-    fireEvent.click(rows[1]);
+    const trigger = screen.getByRole("combobox", { name: "Select run" });
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    const pastRun = screen.getByRole("option", { name: /\$19\.00/ });
+    fireEvent.keyDown(pastRun, { key: "Enter" });
 
-    expect(useJobBatchMock).toHaveBeenCalledWith(fullRebuild.batch_id);
+    expect(useJobBatchMock).toHaveBeenLastCalledWith(fullRebuild.batch_id, { enabled: true });
+    // Headline + step row both price the run.
+    expect(screen.getAllByText("$19.00").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText("Wiki")).toBeInTheDocument();
     expect(screen.getByText("gpt-5.4")).toBeInTheDocument();
-    // History row + expanded step row both carry the cached share.
+    // Run summary + step row both carry the cached share.
     expect(screen.getAllByText(/86% cached/).length).toBeGreaterThanOrEqual(2);
   });
 });
