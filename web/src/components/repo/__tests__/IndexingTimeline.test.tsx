@@ -22,6 +22,7 @@ const batch: SyncBatchSummary = {
   is_complete: true,
   tokens_input: null,
   tokens_output: null,
+  tokens_cached: null,
   cost_usd_micros: null,
 };
 
@@ -88,6 +89,7 @@ describe("IndexingTimeline", () => {
             ...job,
             tokens_input: 80_000,
             tokens_output: 4_200,
+            tokens_cached: null,
             cost_usd_micros: 310_000,
             llm_model: "gpt-4o-mini",
           }
@@ -97,6 +99,7 @@ describe("IndexingTimeline", () => {
       ...batch,
       tokens_input: 80_000,
       tokens_output: 4_200,
+      tokens_cached: null,
       cost_usd_micros: 310_000,
     };
 
@@ -156,6 +159,7 @@ function makeJob(step: SyncJob["step"], startedAt: string, finishedAt: string): 
     error_msg: null,
     tokens_input: null,
     tokens_output: null,
+    tokens_cached: null,
     cost_usd_micros: null,
     llm_model: null,
     cost_breakdown: null,

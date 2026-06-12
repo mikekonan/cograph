@@ -44,6 +44,7 @@ const batch: SyncBatchSummary = {
   is_complete: true,
   tokens_input: null,
   tokens_output: null,
+  tokens_cached: null,
   cost_usd_micros: null,
 };
 const secondBatch: SyncBatchSummary = {
@@ -65,6 +66,7 @@ const secondBatch: SyncBatchSummary = {
   is_complete: true,
   tokens_input: null,
   tokens_output: null,
+  tokens_cached: null,
   cost_usd_micros: null,
 };
 
@@ -101,6 +103,7 @@ const jobs: SyncJob[] = [
       : null,
     tokens_input: null,
     tokens_output: null,
+    tokens_cached: null,
     cost_usd_micros: null,
     llm_model: null,
     cost_breakdown: null,
@@ -123,6 +126,7 @@ const secondBatchJobs: SyncJob[] = [
     error_msg: null,
     tokens_input: null,
     tokens_output: null,
+    tokens_cached: null,
     cost_usd_micros: null,
     llm_model: null,
     cost_breakdown: null,

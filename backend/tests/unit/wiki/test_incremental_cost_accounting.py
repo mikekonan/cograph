@@ -229,6 +229,29 @@ async def test_rollup_empty_subset_is_none() -> None:
     assert rollup_stages({}) is None
 
 
+async def test_rollup_bills_cached_tokens_at_cached_rate() -> None:
+    # gpt-4o-mini: input $0.15/M, cached input $0.075/M. 1M input with
+    # 600k cached = 400k×0.15 + 600k×0.075 = $0.105; + 0.1M out × $0.60
+    # = $0.06 → $0.165 = 165_000 µUSD. The flat-rate figure would be
+    # 210_000 — the difference is exactly what dropping the cached
+    # count used to overstate.
+    rollup = rollup_stages(
+        {
+            "wiki.write": StageUsage(
+                calls=3,
+                tokens_in=1_000_000,
+                tokens_out=100_000,
+                tokens_cached=600_000,
+                model="gpt-4o-mini",
+            ),
+        }
+    )
+    assert rollup is not None
+    assert rollup.tokens_cached == 600_000
+    assert rollup.cost_usd_micros == 165_000
+    assert rollup.cost_breakdown["wiki.write"]["tokens_cached"] == 600_000
+
+
 # ---------------------------------------------------------------------------
 # Processor stamping
 # ---------------------------------------------------------------------------
@@ -263,6 +286,7 @@ async def test_complete_step_stamps_wiki_usage_columns(
         model="gpt-4o-mini",
         tokens_in=200_000,
         tokens_out=50_000,
+        tokens_cached=100_000,
         calls=12,
     )
     tally.record(
@@ -279,9 +303,11 @@ async def test_complete_step_stamps_wiki_usage_columns(
 
     assert job.tokens_input == 201_000
     assert job.tokens_output == 50_000
-    # wiki.write: 0.2M × $0.15 + 0.05M × $0.60 = $0.06 = 60_000 µUSD;
+    assert job.tokens_cached == 100_000
+    # wiki.write: 100k uncached × $0.15/M + 100k cached × $0.075/M
+    # + 0.05M out × $0.60/M = $0.0525 = 52_500 µUSD;
     # wiki.retrieval: 1_000 × $0.02/1M = $0.00002 = 20 µUSD.
-    assert job.cost_usd_micros == 60_020
+    assert job.cost_usd_micros == 52_520
     assert job.llm_model == "gpt-4o-mini"
     assert set(job.cost_breakdown) == {"wiki.write", "wiki.retrieval"}
 

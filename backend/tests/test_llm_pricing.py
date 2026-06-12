@@ -90,6 +90,40 @@ def test_cost_micros_gpt_5_4_wiki_scale() -> None:
     assert cost == 19_004_980  # ceil(6369244*2.50 + 205458*15.00)
 
 
+def test_cost_micros_cached_tokens_bill_at_cached_rate() -> None:
+    # gpt-5.4: input $2.50/M, cached input $0.25/M. 1M input of which
+    # 800k cached = 200k*2.50/M + 800k*0.25/M = $0.50 + $0.20 = $0.70.
+    cost = cost_micros(
+        model="gpt-5.4",
+        tokens_input=1_000_000,
+        tokens_output=0,
+        tokens_cached=800_000,
+    )
+    assert cost == 700_000
+
+
+def test_cost_micros_cached_clamped_to_input() -> None:
+    # A provider quirk reporting cached > prompt_tokens must not drive
+    # the cost negative — cached is a subset of input by definition.
+    cost = cost_micros(
+        model="gpt-5.4",
+        tokens_input=1_000,
+        tokens_output=0,
+        tokens_cached=5_000,
+    )
+    assert cost == 250  # all 1000 tokens at the $0.25/M cached rate
+
+
+def test_cost_micros_cached_without_cached_rate_bills_full_input() -> None:
+    # gpt-4-turbo predates prompt caching — no cached rate on file, so
+    # cached tokens fall back to the full input rate (upper bound).
+    with_cache = cost_micros(
+        model="gpt-4-turbo", tokens_input=1_000, tokens_cached=900
+    )
+    without = cost_micros(model="gpt-4-turbo", tokens_input=1_000)
+    assert with_cache == without == 10_000
+
+
 def test_micros_to_usd_round_trip() -> None:
     assert micros_to_usd(0) == 0.0
     assert micros_to_usd(1234567) == pytest.approx(1.234567)

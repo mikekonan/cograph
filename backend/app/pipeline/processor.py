@@ -633,6 +633,7 @@ class RepoSyncProcessor:
             return
         job.tokens_input = rollup.tokens_input
         job.tokens_output = rollup.tokens_output
+        job.tokens_cached = rollup.tokens_cached
         job.cost_usd_micros = rollup.cost_usd_micros
         job.llm_model = rollup.llm_model
         job.cost_breakdown = rollup.cost_breakdown

@@ -31,6 +31,7 @@ function job(p: JobInput): SyncJob {
     units: p.units ?? null,
     tokens_input: p.tokens_input ?? null,
     tokens_output: p.tokens_output ?? null,
+    tokens_cached: p.tokens_cached ?? null,
     cost_usd_micros: p.cost_usd_micros ?? null,
     llm_model: p.llm_model ?? null,
     cost_breakdown: p.cost_breakdown ?? null,
@@ -543,6 +544,7 @@ const historicBatches: SyncBatchSummary[] = HISTORY.map((spec) => {
     is_complete: jobs.every(isTerminal),
     tokens_input: null,
     tokens_output: null,
+    tokens_cached: null,
     cost_usd_micros: null,
   };
 });
@@ -563,6 +565,7 @@ export const seedBatches: SyncBatchSummary[] = [
     is_complete: batch1Jobs.every(isTerminal),
     tokens_input: null,
     tokens_output: null,
+    tokens_cached: null,
     cost_usd_micros: null,
   },
   {
@@ -576,6 +579,7 @@ export const seedBatches: SyncBatchSummary[] = [
     is_complete: batch2Jobs.every(isTerminal),
     tokens_input: null,
     tokens_output: null,
+    tokens_cached: null,
     cost_usd_micros: null,
   },
   ...historicBatches,

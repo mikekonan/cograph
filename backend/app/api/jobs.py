@@ -82,6 +82,7 @@ class SyncJobResponse(BaseModel):
     # has no price on file.
     tokens_input: int | None
     tokens_output: int | None
+    tokens_cached: int | None
     cost_usd_micros: int | None
     llm_model: str | None
     cost_breakdown: dict[str, dict[str, object]] | None
@@ -124,6 +125,7 @@ class SyncBatchSummaryResponse(BaseModel):
     # Rollup over child jobs; null when no job recorded any LLM usage.
     tokens_input: int | None = None
     tokens_output: int | None = None
+    tokens_cached: int | None = None
     cost_usd_micros: int | None = None
 
 
@@ -187,6 +189,7 @@ def _job_to_response(job: SyncJob) -> SyncJobResponse:
         error_msg=job.error_msg,
         tokens_input=job.tokens_input,
         tokens_output=job.tokens_output,
+        tokens_cached=job.tokens_cached,
         cost_usd_micros=job.cost_usd_micros,
         llm_model=job.llm_model,
         cost_breakdown=job.cost_breakdown,
@@ -248,6 +251,7 @@ def _batch_to_summary(
         is_complete=_is_batch_complete(counts),
         tokens_input=_nullable_sum([j.tokens_input for j in jobs]),
         tokens_output=_nullable_sum([j.tokens_output for j in jobs]),
+        tokens_cached=_nullable_sum([j.tokens_cached for j in jobs]),
         cost_usd_micros=_nullable_sum([j.cost_usd_micros for j in jobs]),
     )
 
@@ -515,6 +519,7 @@ async def retry_job(
     job.error_msg = None
     job.tokens_input = None
     job.tokens_output = None
+    job.tokens_cached = None
     job.cost_usd_micros = None
     job.llm_model = None
     job.cost_breakdown = None

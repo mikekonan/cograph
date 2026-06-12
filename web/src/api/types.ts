@@ -377,6 +377,9 @@ export type SyncJob = {
    */
   tokens_input: number | null;
   tokens_output: number | null;
+  /** Cached-prompt-read subset of tokens_input (billed ~90% off). Null on
+   * rows from before cache accounting — their cost is an upper bound. */
+  tokens_cached: number | null;
   cost_usd_micros: number | null;
   llm_model: string | null;
   /** Stage label → usage detail, e.g. "wiki.write" → {calls, tokens_in, …}. */
@@ -386,6 +389,7 @@ export type SyncJob = {
       calls: number;
       tokens_in: number;
       tokens_out: number;
+      tokens_cached?: number;
       model: string;
       cost_usd_micros: number | null;
     }
@@ -434,6 +438,7 @@ export type SyncBatchSummary = {
   /** Rollup over child jobs; null when no job recorded any LLM usage. */
   tokens_input: number | null;
   tokens_output: number | null;
+  tokens_cached: number | null;
   cost_usd_micros: number | null;
 };
 

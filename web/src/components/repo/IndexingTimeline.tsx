@@ -123,7 +123,12 @@ export function IndexingTimeline({ batch, jobs, isPending, className }: Indexing
         <span className="text-xs text-[color:var(--color-fg-muted)]">
           {batch.is_complete ? "Last run · " : "In progress · "}
           {formatDuration(totalMs)} total
-          {usageSuffix(batch.tokens_input, batch.tokens_output, batch.cost_usd_micros)}
+          {usageSuffix(
+            batch.tokens_input,
+            batch.tokens_output,
+            batch.cost_usd_micros,
+            batch.tokens_cached,
+          )}
         </span>
       </header>
 
@@ -251,25 +256,33 @@ function legendValue(job: SyncJob, durationMs: number): string {
   }
   return (
     formatDuration(durationMs) +
-    usageSuffix(job.tokens_input, job.tokens_output, job.cost_usd_micros)
+    usageSuffix(job.tokens_input, job.tokens_output, job.cost_usd_micros, job.tokens_cached)
   );
 }
 
 /**
- * " · 84.2k tok · $0.31" — appended to a duration when the step (or batch)
- * recorded LLM usage. Null usage renders nothing: most steps make no LLM
- * calls and a "0 tok" suffix on clone/parse would read as a bug. A null
- * cost with non-null tokens means "no price on file" — tokens only.
+ * " · 84.2k tok (96% cached) · $0.31" — appended to a duration when the
+ * step (or batch) recorded LLM usage. Null usage renders nothing: most
+ * steps make no LLM calls and a "0 tok" suffix on clone/parse would read
+ * as a bug. A null cost with non-null tokens means "no price on file" —
+ * tokens only. The cached share only shows when >0: it's the fraction of
+ * input billed at the ~90%-off cache rate, i.e. why the $ is lower than
+ * tokens × list price.
  */
 function usageSuffix(
   tokensInput: number | null,
   tokensOutput: number | null,
   costUsdMicros: number | null,
+  tokensCached: number | null = null,
 ): string {
   if (tokensInput === null && tokensOutput === null) {
     return "";
   }
   let suffix = ` · ${formatTokens((tokensInput ?? 0) + (tokensOutput ?? 0))}`;
+  if (tokensCached !== null && tokensCached > 0 && (tokensInput ?? 0) > 0) {
+    const pct = Math.round((tokensCached / (tokensInput ?? 1)) * 100);
+    suffix += ` (${pct}% cached)`;
+  }
   if (costUsdMicros !== null) {
     suffix += ` · ${formatCost(costUsdMicros)}`;
   }

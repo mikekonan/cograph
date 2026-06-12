@@ -454,10 +454,12 @@ class OpenAICompatibleStructuredProvider:
         usage = getattr(resp, "usage", None)
         if usage is None:
             return
+        details = getattr(usage, "prompt_tokens_details", None)
         self._tally.record(
             model=self._model,
             tokens_in=int(getattr(usage, "prompt_tokens", 0) or 0),
             tokens_out=int(getattr(usage, "completion_tokens", 0) or 0),
+            tokens_cached=int(getattr(details, "cached_tokens", 0) or 0),
         )
 
     async def _create(

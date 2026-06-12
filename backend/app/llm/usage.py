@@ -62,11 +62,17 @@ class StageUsage:
 
     `model` is last-writer-wins: a stage is served by exactly one
     provider in practice, so there's nothing to merge.
+
+    `tokens_cached` is the cached-prompt-read subset of `tokens_in`
+    (OpenAI's `prompt_tokens_details.cached_tokens`) — billed at the
+    cached rate, so dropping it would overstate cost ~10x on
+    cache-heavy agentic stages.
     """
 
     calls: int = 0
     tokens_in: int = 0
     tokens_out: int = 0
+    tokens_cached: int = 0
     model: str = ""
 
 
@@ -82,6 +88,7 @@ class LlmUsageTally:
         model: str,
         tokens_in: int = 0,
         tokens_out: int = 0,
+        tokens_cached: int = 0,
         calls: int = 1,
         stage: str | None = None,
     ) -> None:
@@ -95,6 +102,7 @@ class LlmUsageTally:
         entry.calls += calls
         entry.tokens_in += int(tokens_in or 0)
         entry.tokens_out += int(tokens_out or 0)
+        entry.tokens_cached += int(tokens_cached or 0)
         entry.model = model
 
     def stages_with_prefix(self, prefixes: tuple[str, ...]) -> dict[str, StageUsage]:
@@ -111,6 +119,7 @@ class StepUsageRollup:
 
     tokens_input: int
     tokens_output: int
+    tokens_cached: int
     # None when no stage has a price on file — "no price", not "free".
     cost_usd_micros: int | None
     llm_model: str | None
@@ -137,11 +146,13 @@ def rollup_stages(stages: dict[str, StageUsage]) -> StepUsageRollup | None:
             model=usage.model,
             tokens_input=usage.tokens_in,
             tokens_output=usage.tokens_out,
+            tokens_cached=usage.tokens_cached,
         )
         breakdown[label] = {
             "calls": usage.calls,
             "tokens_in": usage.tokens_in,
             "tokens_out": usage.tokens_out,
+            "tokens_cached": usage.tokens_cached,
             "model": usage.model,
             "cost_usd_micros": stage_cost,
         }
@@ -152,6 +163,7 @@ def rollup_stages(stages: dict[str, StageUsage]) -> StepUsageRollup | None:
     return StepUsageRollup(
         tokens_input=sum(u.tokens_in for u in stages.values()),
         tokens_output=sum(u.tokens_out for u in stages.values()),
+        tokens_cached=sum(u.tokens_cached for u in stages.values()),
         cost_usd_micros=total_cost,
         llm_model=top.model or None,
         cost_breakdown=breakdown,

@@ -32,10 +32,18 @@ class ModelPrice:
 
     `output_per_million` is `None` for pure embedding models — they
     don't emit tokens, so charging output is a category error.
+
+    `cached_input_per_million` is the rate for prompt tokens served
+    from OpenAI's implicit prefix cache (`usage.prompt_tokens_details.
+    cached_tokens` — a *subset* of `prompt_tokens`, not an addition).
+    `None` means "no cached rate on file": cached tokens are then
+    billed at the full input rate, keeping the estimate an upper
+    bound rather than silently undercounting.
     """
 
     input_per_million: float
     output_per_million: float | None
+    cached_input_per_million: float | None = None
 
 
 # Pricing snapshot — public OpenAI list price as of 2026-06.
@@ -45,19 +53,25 @@ _PRICES: dict[str, ModelPrice] = {
     "text-embedding-3-small": ModelPrice(0.02, None),
     "text-embedding-3-large": ModelPrice(0.13, None),
     "text-embedding-ada-002": ModelPrice(0.10, None),
-    # Chat — input / output split.
-    "gpt-5.4": ModelPrice(2.50, 15.00),
-    "gpt-5.4-mini": ModelPrice(0.75, 4.50),
-    "gpt-5.4-nano": ModelPrice(0.20, 1.25),
-    "gpt-4o": ModelPrice(2.50, 10.00),
-    "gpt-4o-mini": ModelPrice(0.15, 0.60),
-    "gpt-4o-2024-08-06": ModelPrice(2.50, 10.00),
+    # Chat — input / cached-input / output split. gpt-5.x bills cached
+    # prompt reads at 90% off; gpt-4o-era models at 50% off. Models
+    # predating prompt caching keep cached=None (billed as full input).
+    # NB: gpt-5.5 charges 2x input / 1.5x output for prompts >272K
+    # tokens — not modelled here; the wiki loop's input budget caps a
+    # single prompt well below that.
+    "gpt-5.5": ModelPrice(5.00, 30.00, 0.50),
+    "gpt-5.4": ModelPrice(2.50, 15.00, 0.25),
+    "gpt-5.4-mini": ModelPrice(0.75, 4.50, 0.075),
+    "gpt-5.4-nano": ModelPrice(0.20, 1.25, 0.02),
+    "gpt-4o": ModelPrice(2.50, 10.00, 1.25),
+    "gpt-4o-mini": ModelPrice(0.15, 0.60, 0.075),
+    "gpt-4o-2024-08-06": ModelPrice(2.50, 10.00, 1.25),
     "gpt-4-turbo": ModelPrice(10.00, 30.00),
     "gpt-4": ModelPrice(30.00, 60.00),
     "gpt-3.5-turbo": ModelPrice(0.50, 1.50),
-    "o1": ModelPrice(15.00, 60.00),
-    "o1-mini": ModelPrice(3.00, 12.00),
-    "o3-mini": ModelPrice(1.10, 4.40),
+    "o1": ModelPrice(15.00, 60.00, 7.50),
+    "o1-mini": ModelPrice(3.00, 12.00, 1.50),
+    "o3-mini": ModelPrice(1.10, 4.40, 0.55),
 }
 
 
@@ -78,6 +92,7 @@ def cost_micros(
     model: str | None,
     tokens_input: int | None,
     tokens_output: int | None = None,
+    tokens_cached: int | None = None,
 ) -> int | None:
     """USD cost in micro-USD (× 10^-6 dollars), or `None` when unknown.
 
@@ -86,6 +101,12 @@ def cost_micros(
     "had a chance to cost something but we missed the usage payload"
     (None) from "cost is genuinely zero" (impossible — embedding a
     one-character input still bills ≥1 token).
+
+    `tokens_cached` is the cached-prompt-read count, a SUBSET of
+    `tokens_input` (OpenAI semantics: `prompt_tokens` already includes
+    it). It's clamped into `[0, tokens_input]` so a provider quirk
+    can't drive the cost negative. When the model has a cached rate,
+    those tokens bill at it; otherwise at the full input rate.
 
     Rounded **up** (`math.ceil`) so a query that genuinely consumed
     a fraction of a micro-USD doesn't log $0 — under-billing the
@@ -98,10 +119,16 @@ def cost_micros(
     tout = int(tokens_output or 0)
     if tin == 0 and tout == 0:
         return None
-    # USD cost = (tin / 1e6) * price.input + (tout / 1e6) * price.output
-    # micro-USD = USD * 1e6, so the 1e6 factor cancels with the per-1M
-    # divisor and we're left with tin * input_price + tout * output_price.
-    cost_usd = tin * price.input_per_million
+    cached = min(max(int(tokens_cached or 0), 0), tin)
+    cached_rate = (
+        price.cached_input_per_million
+        if price.cached_input_per_million is not None
+        else price.input_per_million
+    )
+    # USD cost = (tokens / 1e6) * price-per-1M; micro-USD = USD * 1e6,
+    # so the 1e6 factors cancel and we multiply tokens by the rate
+    # directly.
+    cost_usd = (tin - cached) * price.input_per_million + cached * cached_rate
     if tout and price.output_per_million is not None:
         cost_usd += tout * price.output_per_million
     if cost_usd <= 0:
