@@ -7,11 +7,14 @@ that downstream stages parse into `PageDraft`.
 
 from __future__ import annotations
 
+import logging
 from enum import StrEnum
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+logger = logging.getLogger(__name__)
 
 
 class ReaderQuestion(StrEnum):
@@ -476,6 +479,39 @@ class PageSpec(BaseModel):
     page_kind: PageKind = PageKind.CONCEPT
     salience_tier: SalienceTier = SalienceTier.SUPPORTING
     facet_tags: list[str] = Field(default_factory=list)
+
+    @field_validator("covers_questions", mode="before")
+    @classmethod
+    def _drop_unknown_questions(cls, value: object) -> object:
+        """Tolerate planner hallucinations on `covers_questions`.
+
+        `ReaderQuestion` is a closed 5-value contract, but the planner LLM
+        occasionally invents a sixth slug (e.g. `operational-concerns`).
+        Strict enum validation would reject the whole `PagePlan` over one
+        bad slug on one page — taking down the entire repo's wiki stage
+        after the two `plan_pages` retries. We instead drop unknown slugs
+        (deduping, order-preserving) so the page keeps its valid coverage
+        and the plan survives. Valid slugs are never touched, so the
+        union-coverage contract over the real five is unaffected.
+        """
+        if not isinstance(value, list):
+            return value
+        valid = {q.value for q in ReaderQuestion}
+        kept: list[str] = []
+        dropped: list[str] = []
+        for item in value:
+            slug = item.value if isinstance(item, ReaderQuestion) else item
+            if slug in valid:
+                if slug not in kept:
+                    kept.append(slug)
+            elif isinstance(slug, str):
+                dropped.append(slug)
+        if dropped:
+            logger.warning(
+                "PageSpec dropped unknown covers_questions slugs: %s",
+                ", ".join(sorted(set(dropped))),
+            )
+        return kept
 
 
 class PagePlan(BaseModel):
