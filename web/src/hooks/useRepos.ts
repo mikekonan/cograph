@@ -114,7 +114,10 @@ export function useRepos(params?: {
     }),
     refetchInterval: (q) => {
       const data = q.state.data as OffsetPage<Repository> | undefined;
-      const inFlight = data?.items.some((r) => isInFlightRepoStatus(r.status));
+      // Poll while anything is mid-pipeline OR a re-sync is active. The latter
+      // is load-bearing: a re-sync of a READY repo keeps status "ready", so
+      // isInFlightRepoStatus alone would never clear the sync_state badge.
+      const inFlight = data?.items.some((r) => isInFlightRepoStatus(r.status) || !!r.sync_state);
       return inFlight || hasActiveCreatedRepoLifecycle(qc) ? 1000 : false;
     },
   });
@@ -138,7 +141,9 @@ export function useRepo(slug: RepoSlug | null | undefined) {
     refetchInterval: (q) => {
       const data = q.state.data as Repository | undefined;
       if (!data) return false;
-      return isInFlightRepoStatus(data.status) || hasActiveCreatedRepoLifecycle(qc, data.id)
+      return isInFlightRepoStatus(data.status) ||
+        !!data.sync_state ||
+        hasActiveCreatedRepoLifecycle(qc, data.id)
         ? 1000
         : false;
     },

@@ -19,6 +19,7 @@ from backend.app.models.enums import (
 )
 from backend.app.models.personal_access_token import PersonalAccessToken
 from backend.app.models.repo_document import RepoDocument
+from backend.app.models.repo_sync_run import RepoSyncRun
 from backend.app.models.repository import Repository
 from backend.app.models.source_file import SourceFile
 from backend.app.models.user import User
@@ -532,6 +533,77 @@ async def test_list_repositories_includes_next_sync_at(client, db_session):
     assert response.json()["items"][0][
         "next_sync_at"
     ] == next_sync_at.isoformat().replace("+00:00", "Z")
+
+
+async def test_list_repositories_reports_active_sync_state(client, db_session):
+    """A repo with an active run surfaces sync_state; an idle one stays None.
+
+    RUNNING wins over QUEUED so a re-sync reads as "syncing", and a READY
+    repo (which a re-sync no longer demotes) still flags the activity.
+    """
+    running_repo = Repository(
+        host="example.com",
+        git_url="https://github.com/acme/running.git",
+        name="running",
+        owner="acme",
+        branch="main",
+        visibility=RepositoryVisibility.PUBLIC,
+        status=RepositoryStatus.READY,
+    )
+    queued_repo = Repository(
+        host="example.com",
+        git_url="https://github.com/acme/queued.git",
+        name="queued",
+        owner="acme",
+        branch="main",
+        visibility=RepositoryVisibility.PUBLIC,
+        status=RepositoryStatus.READY,
+    )
+    idle_repo = Repository(
+        host="example.com",
+        git_url="https://github.com/acme/idle.git",
+        name="idle",
+        owner="acme",
+        branch="main",
+        visibility=RepositoryVisibility.PUBLIC,
+        status=RepositoryStatus.READY,
+    )
+    db_session.add_all([running_repo, queued_repo, idle_repo])
+    await db_session.commit()
+
+    db_session.add_all(
+        [
+            RepoSyncRun(
+                repository_id=running_repo.id,
+                trigger_kind=RepoSyncTriggerKind.SCHEDULE,
+                status=RepoSyncRunStatus.RUNNING,
+            ),
+            RepoSyncRun(
+                repository_id=queued_repo.id,
+                trigger_kind=RepoSyncTriggerKind.SCHEDULE,
+                status=RepoSyncRunStatus.QUEUED,
+            ),
+            # A terminal run must NOT light up the badge.
+            RepoSyncRun(
+                repository_id=idle_repo.id,
+                trigger_kind=RepoSyncTriggerKind.MANUAL,
+                status=RepoSyncRunStatus.SUCCESS,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    response = await client.get("/api/repos")
+    assert response.status_code == 200
+    by_name = {item["name"]: item for item in response.json()["items"]}
+    assert by_name["running"]["sync_state"] == "running"
+    assert by_name["queued"]["sync_state"] == "queued"
+    assert by_name["idle"]["sync_state"] is None
+
+    # Detail endpoint agrees with the list.
+    detail = await client.get("/api/repos/example.com/acme/running")
+    assert detail.status_code == 200
+    assert detail.json()["sync_state"] == "running"
 
 
 async def test_list_repositories_anonymous_excludes_admin_only(client, db_session):

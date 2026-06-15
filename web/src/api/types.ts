@@ -164,6 +164,13 @@ export type Repository = {
   /** ISO timestamp of the next scheduled sync, or null for manual/webhook repos. */
   next_sync_at?: ISODateTime | null;
   /**
+   * Live sync activity from an active repo_sync_run: "queued" (enqueued,
+   * waiting for a worker slot) or "running" (pipeline in flight). null/absent
+   * when idle. Surfaces a re-sync even when the repo stays "ready" (a re-sync
+   * no longer demotes status).
+   */
+  sync_state?: "queued" | "running" | null;
+  /**
    * Representative source files surfaced by the indexing pipeline.
    * Only populated on the repo-detail response once the repo has been indexed.
    * Empty / absent when the repo is mid-pipeline or has no source files.

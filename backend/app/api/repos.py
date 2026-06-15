@@ -5,7 +5,7 @@ import re
 import secrets
 from datetime import UTC, datetime
 from inspect import isawaitable
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
@@ -178,6 +178,11 @@ class RepositoryResponse(BaseModel):
     log_queries: bool
     last_synced_at: datetime | None
     next_sync_at: datetime | None
+    # Live sync activity derived from active repo_sync_runs: "queued" (enqueued,
+    # waiting for a worker slot) or "running" (pipeline in flight). None when
+    # idle. Lets cards flag a re-sync even when the repo stays READY (a re-sync
+    # no longer demotes status), so the UI shows "available AND updating".
+    sync_state: Literal["queued", "running"] | None = None
     readme: str | None = None
     description: str | None = None
     created_at: datetime
@@ -1358,6 +1363,27 @@ async def _build_repository_response(
         _extract_description(readme_content) if readme_content else None
     )
 
+    # Active sync state — RUNNING wins over QUEUED (ordered so the running
+    # row, if any, sorts first). None when no run is in flight.
+    active_run_status = await session.scalar(
+        select(RepoSyncRun.status)
+        .where(
+            RepoSyncRun.repository_id == repository.id,
+            RepoSyncRun.status.in_(
+                (RepoSyncRunStatus.QUEUED, RepoSyncRunStatus.RUNNING)
+            ),
+        )
+        .order_by(case((RepoSyncRun.status == RepoSyncRunStatus.RUNNING, 0), else_=1))
+        .limit(1)
+    )
+    sync_state: Literal["queued", "running"] | None = (
+        "running"
+        if active_run_status is RepoSyncRunStatus.RUNNING
+        else "queued"
+        if active_run_status is RepoSyncRunStatus.QUEUED
+        else None
+    )
+
     return RepositoryResponse(
         id=repository.id,
         git_url=repository.git_url,
@@ -1384,6 +1410,7 @@ async def _build_repository_response(
         log_queries=repository.log_queries,
         last_synced_at=repository.last_synced_at,
         next_sync_at=repository.next_sync_at,
+        sync_state=sync_state,
         readme=readme_content,
         description=description,
         created_at=repository.created_at,
@@ -1488,6 +1515,28 @@ async def _build_repository_list_items(
         row.repository_id: int(row.sf_count) for row in sf_count_rows
     }
 
+    # --- Batch active sync state (1 query) ---
+    # An active repo_sync_run is QUEUED (waiting for a worker slot — real
+    # during the hourly-cron burst with max_jobs=4) or RUNNING. Dedup keeps
+    # at most one active run per repo; RUNNING wins if both ever coexist.
+    active_run_rows = (
+        await session.execute(
+            select(RepoSyncRun.repository_id, RepoSyncRun.status).where(
+                RepoSyncRun.repository_id.in_(repo_ids),
+                RepoSyncRun.status.in_(
+                    (RepoSyncRunStatus.QUEUED, RepoSyncRunStatus.RUNNING)
+                ),
+            )
+        )
+    ).all()
+    sync_state_by_id: dict[UUID, Literal["queued", "running"]] = {}
+    for rid, run_status in active_run_rows:
+        state: Literal["queued", "running"] = (
+            "running" if run_status is RepoSyncRunStatus.RUNNING else "queued"
+        )
+        if sync_state_by_id.get(rid) != "running":
+            sync_state_by_id[rid] = state
+
     # --- Assemble responses ---
     items: list[RepositoryResponse] = []
     for repo in repos:
@@ -1519,6 +1568,7 @@ async def _build_repository_list_items(
                 log_queries=repo.log_queries,
                 last_synced_at=repo.last_synced_at,
                 next_sync_at=repo.next_sync_at,
+                sync_state=sync_state_by_id.get(repo.id),
                 readme=None,
                 description=None,
                 created_at=repo.created_at,

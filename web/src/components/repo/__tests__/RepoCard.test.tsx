@@ -87,6 +87,23 @@ describe("RepoCard", () => {
     renderRepoCard({ ...repo, sync_schedule: "hourly" });
     expect(screen.getByText("Hourly")).toBeInTheDocument();
   });
+
+  it("shows no sync-activity badge when the repo is idle", () => {
+    renderRepoCard({ ...repo, sync_state: null });
+    expect(screen.queryByText("syncing")).toBeNull();
+    expect(screen.queryByText("queued")).toBeNull();
+  });
+
+  it("flags an in-flight re-sync even while the repo stays ready", () => {
+    renderRepoCard({ ...repo, status: "ready", sync_state: "running" });
+    expect(screen.getByText("ready")).toBeInTheDocument();
+    expect(screen.getByText("syncing")).toBeInTheDocument();
+  });
+
+  it("flags a repo queued for sync", () => {
+    renderRepoCard({ ...repo, status: "ready", sync_state: "queued" });
+    expect(screen.getByText("queued")).toBeInTheDocument();
+  });
 });
 
 function renderRepoCard(nextRepo: Repository = repo, config: AuthConfig = authConfig) {

@@ -2,6 +2,7 @@ import type { Repository } from "@/api/types";
 import { RepoVisibilityBadge } from "@/components/repo/RepoVisibilityBadge";
 import { LanguageTags } from "@/components/shared/LanguageTags";
 import { StatusBadge } from "@/components/shared/StatusBadge";
+import { SyncStateBadge } from "@/components/shared/SyncStateBadge";
 import { Button } from "@/components/ui/Button";
 import {
   Dialog,
@@ -111,7 +112,10 @@ export function RepoCard({ repo }: RepoCardProps) {
             )}
           </div>
         </div>
-        <StatusBadge status={repo.status} />
+        <div className="flex shrink-0 flex-col items-end gap-1.5">
+          <StatusBadge status={repo.status} />
+          {repo.sync_state && <SyncStateBadge state={repo.sync_state} />}
+        </div>
       </header>
 
       {/* ZONE 2 — languages: TINTED STRIP that defines the card's rhythm */}
@@ -260,7 +264,14 @@ function ScheduleChip({ schedule }: { schedule: Repository["sync_schedule"] }) {
   const meta = syncScheduleMeta(schedule);
   const Icon = meta.icon;
   return (
-    <span className="inline-flex shrink-0 items-center gap-1 font-medium text-[color:var(--color-fg)]">
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center gap-1 rounded-full",
+        "border border-[color:var(--color-border-subtle)]",
+        "bg-[color:var(--color-bg-surface)] px-1.5 py-0.5",
+        "font-medium text-[color:var(--color-fg)]",
+      )}
+    >
       <Icon className="h-3 w-3 text-[color:var(--color-fg-muted)]" aria-hidden="true" />
       {meta.label}
     </span>
