@@ -18,6 +18,7 @@ import { useDeleteRepo } from "@/hooks/useRepos";
 import { hasAdminAccess } from "@/lib/auth";
 import { repoPath } from "@/lib/repoPath";
 import { repoInFlightMessage } from "@/lib/repoStatus";
+import { syncScheduleMeta } from "@/lib/syncSchedule";
 import { cn, formatCount, formatRelativeTime, formatUtcTimestamp } from "@/lib/utils";
 import { GitBranch, MoreVertical, Trash2 } from "lucide-react";
 import { useState } from "react";
@@ -174,13 +175,20 @@ export function RepoCard({ repo }: RepoCardProps) {
           "text-xs text-[color:var(--color-fg-muted)]",
         )}
       >
-        {repo.last_synced_at ? (
-          <Tooltip content={`Last synced ${formatUtcTimestamp(repo.last_synced_at)}`}>
-            <span>synced {formatRelativeTime(repo.last_synced_at)}</span>
-          </Tooltip>
-        ) : (
-          <span>never synced</span>
-        )}
+        <div className="flex min-w-0 items-center gap-1.5">
+          {/* Configured auto-sync cadence — the lead signal; recency follows. */}
+          <ScheduleChip schedule={repo.sync_schedule} />
+          <span aria-hidden="true" className="text-[color:var(--color-fg-subtle)]">
+            ·
+          </span>
+          {repo.last_synced_at ? (
+            <Tooltip content={`Last synced ${formatUtcTimestamp(repo.last_synced_at)}`}>
+              <span className="truncate">synced {formatRelativeTime(repo.last_synced_at)}</span>
+            </Tooltip>
+          ) : (
+            <span className="truncate">never synced</span>
+          )}
+        </div>
 
         {canDelete && (
           <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
@@ -238,6 +246,24 @@ export function RepoCard({ repo }: RepoCardProps) {
         )}
       </footer>
     </article>
+  );
+}
+
+/**
+ * Compact pill showing the repo's auto-sync cadence (Manual / Hourly /
+ * Daily / Weekly / Webhook) with its mode icon. Reads from the shared
+ * `syncScheduleMeta` map so the wording matches the SyncSettings picker.
+ * No tooltip: the stretched card-overlay NavLink eats hover events, and
+ * the label is self-explanatory — the cadence hint lives on the detail page.
+ */
+function ScheduleChip({ schedule }: { schedule: Repository["sync_schedule"] }) {
+  const meta = syncScheduleMeta(schedule);
+  const Icon = meta.icon;
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1 font-medium text-[color:var(--color-fg)]">
+      <Icon className="h-3 w-3 text-[color:var(--color-fg-muted)]" aria-hidden="true" />
+      {meta.label}
+    </span>
   );
 }
 

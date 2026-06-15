@@ -77,6 +77,16 @@ describe("RepoCard", () => {
     // shifts with the clock so we don't lock its exact wording.
     expect(screen.getByText(/^synced /)).toBeInTheDocument();
   });
+
+  it("shows the configured auto-sync cadence on the footer", () => {
+    renderRepoCard({ ...repo, sync_schedule: "manual" });
+    expect(screen.getByText("Manual")).toBeInTheDocument();
+  });
+
+  it("reflects the cadence label per schedule mode", () => {
+    renderRepoCard({ ...repo, sync_schedule: "hourly" });
+    expect(screen.getByText("Hourly")).toBeInTheDocument();
+  });
 });
 
 function renderRepoCard(nextRepo: Repository = repo, config: AuthConfig = authConfig) {

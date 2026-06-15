@@ -5,9 +5,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/u
 import { useAuth } from "@/hooks/useAuth";
 import { hasAdminAccess } from "@/lib/auth";
 import { repoApiPath } from "@/lib/repoPath";
+import { SYNC_SCHEDULE_OPTIONS, syncScheduleMeta } from "@/lib/syncSchedule";
 import { cn, formatUtcTimestamp } from "@/lib/utils";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Calendar, Check, Clock, Eye, RefreshCw, Webhook } from "lucide-react";
+import { Eye, RefreshCw } from "lucide-react";
 import type { ComponentType, ReactNode, SVGProps } from "react";
 
 type SyncSettingsProps = {
@@ -15,19 +16,6 @@ type SyncSettingsProps = {
   className?: string;
   compact?: boolean;
 };
-
-const OPTIONS: Array<{
-  value: SyncSchedule;
-  label: string;
-  hint: string;
-  icon: ComponentType<SVGProps<SVGSVGElement>>;
-}> = [
-  { value: "manual", label: "Manual", hint: "Only on demand", icon: Check },
-  { value: "hourly", label: "Hourly", hint: "Every hour", icon: Clock },
-  { value: "daily", label: "Daily", hint: "Once per day", icon: Calendar },
-  { value: "weekly", label: "Weekly", hint: "Mondays", icon: Calendar },
-  { value: "webhook", label: "Webhook", hint: "On push", icon: Webhook },
-];
 
 /**
  * SyncSettings — inline "how often do we re-index this repo" control.
@@ -51,7 +39,7 @@ export function SyncSettings({ repo, className, compact = false }: SyncSettingsP
     },
   });
 
-  const current = OPTIONS.find((o) => o.value === repo.sync_schedule);
+  const current = syncScheduleMeta(repo.sync_schedule);
   const canManage = hasAdminAccess(user?.role);
   const visibility = repo.visibility;
   const selectTriggerClassName = compact ? "w-full" : "w-36 flex-shrink-0";
@@ -105,9 +93,7 @@ export function SyncSettings({ repo, className, compact = false }: SyncSettingsP
             title="Auto-sync"
             icon={RefreshCw}
             trailing={
-              current ? (
-                <span className="text-2xs text-[color:var(--color-fg-muted)]">{current.hint}</span>
-              ) : null
+              <span className="text-2xs text-[color:var(--color-fg-muted)]">{current.hint}</span>
             }
           >
             <Select
@@ -123,10 +109,10 @@ export function SyncSettings({ repo, className, compact = false }: SyncSettingsP
                   render the label by hand here and relegate the hint to the
                   dropdown only.
                 */}
-                <span className="truncate text-sm">{current?.label ?? "Schedule"}</span>
+                <span className="truncate text-sm">{current.label}</span>
               </SelectTrigger>
               <SelectContent className="min-w-[220px]">
-                {OPTIONS.map((opt) => {
+                {SYNC_SCHEDULE_OPTIONS.map((opt) => {
                   const Icon = opt.icon;
                   return (
                     <SelectItem key={opt.value} value={opt.value}>
