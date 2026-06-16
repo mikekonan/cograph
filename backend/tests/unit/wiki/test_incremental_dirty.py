@@ -7,6 +7,8 @@ the per-page dirty clauses, and the artifact-reuse key.
 
 from __future__ import annotations
 
+import importlib.util
+from pathlib import Path
 from uuid import uuid4
 
 from backend.app.models.wiki_artifact import WikiArtifact
@@ -63,12 +65,18 @@ def test_spec_hash_stable_for_identical_specs() -> None:
     assert spec_hash(_spec()) == spec_hash(_spec())
 
 
-def test_spec_hash_changes_on_purpose() -> None:
-    assert spec_hash(_spec()) != spec_hash(_spec(purpose="changed purpose"))
+def test_spec_hash_insensitive_to_purpose() -> None:
+    # `purpose` is a free-text planner hint regenerated non-deterministically
+    # on every re-plan; hashing it made any re-plan dirty every page. A
+    # reworded purpose with an unchanged contract + evidence must not dirty.
+    assert spec_hash(_spec()) == spec_hash(_spec(purpose="changed purpose"))
 
 
-def test_spec_hash_changes_on_sources_hint() -> None:
-    assert spec_hash(_spec()) != spec_hash(_spec(sources_hint=["other.py"]))
+def test_spec_hash_insensitive_to_sources_hint() -> None:
+    # `sources_hint` is subsumed by `bundle_fingerprint` — the evidence
+    # actually retrieved for the page is the authoritative signal, so the
+    # planner's hint list is pure noise in the contract hash.
+    assert spec_hash(_spec()) == spec_hash(_spec(sources_hint=["other.py"]))
 
 
 def test_spec_hash_changes_on_covers_questions() -> None:
@@ -87,12 +95,132 @@ def test_spec_hash_changes_on_title_and_parent() -> None:
     assert spec_hash(_spec()) != spec_hash(_spec(parent_slug=None))
 
 
-def test_spec_hash_insensitive_to_hint_order_and_planner_metadata() -> None:
-    reordered = _spec(sources_hint=["tokens.py", "auth.py"])
-    assert spec_hash(_spec()) == spec_hash(reordered)
-    # Planner-only metadata never reaches the writer prompt.
+def test_spec_hash_insensitive_to_planner_metadata() -> None:
+    # Planner-only telemetry never reaches the page contract.
     tagged = _spec(facet_tags=["x", "y"], salience_tier="public")
     assert spec_hash(_spec()) == spec_hash(tagged)
+
+
+def _load_migration_0062() -> object:
+    # versions/ is not a package (no __init__.py) and the module name starts
+    # with a digit — load it by file path.
+    import backend
+
+    path = (
+        Path(backend.__file__).parent
+        / "app/db/migrations/versions/0062_backfill_spec_hash.py"
+    )
+    spec = importlib.util.spec_from_file_location("_mig_0062", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_migration_0062_spec_hash_byte_identical() -> None:
+    """0062 inlines a frozen copy of spec_hash — it cannot import
+    incremental (that drags retrieval/embedder deps into the Alembic env).
+    This pins the copy byte-for-byte against the live function: if spec_hash
+    changes, this goes red and the change must ship its own backfill."""
+    migration = _load_migration_0062()
+    edge_specs = [
+        _spec(),
+        _spec(parent_slug=None),
+        _spec(covers_questions=[]),
+        _spec(
+            covers_questions=[
+                ReaderQuestion.PUBLIC_API,
+                ReaderQuestion.HOW_TO_RUN,
+                ReaderQuestion.CONFIGURATION,
+            ]
+        ),
+        _spec(diagram=True),
+        _spec(page_kind=PageKind.KEY_FLOW),
+        _spec(slug="weird/slug:with-chars", title='Tïtlé — 日本語 "q"'),
+        # purpose / sources_hint differ but must NOT move the hash now:
+        _spec(purpose="totally different", sources_hint=["z.py", "a.py"]),
+    ]
+    for spec in edge_specs:
+        assert migration._spec_hash(spec) == spec_hash(spec)  # type: ignore[attr-defined]
+
+
+def test_migration_0062_backfill_updates_only_planned_slugs() -> None:
+    """Backfill plumbing on sqlite: upgrade rewrites spec_hash for every
+    document whose slug is in the repo plan, leaves orphan rows (no plan
+    entry) untouched, and downgrade restores the legacy formula. Exercises
+    the JSONB-as-TEXT read path and the (repository_id, slug) WHERE clause."""
+    import json as _json
+
+    import sqlalchemy as _sa
+    from sqlalchemy.pool import StaticPool
+
+    migration = _load_migration_0062()
+    specs = [
+        _spec(slug="index", title="Index", parent_slug=None),
+        _spec(
+            slug="auth",
+            title="Authentication",
+            covers_questions=[
+                ReaderQuestion.CONFIGURATION,
+                ReaderQuestion.PUBLIC_API,
+            ],
+            diagram=True,
+        ),
+        _spec(slug="api", title="API", page_kind=PageKind.KEY_FLOW),
+    ]
+    specs_by_slug = {s.slug: s for s in specs}
+    plan_payload = {"pages": [s.model_dump(mode="json") for s in specs]}
+
+    engine = _sa.create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                _sa.text("CREATE TABLE wiki_artifacts (repository_id TEXT, plan TEXT)")
+            )
+            conn.execute(
+                _sa.text(
+                    "CREATE TABLE documents "
+                    "(repository_id TEXT, slug TEXT, spec_hash TEXT)"
+                )
+            )
+            conn.execute(
+                _sa.text("INSERT INTO wiki_artifacts VALUES (:r, :p)"),
+                {"r": "repo1", "p": _json.dumps(plan_payload)},
+            )
+            for s in specs:
+                conn.execute(
+                    _sa.text("INSERT INTO documents VALUES (:r, :s, 'STALE')"),
+                    {"r": "repo1", "s": s.slug},
+                )
+            # Orphan: slug absent from the plan — must stay untouched.
+            conn.execute(
+                _sa.text("INSERT INTO documents VALUES ('repo1', 'orphan', 'STALE')")
+            )
+
+        with engine.begin() as conn:
+            migration._rebackfill(migration._spec_hash, bind=conn)  # type: ignore[attr-defined]
+            up = dict(
+                conn.execute(_sa.text("SELECT slug, spec_hash FROM documents")).all()
+            )
+        for slug, spec in specs_by_slug.items():
+            assert up[slug] == spec_hash(spec)
+        assert up["orphan"] == "STALE"
+
+        with engine.begin() as conn:
+            migration._rebackfill(migration._spec_hash_legacy, bind=conn)  # type: ignore[attr-defined]
+            down = dict(
+                conn.execute(_sa.text("SELECT slug, spec_hash FROM documents")).all()
+            )
+        for slug, spec in specs_by_slug.items():
+            assert down[slug] == migration._spec_hash_legacy(spec)  # type: ignore[attr-defined]
+            assert down[slug] != spec_hash(spec)
+        assert down["orphan"] == "STALE"
+    finally:
+        engine.dispose()
 
 
 # ---------------------------------------------------------------------------

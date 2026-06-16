@@ -59,20 +59,39 @@ def _canonical_hash(payload: object) -> str:
 
 
 def spec_hash(spec: PageSpec) -> str:
-    """Hash of the PageSpec fields that reach the writer prompt.
+    """Hash of the page's stable *contract* — what it must be, not how it
+    was framed.
 
-    Restricted to what `build_page_writer_user` + the page-kind contract +
-    Stage 4b actually consume: planner-only metadata (`salience_tier`,
-    `facet_tags`) is excluded so a re-plan that shuffles planner telemetry
-    doesn't dirty pages whose writing instructions are unchanged.
+    Includes the fields a re-plan keeps stable for an unchanged page:
+    identity (`slug`), heading (`title`), tree position (`parent_slug`),
+    the reader questions it must answer (`covers_questions`), whether it
+    carries a diagram, and its `page_kind`.
+
+    Deliberately EXCLUDES two free-text planner hints — `purpose` and
+    `sources_hint` — even though both reach the writer prompt:
+
+    * Both are regenerated non-deterministically by the planner on every
+      re-plan (the LLM rephrases the same page's purpose sentence and
+      reshuffles its source hints), so hashing them made *any* re-plan
+      dirty *every* page — a full-wiki rewrite triggered by planner jitter,
+      not by a real change. This was the dominant spurious-cost driver.
+    * `sources_hint` is subsumed by `bundle_fingerprint`: the evidence
+      actually retrieved for the page is the authoritative dirty signal,
+      so a hint list adds only noise.
+    * `purpose` is a framing hint; absent any contract or evidence change,
+      a reworded purpose doesn't change the page's substance. The residual
+      staleness window (reworded purpose, identical contract + evidence,
+      clean quality) serves still-accurate content and is closed by the
+      cheap edit pass; OWNER "Rebuild wiki" is the escape hatch.
+
+    Planner-only telemetry (`salience_tier`, `facet_tags`) stays excluded
+    for the same reuse-stability reason.
     """
     return _canonical_hash(
         {
             "slug": spec.slug,
             "title": spec.title,
             "parent_slug": spec.parent_slug or "",
-            "purpose": spec.purpose,
-            "sources_hint": sorted(spec.sources_hint),
             "covers_questions": sorted(q.value for q in spec.covers_questions),
             "diagram": spec.diagram,
             "page_kind": spec.page_kind.value,

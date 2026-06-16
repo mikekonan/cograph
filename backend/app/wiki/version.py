@@ -17,6 +17,19 @@ for the SAME repo state, e.g.:
 
 Pure refactors, logging, and telemetry changes do NOT need a bump.
 
+Reuse-key *narrowing* is a deliberate exception. A `spec_hash` /
+`bundle_fingerprint` change that only drops fields — making strictly more
+pages eligible for reuse, never fewer — does NOT change what the LLM
+produces for a given repo state; it only improves reuse. Bumping in that
+case would be self-defeating: a version mismatch forces a full rebuild of
+every repo, the exact cost we are cutting. The condition that makes this
+safe is a *backfill*: existing `documents.spec_hash` stamps must be
+rewritten to the new formula in the same release (see migration 0062), so
+no row is ever compared old-formula-against-new and spuriously dirtied.
+For such a change, edit `SURFACE_SHA_HISTORY[current]` IN PLACE (not
+append), keep `WIKI_SCHEMA_VERSION`, and carry `[wiki-schema-no-bump]` in
+the commit.
+
 Two guards enforce this:
 
 1. `SURFACE_SHA_HISTORY` + the unit test in
@@ -28,7 +41,9 @@ Two guards enforce this:
    the quality-surface modules must either bump `WIKI_SCHEMA_VERSION` or
    carry `[wiki-schema-no-bump]` in a commit message.
 
-When bumping, append the new entry (never edit existing ones):
+When bumping, append the new entry (never edit existing ones); the sole
+exception is the reuse-key-narrowing carve-out above, which edits the
+current entry in place. Recompute with:
 
     python -c "from backend.app.wiki.version import \
         compute_quality_surface_sha as f; print(f())"
@@ -48,7 +63,10 @@ WIKI_SCHEMA_VERSION = 1
 # version -> sha256 of the canonical quality surface at the moment that
 # version shipped. Append-only history: each bump adds one entry.
 SURFACE_SHA_HISTORY: dict[int, str] = {
-    1: "d7d6e1f85403d9e708e4023f0c1efbe6facb6b6ffeccaf9bafffc250eb410ad4",
+    # Edited in place (not appended) when version 1 shipped the spec_hash
+    # reuse-key narrowing (drop purpose / sources_hint) — a no-bump change
+    # paired with a backfill, see the docstring carve-out below.
+    1: "13e731a40087c36b687b97b478b2016433bd0f8cb4c151b1c294d5cc345b89d6",
 }
 
 

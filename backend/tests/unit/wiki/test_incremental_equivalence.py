@@ -218,15 +218,19 @@ async def test_spec_change_rewrites_only_that_page(
     db_session: AsyncSession,
 ) -> None:
     """Simulates a plan whose beta spec changed (steering edit / re-plan
-    with one page reworded) by updating the persisted artifact plan. The
-    spec_hash mismatch must rewrite beta alone (plus index)."""
+    with one page retitled) by updating the persisted artifact plan. The
+    spec_hash mismatch must rewrite beta alone (plus index).
+
+    Mutates `title` — a contract field still in spec_hash — not `purpose`,
+    which is now deliberately excluded (a reworded purpose alone no longer
+    dirties a page; see spec_hash docstring + test_incremental_dirty)."""
     pages_v2 = [
         page
         if page.slug != "beta"
         else ScriptedPage(
             slug="beta",
-            title="Beta",
-            purpose="Documents the betaflow subsystem thoroughly",
+            title="Beta (revised)",
+            purpose="Documents the betaflow subsystem",
             cites=("pkg.beta_main",),
         )
         for page in STANDARD_PAGES
@@ -235,14 +239,14 @@ async def test_spec_change_rewrites_only_that_page(
     repo_a = await ScriptedRepo.create(db_session, "wiki-eq-spec-inc")
     await seed_standard(db_session, repo_a)
     await run_full(db_session, repo_a, STANDARD_PAGES, source_commit="c1")
-    # Surgically reword ONE page inside the persisted (already normalised)
+    # Surgically retitle ONE page inside the persisted (already normalised)
     # plan — replacing the whole payload with a freshly built plan would
     # shift normalisation defaults and dirty every spec.
     artifact = await load_artifact(db_session, repository_id=repo_a.id)
     assert artifact is not None
     plan_payload = dict(artifact.plan)
     plan_payload["pages"] = [
-        {**page, "purpose": "Documents the betaflow subsystem thoroughly"}
+        {**page, "title": "Beta (revised)"}
         if page["slug"] == "beta"
         else page
         for page in plan_payload["pages"]
