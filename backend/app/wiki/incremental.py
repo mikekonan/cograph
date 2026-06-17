@@ -147,6 +147,12 @@ class PageRecord:
     source_node_ids: tuple[str, ...]
     source_repo_doc_chunk_ids: tuple[str, ...]
     quality_status: QualityStatus | None
+    # {code_node_id: content_hash} stamped at the last write/edit. None on
+    # legacy / pre-0063 rows → the body-change clause is skipped (degrades to
+    # the UUID-only liveness checks, i.e. today's behaviour).
+    cited_content_hashes: dict[str, str] | None = None
+    content_src: str | None = None
+    edit_streak: int = 0
 
 
 def page_dirty_cheap_reason(
@@ -155,6 +161,7 @@ def page_dirty_cheap_reason(
     current_spec_hash: str,
     live_node_ids: set[str],
     live_chunk_ids: set[str],
+    live_node_hashes: dict[str, str] | None = None,
     wiki_schema_version: int = WIKI_SCHEMA_VERSION,
 ) -> str | None:
     """Dirty checks that need no retrieval call. None ⇒ still a clean
@@ -165,6 +172,14 @@ def page_dirty_cheap_reason(
     `partial` is NOT dirty: pages legitimately ship partial when a reader
     question isn't answerable from the repo, and retrying them every sync
     would burn the savings this module exists for.
+
+    `cited_node_content_changed` closes the body-change blind spot: ingest
+    UPDATEs a changed node in place (same UUID, new content_hash), so the
+    UUID liveness check above can't see it, and `bundle_fingerprint` only
+    catches it while the node is in the page's top-k. Comparing the stored
+    `cited_content_hashes` against the live hashes (`live_node_hashes`)
+    dirties the page whenever a cited node's body moved, top-k or not.
+    Skipped when either map is absent (legacy rows / no hash fetch).
     """
     if record is None:
         return "missing_row"
@@ -184,6 +199,11 @@ def page_dirty_cheap_reason(
     for chunk_id in record.source_repo_doc_chunk_ids:
         if chunk_id not in live_chunk_ids:
             return "cited_chunk_missing"
+    if record.cited_content_hashes and live_node_hashes:
+        for node_id, stored_hash in record.cited_content_hashes.items():
+            current = live_node_hashes.get(node_id)
+            if current is not None and current != stored_hash:
+                return "cited_node_content_changed"
     return None
 
 
@@ -240,6 +260,13 @@ async def load_page_records(
                 str(cid) for cid in (row.source_repo_doc_chunk_ids or [])
             ),
             quality_status=_existing_quality_status(row.quality),
+            cited_content_hashes=(
+                {str(k): str(v) for k, v in row.cited_content_hashes.items()}
+                if row.cited_content_hashes
+                else None
+            ),
+            content_src=row.content_src,
+            edit_streak=row.edit_streak or 0,
         )
         for row in rows
     }
@@ -263,6 +290,31 @@ async def _live_id_set(session: AsyncSession, column, cited: set[str]) -> set[st
         await session.execute(select(column).where(column.in_(parseable)))
     ).scalars()
     return {str(value) for value in rows}
+
+
+async def _live_node_hashes(session: AsyncSession, cited: set[str]) -> dict[str, str]:
+    """Batched `{id: content_hash}` for the cited code nodes that still
+    exist. Liveness is key presence; a hash that differs from the stored
+    snapshot means the node's body changed in place (same UUID). Unparseable
+    ids are dropped — they surface as `cited_node_missing` upstream."""
+    from backend.app.models.code_node import CodeNode
+
+    parseable: list[UUID] = []
+    for raw in cited:
+        try:
+            parseable.append(UUID(raw))
+        except ValueError:
+            continue
+    if not parseable:
+        return {}
+    rows = (
+        await session.execute(
+            select(CodeNode.id, CodeNode.content_hash).where(
+                CodeNode.id.in_(parseable)
+            )
+        )
+    ).all()
+    return {str(node_id): content_hash for node_id, content_hash in rows}
 
 
 async def compute_dirty_slugs(
@@ -295,7 +347,6 @@ async def compute_dirty_slugs(
     (`retrieval_error`) — the full path would have written it with an
     empty bundle, so rewriting is the equivalence-preserving choice.
     """
-    from backend.app.models.code_node import CodeNode
     from backend.app.models.repo_document import RepoDocumentChunk
 
     cited_nodes: set[str] = set()
@@ -306,7 +357,8 @@ async def compute_dirty_slugs(
             continue
         cited_nodes.update(record.source_node_ids)
         cited_chunks.update(record.source_repo_doc_chunk_ids)
-    live_node_ids = await _live_id_set(session, CodeNode.id, cited_nodes)
+    live_node_hashes = await _live_node_hashes(session, cited_nodes)
+    live_node_ids = set(live_node_hashes.keys())
     live_chunk_ids = await _live_id_set(session, RepoDocumentChunk.id, cited_chunks)
 
     dirty: dict[str, str] = {}
@@ -319,6 +371,7 @@ async def compute_dirty_slugs(
             current_spec_hash=spec_hash(spec),
             live_node_ids=live_node_ids,
             live_chunk_ids=live_chunk_ids,
+            live_node_hashes=live_node_hashes,
             wiki_schema_version=wiki_schema_version,
         )
         if reason is None:

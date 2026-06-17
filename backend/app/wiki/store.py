@@ -48,6 +48,20 @@ _QUALITY_RANK: dict[QualityStatus, int] = {
 }
 
 
+def _next_edit_streak(*, mode: str, existing: Document | None) -> int:
+    """Consecutive cheap edits since the last full write.
+
+    A full write (`mode="write"`) resets the counter to 0; a cheap edit
+    (`mode="edit"`) increments the existing row's count. `_edit_eligible`
+    in the pipeline force-rewrites a page once this reaches the configured
+    cap, bounding slow prose drift across a chain of edits.
+    """
+    if mode == "edit":
+        prev = existing.edit_streak if existing is not None else 0
+        return (prev or 0) + 1
+    return 0
+
+
 def _existing_quality_status(quality: object) -> QualityStatus | None:
     """Extract `quality_status` from a persisted `documents.quality` JSON.
 
@@ -169,6 +183,11 @@ class WikiDocumentStore:
                 existing.spec_hash = spec_hashes.get(page.slug)
                 existing.retrieval_fingerprint = fingerprints.get(page.slug)
                 existing.wiki_schema_version = wiki_schema_version
+                existing.content_src = page.content_src
+                existing.cited_content_hashes = page.cited_content_hashes
+                existing.edit_streak = _next_edit_streak(
+                    mode=page.mode, existing=existing
+                )
                 if (
                     existing_status is None
                     or _QUALITY_RANK[new_status] > _QUALITY_RANK[existing_status]
@@ -200,6 +219,9 @@ class WikiDocumentStore:
                     spec_hash=spec_hashes.get(page.slug),
                     retrieval_fingerprint=fingerprints.get(page.slug),
                     wiki_schema_version=wiki_schema_version,
+                    content_src=page.content_src,
+                    cited_content_hashes=page.cited_content_hashes,
+                    edit_streak=_next_edit_streak(mode=page.mode, existing=None),
                 )
                 session.add(row)
                 await session.flush()
@@ -221,6 +243,11 @@ class WikiDocumentStore:
                 existing.spec_hash = spec_hashes.get(page.slug)
                 existing.retrieval_fingerprint = fingerprints.get(page.slug)
                 existing.wiki_schema_version = wiki_schema_version
+                existing.content_src = page.content_src
+                existing.cited_content_hashes = page.cited_content_hashes
+                existing.edit_streak = _next_edit_streak(
+                    mode=page.mode, existing=existing
+                )
                 await session.flush()
                 persisted_ids.append(existing.id)
 

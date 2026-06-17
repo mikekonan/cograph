@@ -31,6 +31,7 @@ from pathlib import Path
 from uuid import UUID
 
 from pydantic import ValidationError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.graph.traversal import GraphTraversalService
@@ -55,11 +56,13 @@ from backend.app.wiki.coverage_gate import (
     validate_coverage,
 )
 from backend.app.wiki.citations import (
+    PLACEHOLDER_RE,
     CitationResolver,
     RepositorySlug,
     _load_doc_slug_map,
     auto_link_qualified_names,
 )
+from backend.app.wiki.evidence_ledger import VerifiedEvidenceLedger
 from backend.app.wiki.clustering import NodeCluster, cluster_nodes
 from backend.app.wiki.context import (
     RepoContext,
@@ -68,6 +71,8 @@ from backend.app.wiki.context import (
 )
 from backend.app.wiki.incremental import (
     DirtyReport,
+    PageRecord,
+    _live_node_hashes,
     artifact_reusable,
     bundle_fingerprint,
     compute_dirty_slugs,
@@ -89,6 +94,7 @@ from backend.app.wiki.manifests import ExportedType, RepoManifests
 from backend.app.wiki.prompts import (
     DIAGRAM_SYNTHESIZER_SYSTEM,
     MINDMAP_GENERATOR_SYSTEM,
+    PAGE_EDITOR_SYSTEM,
     PAGE_OUTLINE_SYSTEM,
     PAGE_PLANNER_SYSTEM,
     PAGE_PROSE_SYSTEM,
@@ -98,6 +104,7 @@ from backend.app.wiki.prompts import (
     build_coverage_gate_repair_user,
     build_diagram_synthesizer_user,
     build_mindmap_user,
+    build_page_editor_user,
     build_page_outline_user,
     build_page_planner_user,
     build_page_prose_user,
@@ -109,6 +116,7 @@ from backend.app.wiki.plan_quality import analyze_plan_quality
 from backend.app.wiki.retrieval import PageBundle, WikiRetrievalService
 from backend.app.wiki.schemas import (
     AgentTelemetry,
+    EvidenceRecord,
     MindMap,
     PageDraft,
     PageKind,
@@ -234,6 +242,19 @@ class WikiGenerationConfig:
     # alone can spill past 4096 output tokens, truncating the JSON mid-string
     # and bricking the run on a json_invalid error before the retry can help.
     structured_max_tokens: int = 12_288
+    # Edit-mode: rewrite an existing page in place against the change delta
+    # (one tool-less editor call) instead of the full agentic loop, when the
+    # change is small. A dirty page is edited iff it has a stored pre-resolve
+    # body, its dirty reason is edit-eligible, churn =
+    # (|cited nodes gone| + |cited nodes whose body changed|) / |cited nodes|
+    # is <= edit_max_churn, and edit_streak < edit_streak_cap (consecutive
+    # edits force a from-scratch rewrite, capping slow prose drift). On ANY
+    # gate failure the edit escalates to a full write — no agentic repair —
+    # so the worst case is one editor call plus one full write.
+    enable_edit_mode: bool = True
+    edit_max_churn: float = 0.5
+    edit_streak_cap: int = 3
+    edit_max_tokens: int = 12_288
 
 
 @dataclass(slots=True)
@@ -610,6 +631,184 @@ def _normalize_plan(plan: PagePlan, config: WikiGenerationConfig) -> PagePlan:
     return PagePlan(pages=normalized)
 
 
+# ---------------------------------------------------------------------------
+# Edit-mode helpers — cheap single-shot rewrite for genuinely-minor changes
+# ---------------------------------------------------------------------------
+
+# Dirty reasons a cheap edit can honor: the page's *contract* is unchanged
+# (same title / slug / coverage / diagram / kind) and only the evidence
+# beneath it moved. Contract / structural / quality reasons (`spec_changed`,
+# `schema_version`, `quality_degraded`, `missing_row`, `sibling_dirty`, ...)
+# always take the full agentic write — the editor preserves prose, which is
+# the wrong move when the prose itself must change.
+_EDITABLE_REASONS: frozenset[str] = frozenset(
+    {
+        "cited_node_content_changed",
+        "cited_node_missing",
+        "cited_chunk_missing",
+        "retrieval_drift",
+    }
+)
+
+# Cap on how many newly-retrieved symbols we surface to the editor as the
+# "new" delta bucket. The bundle is top-k; a page rarely cites all of it, so
+# the uncited remainder is noise past a handful. The editor is told to add
+# coverage only where it fits, so this is a soft hint, not a mandate.
+_EDIT_NEW_SYMBOL_CAP: int = 6
+
+_TRAILING_MERMAID_RE = re.compile(r"\n*```mermaid\b.*?```\s*$", re.DOTALL)
+
+
+def _strip_trailing_mermaid(body: str) -> str:
+    """Drop a trailing ```mermaid fence. `synthesize_diagrams` appends the
+    diagram as the final block, so an edited page's old diagram is stripped
+    here and re-synthesized downstream rather than fed to (and mangled by)
+    the editor."""
+    return _TRAILING_MERMAID_RE.sub("", body or "").rstrip()
+
+
+def _parse_cited_refs(content_src: str | None) -> tuple[set[str], set[str]]:
+    """Pull `[[node:qn]]` / `[[doc:path]]` targets from a pre-resolve body."""
+    node_qns: set[str] = set()
+    doc_paths: set[str] = set()
+    for match in PLACEHOLDER_RE.finditer(content_src or ""):
+        kind, value = match.group(1), match.group(2).strip()
+        if not value:
+            continue
+        if kind == "node":
+            node_qns.add(value)
+        else:
+            head, _, _ = value.partition("#")
+            doc_paths.add(head.strip().lstrip("./"))
+    return node_qns, doc_paths
+
+
+def _edit_eligible(
+    *,
+    reason: str | None,
+    record: PageRecord | None,
+    cfg: WikiGenerationConfig,
+    is_index: bool,
+) -> bool:
+    """Stage-1 (pre-delta) gate: may this dirty page take the cheap edit path?
+
+    The churn gate (Stage 2) runs afterward in `_edit_one`, once the symbol
+    delta against the live graph is known. Both must pass; any failure (here
+    or there, or a gate failure on the edited body) falls back to the proven
+    full agentic write, so edit mode can only ever shrink cost, never quality.
+    """
+    if not cfg.enable_edit_mode:
+        return False
+    if reason not in _EDITABLE_REASONS:
+        return False
+    if record is None or not record.content_src:
+        return False  # nothing to edit (legacy / never-written-by-this-pipeline)
+    if record.wiki_schema_version != WIKI_SCHEMA_VERSION:
+        return False  # the editor reproduces *current* pipeline semantics only
+    if is_index:
+        return False  # index narrates the whole wiki — full-write keeps the ToC honest
+    if record.edit_streak >= cfg.edit_streak_cap:
+        return False  # bound prose drift: force a periodic from-scratch rewrite
+    return True
+
+
+async def _fetch_nodes_by_qn(
+    session: AsyncSession, *, repository_id: UUID, qns: set[str]
+) -> dict[str, tuple[str, str]]:
+    """Map each qualified name to its current `(node_id, content_hash)`.
+
+    `qualified_name` is unique per repo (`uq_code_nodes_repo_qualified_name`),
+    so each qn yields at most one row. A qn absent from the result is a dead
+    symbol (deleted / renamed / moved) the editor must drop.
+    """
+    from backend.app.models.code_node import CodeNode
+
+    if not qns:
+        return {}
+    rows = (
+        await session.execute(
+            select(CodeNode.qualified_name, CodeNode.id, CodeNode.content_hash).where(
+                CodeNode.repository_id == repository_id,
+                CodeNode.qualified_name.in_(qns),
+            )
+        )
+    ).all()
+    return {qn: (str(node_id), chash) for qn, node_id, chash in rows}
+
+
+async def _fetch_live_doc_paths(
+    session: AsyncSession, *, repository_id: UUID, paths: set[str]
+) -> set[str]:
+    """Which of `paths` still resolve to a repo document. Citations are by
+    path; an absent path is a dead doc the editor must drop."""
+    from backend.app.models.repo_document import RepoDocument
+
+    if not paths:
+        return set()
+    rows = (
+        await session.execute(
+            select(RepoDocument.file_path).where(
+                RepoDocument.repository_id == repository_id,
+                RepoDocument.file_path.in_(paths),
+            )
+        )
+    ).scalars()
+    return set(rows)
+
+
+def _seed_edit_ledger(
+    *,
+    bundle: PageBundle,
+    surviving_node_qns: list[str],
+    surviving_doc_paths: list[str],
+) -> VerifiedEvidenceLedger:
+    """Build the editor's grounding set = the freshly-retrieved bundle
+    (current top-k) ∪ the page's previously cited symbols/docs that still
+    exist. The editor has no tools, so this seeded ledger is the only
+    authority the citation/coverage gates validate the edited body against.
+    Seeding the survivors lets the editor keep correct prose that cites
+    symbols which dropped out of the current top-k."""
+    ledger = VerifiedEvidenceLedger()
+    for chunk in bundle.code_chunks:
+        if not chunk.qualified_name:
+            continue
+        ledger.record(
+            EvidenceRecord(
+                record_id=f"node:{chunk.qualified_name}",
+                source="code_node",
+                qn=chunk.qualified_name,
+                file_path=chunk.file_path or None,
+                start_line=chunk.start_line or None,
+                end_line=chunk.end_line or None,
+                snippet=chunk.snippet or "",
+            )
+        )
+    for doc in bundle.doc_chunks:
+        if not doc.file_path:
+            continue
+        ledger.record(
+            EvidenceRecord(
+                record_id=f"doc:{doc.file_path}",
+                source="doc",
+                file_path=doc.file_path,
+                snippet=doc.snippet or "",
+            )
+        )
+    for qn in surviving_node_qns:
+        ledger.record(
+            EvidenceRecord(
+                record_id=f"node:{qn}", source="code_node", qn=qn, snippet=""
+            )
+        )
+    for path in surviving_doc_paths:
+        ledger.record(
+            EvidenceRecord(
+                record_id=f"doc:{path}", source="doc", file_path=path, snippet=""
+            )
+        )
+    return ledger
+
+
 async def write_pages(
     *,
     llm: StructuredCompletionProvider,
@@ -626,17 +825,29 @@ async def write_pages(
     | None = None,
     checkout_path: Path | str | None = None,
     specs_to_write: list[PageSpec] | None = None,
+    records: dict[str, PageRecord] | None = None,
+    dirty_reasons: dict[str, str] | None = None,
 ) -> tuple[list[PageDraft], list[str]]:
-    """Stage 4: agentic writer → list[PageDraft], parallel with bounded concurrency.
+    """Stage 4: page writer → list[PageDraft], parallel with bounded concurrency.
 
-    Each page runs its own multi-turn provider tool-use loop driven by
-    `AgentDispatcher`. The agent reads the code graph, the checkout, and
-    the manifest bundle, and ships the page by calling the terminal
-    `write_page` tool. Per-page failure is isolated: the slug is added to
-    `page_failures` and the run continues. T3's atomic citation gate
-    runs against the per-page evidence ledger; up to 3 repair attempts
-    fire when the writer cited un-verified identifiers, after which
-    invalid placeholders are stripped and the page ships at degraded.
+    Each page is dispatched to one of two paths (`_dispatch_one`):
+
+    * **edit** — a cheap single tool-less `complete_text` call that revises
+      the existing page body against the change delta. Taken only when the
+      page's contract is unchanged and the live-graph delta is small
+      (`_edit_eligible` + the churn gate in `_edit_one`); the edited body is
+      validated against a seeded evidence ledger and ANY citation/coverage
+      gate failure escalates to a full write, so edit mode only ever shrinks
+      cost, never quality.
+    * **write** — the full multi-turn `AgentDispatcher` tool-use loop. The
+      agent reads the code graph, the checkout, and the manifest bundle, and
+      ships the page via the terminal `write_page` tool. T3's atomic
+      citation gate runs against the per-page evidence ledger with up to 3
+      repair attempts; invalid placeholders are then stripped and the page
+      ships at degraded.
+
+    Per-page failure is isolated: the slug is added to `page_failures` and
+    the run continues.
 
     `session_factory` builds a fresh `AsyncSession` per tool call. When
     `None`, every tool reuses the bound `session` — sufficient for tests
@@ -647,21 +858,28 @@ async def write_pages(
     the same `CitationResolver` instance into Stage 5; this stage does
     not use it (T3 supersedes the DB-backed prevalidation pass here).
 
-    `specs_to_write` restricts the agent fan-out to a subset of the plan
-    (the incremental path's dirty set). Sibling links, page notes, and
-    prompt context always come from the FULL plan, so a dirty page is
-    written against exactly the same surroundings a full rebuild would
-    give it. `None` ⇒ write every planned page.
+    `specs_to_write` restricts the fan-out to a subset of the plan (the
+    incremental path's dirty set). Sibling links, page notes, and prompt
+    context always come from the FULL plan, so a dirty page is written
+    against exactly the same surroundings a full rebuild would give it.
+    `None` ⇒ write every planned page.
+
+    `records` (slug → persisted `PageRecord`) and `dirty_reasons` (slug →
+    dirty reason) drive the edit/write dispatch; absent (or for a slug not
+    present in them) the page takes the full write path.
     """
     del resolver  # legacy: see docstring
     pages_to_write = plan.pages if specs_to_write is None else specs_to_write
+    records_by_slug = records or {}
+    dirty_reasons_by_slug = dirty_reasons or {}
     logger.info(
         "wiki stage 4: write_pages starting (pages=%d of %d planned, "
-        "concurrency=%d, max_turns=%d)",
+        "concurrency=%d, max_turns=%d, edit_mode=%s)",
         len(pages_to_write),
         len(plan.pages),
         config.write_concurrency,
         _AGENT_MAX_TURNS,
+        config.enable_edit_mode,
     )
     semaphore = asyncio.Semaphore(max(1, config.write_concurrency))
     sibling_pages = list(plan.pages)
@@ -675,251 +893,445 @@ async def write_pages(
     symbol_lookup = SymbolLookup()
     traversal = GraphTraversalService()
 
-    async def _agent_write_one(spec: PageSpec) -> PageDraft | None:
-        async with semaphore:
-            page_started = time.monotonic()
-            logger.info(
-                "wiki stage 4: agent starting for slug=%s (title=%r)",
+    async def _fetch_bundle(spec: PageSpec) -> PageBundle:
+        try:
+            return await retriever.for_page(
+                session=session,
+                repository_id=repository_id,
+                purpose=spec.purpose,
+                sources_hint=spec.sources_hint,
+                code_top_k=config.code_top_k,
+                docs_top_k=config.docs_top_k,
+                graph_pivot_top_k=config.graph_pivot_top_k,
+                domain_concepts=list(overview.business_context.domain_concepts),
+                business_confidence=overview.business_context.confidence,
+            )
+        except Exception as exc:
+            logger.warning(
+                "write_pages: retrieval failed for slug=%s (%s); using empty bundle",
                 spec.slug,
-                spec.title,
+                exc,
             )
-            try:
-                bundle = await retriever.for_page(
-                    session=session,
-                    repository_id=repository_id,
-                    purpose=spec.purpose,
-                    sources_hint=spec.sources_hint,
-                    code_top_k=config.code_top_k,
-                    docs_top_k=config.docs_top_k,
-                    graph_pivot_top_k=config.graph_pivot_top_k,
-                    domain_concepts=list(overview.business_context.domain_concepts),
-                    business_confidence=overview.business_context.confidence,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "write_pages: retrieval failed for slug=%s (%s); writing with empty bundle",
-                    spec.slug,
-                    exc,
-                )
-                bundle = PageBundle()
+            return PageBundle()
 
-            if bundles_out is not None:
-                bundles_out[spec.slug] = bundle
+    async def _write_one(spec: PageSpec, bundle: PageBundle) -> PageDraft | None:
+        page_started = time.monotonic()
+        logger.info(
+            "wiki stage 4: agent starting for slug=%s (title=%r)",
+            spec.slug,
+            spec.title,
+        )
+        page_types = _select_exported_types_for_page(
+            exported_types=context.manifests.exported_types,
+            bundle=bundle,
+            spec=spec,
+        )
+        user_block = build_page_writer_user(
+            spec=spec,
+            overview=overview,
+            bundle=bundle,
+            sibling_pages=sibling_pages,
+            exported_types=page_types,
+            page_notes=page_notes_by_slug.get(spec.slug),
+        )
+        blocks = [
+            CacheBlock(text=cached_repo_block, cacheable=True),
+            CacheBlock(text=user_block, cacheable=False),
+        ]
 
-            page_types = _select_exported_types_for_page(
-                exported_types=context.manifests.exported_types,
-                bundle=bundle,
-                spec=spec,
-            )
-            user_block = build_page_writer_user(
+        tool_context = AgentToolContext(
+            session_factory=factory,
+            repository_id=repository_id,
+            checkout_fs=checkout_fs,
+            hybrid=retriever.hybrid,
+            lexical=lexical,
+            symbol=symbol_lookup,
+            traversal=traversal,
+            embedder=retriever.embedder,
+            domain_concepts=list(overview.business_context.domain_concepts),
+            business_confidence=overview.business_context.confidence,
+        )
+        dispatcher = AgentDispatcher(ctx=tool_context, session_factory=factory)
+
+        outline_status: str = "skipped"
+        body: str | None = None
+        telemetry = AgentTelemetry()
+        # T5: two-pass writer for high-importance pages. On failure
+        # of either pass we silently fall back to the single-pass
+        # agent loop with `outline_status=failed`.
+        if config.enable_two_pass and spec.page_kind in _TWO_PASS_PAGE_KINDS:
+            tp_body, tp_telemetry, tp_status = await _run_two_pass_write(
+                slug=spec.slug,
                 spec=spec,
                 overview=overview,
                 bundle=bundle,
                 sibling_pages=sibling_pages,
                 exported_types=page_types,
                 page_notes=page_notes_by_slug.get(spec.slug),
+                dispatcher=dispatcher,
+                tool_definitions=tool_definitions,
+                cached_repo_block=cached_repo_block,
+                llm=llm,
+                config=config,
             )
-            blocks = [
-                CacheBlock(text=cached_repo_block, cacheable=True),
-                CacheBlock(text=user_block, cacheable=False),
-            ]
-
-            tool_context = AgentToolContext(
-                session_factory=factory,
-                repository_id=repository_id,
-                checkout_fs=checkout_fs,
-                hybrid=retriever.hybrid,
-                lexical=lexical,
-                symbol=symbol_lookup,
-                traversal=traversal,
-                embedder=retriever.embedder,
-                domain_concepts=list(overview.business_context.domain_concepts),
-                business_confidence=overview.business_context.confidence,
-            )
-            dispatcher = AgentDispatcher(ctx=tool_context, session_factory=factory)
-
-            outline_status: str = "skipped"
-            body: str | None = None
-            telemetry = AgentTelemetry()
-            # T5: two-pass writer for high-importance pages. On failure
-            # of either pass we silently fall back to the single-pass
-            # agent loop with `outline_status=failed`.
-            if config.enable_two_pass and spec.page_kind in _TWO_PASS_PAGE_KINDS:
-                tp_body, tp_telemetry, tp_status = await _run_two_pass_write(
-                    slug=spec.slug,
-                    spec=spec,
-                    overview=overview,
-                    bundle=bundle,
-                    sibling_pages=sibling_pages,
-                    exported_types=page_types,
-                    page_notes=page_notes_by_slug.get(spec.slug),
-                    dispatcher=dispatcher,
-                    tool_definitions=tool_definitions,
-                    cached_repo_block=cached_repo_block,
-                    llm=llm,
-                    config=config,
-                )
-                if tp_status == "ok" and tp_body:
-                    body = tp_body
-                    telemetry = tp_telemetry.model_copy(update={"outline_status": "ok"})
-                    outline_status = "ok"
-                else:
-                    outline_status = "failed"
-                    logger.info(
-                        "wiki stage 4: two-pass failed for slug=%s; "
-                        "falling back to single-pass",
-                        spec.slug,
-                    )
-
-            if body is None:
-                # Single-pass path (default, plus fallback after two-pass failure).
-                write_aggregate = ToolUseAggregate()
-                body = ""
-                for write_attempt in range(1, _WRITER_EMPTY_BODY_MAX_RETRIES + 2):
-                    attempt_blocks = blocks
-                    if write_attempt > 1:
-                        retry_user_block = (
-                            f"{user_block}\n\n"
-                            "<retry_instruction>\n"
-                            "The previous writer attempt ended without emitting "
-                            "markdown. Restart the writer loop for this page: "
-                            "use tools as needed, then call `write_page` exactly "
-                            "once with the complete markdown body.\n"
-                            "</retry_instruction>"
-                        )
-                        attempt_blocks = [
-                            CacheBlock(text=cached_repo_block, cacheable=True),
-                            CacheBlock(text=retry_user_block, cacheable=False),
-                        ]
-                    try:
-                        result = await llm.complete_with_tools(
-                            system=PAGE_WRITER_SYSTEM,
-                            blocks=attempt_blocks,
-                            tools=tool_definitions,
-                            tool_dispatch=dispatcher.dispatch,
-                            max_turns=_AGENT_MAX_TURNS,
-                            soft_turn_budget=_AGENT_SOFT_TURN_BUDGET,
-                            max_tokens_per_turn=config.page_writer_max_tokens,
-                            temperature=0.0,
-                            max_input_chars=_AGENT_MAX_INPUT_CHARS,
-                        )
-                    except StructuredCompletionError as exc:
-                        logger.warning(
-                            "write_pages: agent loop failed for slug=%s (%s)",
-                            spec.slug,
-                            exc,
-                        )
-                        return None
-                    write_aggregate.add(result, dispatcher.files_read)
-                    body = (dispatcher.captured_markdown or result.final_text).strip()
-                    if body:
-                        break
-                    if write_attempt <= _WRITER_EMPTY_BODY_MAX_RETRIES:
-                        logger.warning(
-                            "write_pages: empty body for slug=%s on attempt %d/%d "
-                            "(stop=%s); retrying",
-                            spec.slug,
-                            write_attempt,
-                            _WRITER_EMPTY_BODY_MAX_RETRIES + 1,
-                            result.stop_reason,
-                        )
-                if not body:
-                    logger.warning("write_pages: empty body for slug=%s", spec.slug)
-                    return None
-
+            if tp_status == "ok" and tp_body:
+                body = tp_body
+                telemetry = tp_telemetry.model_copy(update={"outline_status": "ok"})
+                outline_status = "ok"
+            else:
+                outline_status = "failed"
                 logger.info(
-                    "wiki stage 4: agent loop done for slug=%s (turns=%d, tools=%s, "
-                    "tokens_in=%d, tokens_out=%d, stop=%s)",
+                    "wiki stage 4: two-pass failed for slug=%s; "
+                    "falling back to single-pass",
                     spec.slug,
-                    write_aggregate.turns_used,
-                    dict(write_aggregate.tools_called),
-                    write_aggregate.tokens_in,
-                    write_aggregate.tokens_out,
-                    write_aggregate.stop_reason,
                 )
 
-                # When falling back from two-pass we keep the outline-pass
-                # tool counters and merge the single-pass numbers in on top.
-                fallback_telemetry = AgentTelemetry(
-                    turns_used=telemetry.turns_used + write_aggregate.turns_used,
-                    tools_called=_merge_counters(
-                        telemetry.tools_called, dict(write_aggregate.tools_called)
-                    ),
-                    files_read=sorted(
-                        set(telemetry.files_read) | write_aggregate.files_read
-                    ),
-                    tokens_in=telemetry.tokens_in + write_aggregate.tokens_in,
-                    tokens_out=telemetry.tokens_out + write_aggregate.tokens_out,
-                    cache_read_tokens=telemetry.cache_read_tokens
-                    + write_aggregate.cache_read_tokens,
-                    cache_creation_tokens=telemetry.cache_creation_tokens
-                    + write_aggregate.cache_creation_tokens,
-                    stop_reason=write_aggregate.stop_reason,
-                    outline_status=outline_status,
-                )
-                telemetry = fallback_telemetry
+        if body is None:
+            # Single-pass path (default, plus fallback after two-pass failure).
+            write_aggregate = ToolUseAggregate()
+            body = ""
+            for write_attempt in range(1, _WRITER_EMPTY_BODY_MAX_RETRIES + 2):
+                attempt_blocks = blocks
+                if write_attempt > 1:
+                    retry_user_block = (
+                        f"{user_block}\n\n"
+                        "<retry_instruction>\n"
+                        "The previous writer attempt ended without emitting "
+                        "markdown. Restart the writer loop for this page: "
+                        "use tools as needed, then call `write_page` exactly "
+                        "once with the complete markdown body.\n"
+                        "</retry_instruction>"
+                    )
+                    attempt_blocks = [
+                        CacheBlock(text=cached_repo_block, cacheable=True),
+                        CacheBlock(text=retry_user_block, cacheable=False),
+                    ]
+                try:
+                    result = await llm.complete_with_tools(
+                        system=PAGE_WRITER_SYSTEM,
+                        blocks=attempt_blocks,
+                        tools=tool_definitions,
+                        tool_dispatch=dispatcher.dispatch,
+                        max_turns=_AGENT_MAX_TURNS,
+                        soft_turn_budget=_AGENT_SOFT_TURN_BUDGET,
+                        max_tokens_per_turn=config.page_writer_max_tokens,
+                        temperature=0.0,
+                        max_input_chars=_AGENT_MAX_INPUT_CHARS,
+                    )
+                except StructuredCompletionError as exc:
+                    logger.warning(
+                        "write_pages: agent loop failed for slug=%s (%s)",
+                        spec.slug,
+                        exc,
+                    )
+                    return None
+                write_aggregate.add(result, dispatcher.files_read)
+                body = (dispatcher.captured_markdown or result.final_text).strip()
+                if body:
+                    break
+                if write_attempt <= _WRITER_EMPTY_BODY_MAX_RETRIES:
+                    logger.warning(
+                        "write_pages: empty body for slug=%s on attempt %d/%d "
+                        "(stop=%s); retrying",
+                        spec.slug,
+                        write_attempt,
+                        _WRITER_EMPTY_BODY_MAX_RETRIES + 1,
+                        result.stop_reason,
+                    )
+            if not body:
+                logger.warning("write_pages: empty body for slug=%s", spec.slug)
+                return None
 
-            # T3: atomic citation gate. Every `[[node:X]]` / `[[doc:Y]]`
-            # in the draft must be present in the dispatcher's verified
-            # ledger (i.e., the agent grounded it via a tool call before
-            # `write_page`). Up to 3 repair attempts; on failure we strip
-            # the invalid placeholders and ship at quality_status=degraded.
-            (
-                body,
-                telemetry,
-            ) = await _run_citation_gate_loop(
-                slug=spec.slug,
-                spec=spec,
-                body=body,
-                telemetry=telemetry,
-                dispatcher=dispatcher,
-                tool_definitions=tool_definitions,
-                cached_repo_block=cached_repo_block,
-                llm=llm,
-                config=config,
-            )
-
-            # T4: deterministic coverage gate. Each `covers_questions`
-            # slug must have a `<!-- answers: slug -->` marker followed
-            # by a verified citation in the same section. `## Open
-            # questions` is forbidden. Up to 1 repair attempt; missing
-            # slugs strip down to `quality_status=partial`.
-            (
-                body,
-                telemetry,
-            ) = await _run_coverage_gate_loop(
-                slug=spec.slug,
-                spec=spec,
-                body=body,
-                telemetry=telemetry,
-                dispatcher=dispatcher,
-                tool_definitions=tool_definitions,
-                cached_repo_block=cached_repo_block,
-                llm=llm,
-                config=config,
-            )
-
-            page_wall_ms = int((time.monotonic() - page_started) * 1000)
             logger.info(
-                "wiki stage 4: page ready slug=%s (body_chars=%d, wall_ms=%d)",
+                "wiki stage 4: agent loop done for slug=%s (turns=%d, tools=%s, "
+                "tokens_in=%d, tokens_out=%d, stop=%s)",
                 spec.slug,
-                len(body),
-                page_wall_ms,
-            )
-            return PageDraft(
-                slug=spec.slug,
-                title=spec.title,
-                body_md=body,
-                model=llm.model,
-                agent=telemetry,
+                write_aggregate.turns_used,
+                dict(write_aggregate.tools_called),
+                write_aggregate.tokens_in,
+                write_aggregate.tokens_out,
+                write_aggregate.stop_reason,
             )
 
-    # One stage label around the gather: page-writer tasks inherit the
-    # context they are created under, so every nested call — agent turns,
-    # citation/coverage repairs, retrieval embeds — books to wiki.write.
+            # When falling back from two-pass we keep the outline-pass
+            # tool counters and merge the single-pass numbers in on top.
+            fallback_telemetry = AgentTelemetry(
+                turns_used=telemetry.turns_used + write_aggregate.turns_used,
+                tools_called=_merge_counters(
+                    telemetry.tools_called, dict(write_aggregate.tools_called)
+                ),
+                files_read=sorted(
+                    set(telemetry.files_read) | write_aggregate.files_read
+                ),
+                tokens_in=telemetry.tokens_in + write_aggregate.tokens_in,
+                tokens_out=telemetry.tokens_out + write_aggregate.tokens_out,
+                cache_read_tokens=telemetry.cache_read_tokens
+                + write_aggregate.cache_read_tokens,
+                cache_creation_tokens=telemetry.cache_creation_tokens
+                + write_aggregate.cache_creation_tokens,
+                stop_reason=write_aggregate.stop_reason,
+                outline_status=outline_status,
+            )
+            telemetry = fallback_telemetry
+
+        # T3: atomic citation gate. Every `[[node:X]]` / `[[doc:Y]]`
+        # in the draft must be present in the dispatcher's verified
+        # ledger (i.e., the agent grounded it via a tool call before
+        # `write_page`). Up to 3 repair attempts; on failure we strip
+        # the invalid placeholders and ship at quality_status=degraded.
+        (
+            body,
+            telemetry,
+        ) = await _run_citation_gate_loop(
+            slug=spec.slug,
+            spec=spec,
+            body=body,
+            telemetry=telemetry,
+            dispatcher=dispatcher,
+            tool_definitions=tool_definitions,
+            cached_repo_block=cached_repo_block,
+            llm=llm,
+            config=config,
+        )
+
+        # T4: deterministic coverage gate. Each `covers_questions`
+        # slug must have a `<!-- answers: slug -->` marker followed
+        # by a verified citation in the same section. `## Open
+        # questions` is forbidden. Up to 1 repair attempt; missing
+        # slugs strip down to `quality_status=partial`.
+        (
+            body,
+            telemetry,
+        ) = await _run_coverage_gate_loop(
+            slug=spec.slug,
+            spec=spec,
+            body=body,
+            telemetry=telemetry,
+            dispatcher=dispatcher,
+            tool_definitions=tool_definitions,
+            cached_repo_block=cached_repo_block,
+            llm=llm,
+            config=config,
+        )
+
+        page_wall_ms = int((time.monotonic() - page_started) * 1000)
+        logger.info(
+            "wiki stage 4: page ready slug=%s (body_chars=%d, wall_ms=%d)",
+            spec.slug,
+            len(body),
+            page_wall_ms,
+        )
+        return PageDraft(
+            slug=spec.slug,
+            title=spec.title,
+            body_md=body,
+            model=llm.model,
+            agent=telemetry,
+            mode="write",
+        )
+
+    async def _edit_one(
+        spec: PageSpec, record: PageRecord, bundle: PageBundle
+    ) -> PageDraft | None:
+        """Cheap path: revise the existing body against the change delta in
+        one tool-less `complete_text` call. Returns `None` to signal the
+        caller to escalate to a full write — when the delta can't be scoped
+        safely (no content-hash snapshot, churn over budget, or a changed
+        symbol the editor can't see in the bundle), or when the edited body
+        fails a gate (empty body, provider error, bad citation, coverage)."""
+        old_body = _strip_trailing_mermaid(record.content_src)
+        old_qns, old_doc_paths = _parse_cited_refs(record.content_src)
+        bundle_qns = {c.qualified_name for c in bundle.code_chunks if c.qualified_name}
+
+        # Live state of the symbols the page cited → dead / changed buckets.
+        current_by_qn = await _fetch_nodes_by_qn(
+            session, repository_id=repository_id, qns=old_qns
+        )
+        stored_hashes = record.cited_content_hashes or {}
+        # Cited symbols but no content-hash snapshot ⇒ we can't tell which
+        # bodies moved, so we can't scope a safe edit. Post-0063 writes always
+        # snapshot (and legacy rows lack `content_src`, so never reach here);
+        # this guards only an anomalous citations-without-map row. Escalate.
+        if old_qns and not stored_hashes:
+            logger.info(
+                "wiki edit: no cited-hash snapshot for slug=%s — escalating", spec.slug
+            )
+            return None
+        dead: list[str] = []
+        changed: list[str] = []
+        for qn in sorted(old_qns):
+            current = current_by_qn.get(qn)
+            if current is None:
+                dead.append(qn)
+                continue
+            current_id, current_hash = current
+            prev_hash = stored_hashes.get(current_id)
+            # uuid absent from the snapshot ⇒ node recreated (signature change);
+            # hash differs ⇒ body changed in place. Either way: re-read it.
+            if prev_hash is None or prev_hash != current_hash:
+                changed.append(qn)
+
+        # Stage-2 churn gate: a large delta is not a "minor change" → full write.
+        churn = (len(dead) + len(changed)) / max(1, len(old_qns))
+        if churn > config.edit_max_churn:
+            logger.info(
+                "wiki edit: churn %.2f > %.2f for slug=%s — escalating to full write",
+                churn,
+                config.edit_max_churn,
+                spec.slug,
+            )
+            return None
+
+        # The editor is tool-less: the bundle is its ONLY window onto current
+        # code. It can faithfully rewrite prose about a `changed` symbol only if
+        # that symbol's current body is in the bundle. A cited symbol whose body
+        # moved in place (same UUID) but which fell out of the page's retrieval
+        # top-k is absent from the bundle, yet `_seed_edit_ledger` still
+        # authorizes its citation as a survivor — so the editor would keep stale
+        # prose and the citation/coverage gates would pass. That is precisely the
+        # in-place body change the `cited_node_content_changed` dirty clause
+        # exists to catch; hand it to the full agentic write, which reads the
+        # node directly. (Dead symbols need no such guard: they aren't seeded, so
+        # a kept citation fails the citation gate → escalates anyway.)
+        changed_absent = sorted(qn for qn in changed if qn not in bundle_qns)
+        if changed_absent:
+            logger.info(
+                "wiki edit: changed symbol(s) %s absent from retrieval bundle for "
+                "slug=%s — escalating to full write",
+                ", ".join(changed_absent),
+                spec.slug,
+            )
+            return None
+
+        new_qns = sorted(bundle_qns - old_qns)[:_EDIT_NEW_SYMBOL_CAP]
+
+        surviving_doc_paths = await _fetch_live_doc_paths(
+            session, repository_id=repository_id, paths=old_doc_paths
+        )
+        ledger = _seed_edit_ledger(
+            bundle=bundle,
+            surviving_node_qns=[qn for qn in old_qns if qn in current_by_qn],
+            surviving_doc_paths=sorted(surviving_doc_paths),
+        )
+
+        user_block = build_page_editor_user(
+            spec=spec,
+            bundle=bundle,
+            sibling_pages=sibling_pages,
+            current_body=old_body,
+            changed_symbols=changed,
+            removed_symbols=dead,
+            new_symbols=new_qns,
+        )
+        blocks = [
+            CacheBlock(text=cached_repo_block, cacheable=True),
+            CacheBlock(text=user_block, cacheable=False),
+        ]
+        try:
+            with llm_stage("wiki.edit"):
+                raw = await llm.complete_text(
+                    system=PAGE_EDITOR_SYSTEM,
+                    blocks=blocks,
+                    max_tokens=config.edit_max_tokens,
+                    temperature=0.0,
+                )
+        except Exception as exc:  # noqa: BLE001 — any provider failure escalates
+            logger.warning(
+                "wiki edit: editor call failed for slug=%s (%s); escalating",
+                spec.slug,
+                exc,
+            )
+            return None
+        body = _strip_trailing_mermaid(raw.strip())  # editor told to omit; be safe
+        if not body:
+            logger.info("wiki edit: empty body for slug=%s — escalating", spec.slug)
+            return None
+
+        # No agentic repair on the edit path: validate against the seeded
+        # ledger and escalate on ANY failure, so a botched edit can never
+        # ship degraded — the full write is the fallback.
+        invalid = validate_citations(body, ledger)
+        if invalid:
+            logger.info(
+                "wiki edit: %d unverified citation(s) for slug=%s — escalating",
+                len(invalid),
+                spec.slug,
+            )
+            return None
+        body = ensure_inferred_answer_markers(
+            markdown=body,
+            covers_questions=spec.covers_questions,
+            ledger=ledger,
+        )
+        coverage = validate_coverage(
+            markdown=body,
+            covers_questions=spec.covers_questions,
+            ledger=ledger,
+        )
+        if not coverage.is_clean:
+            logger.info(
+                "wiki edit: coverage not clean for slug=%s "
+                "(missing=%s, forbidden=%s) — escalating",
+                spec.slug,
+                coverage.missing_questions,
+                coverage.has_forbidden_section,
+            )
+            return None
+
+        logger.info(
+            "wiki edit: slug=%s edited cleanly "
+            "(dead=%d, changed=%d, new=%d, churn=%.2f, streak=%d→%d)",
+            spec.slug,
+            len(dead),
+            len(changed),
+            len(new_qns),
+            churn,
+            record.edit_streak,
+            record.edit_streak + 1,
+        )
+        return PageDraft(
+            slug=spec.slug,
+            title=spec.title,
+            body_md=body,
+            model=llm.model,
+            agent=None,
+            mode="edit",
+        )
+
+    async def _dispatch_one(spec: PageSpec) -> PageDraft | None:
+        """Fetch the page bundle once, then route to the cheap edit path or
+        the full write, escalating edit→write on any failure."""
+        async with semaphore:
+            bundle = await _fetch_bundle(spec)
+            if bundles_out is not None:
+                bundles_out[spec.slug] = bundle
+            record = records_by_slug.get(spec.slug)
+            reason = dirty_reasons_by_slug.get(spec.slug)
+            if _edit_eligible(
+                reason=reason,
+                record=record,
+                cfg=config,
+                is_index=spec.slug == "index",
+            ):
+                assert record is not None  # _edit_eligible guards this
+                edited = await _edit_one(spec, record, bundle)
+                if edited is not None:
+                    return edited
+                logger.info(
+                    "wiki stage 4: edit escalated to full write for slug=%s "
+                    "(reason=%s)",
+                    spec.slug,
+                    reason,
+                )
+            return await _write_one(spec, bundle)
+
+    # One stage label around the gather: page tasks inherit the context they
+    # are created under, so every nested call — agent turns, citation/coverage
+    # repairs, retrieval embeds — books to wiki.write (edit calls re-label to
+    # wiki.edit inside `_edit_one`).
     with llm_stage("wiki.write"):
         results = await asyncio.gather(
-            *[_agent_write_one(spec) for spec in pages_to_write],
+            *[_dispatch_one(spec) for spec in pages_to_write],
             return_exceptions=False,
         )
 
@@ -2614,6 +3026,10 @@ async def resolve_pages(
             auto_link_counts[spec.slug] = (
                 auto_link_counts.get(spec.slug, 0) + links_added
             )
+        # Pre-resolve body (placeholders intact, diagram appended): this is
+        # what the cheap edit pass reads next sync. `content` below is
+        # post-resolve (placeholders rendered to links) and can't be edited.
+        content_src = body_md
         rendered, citations, unresolved = await resolver.resolve_page(
             session=session,
             repository_id=repository_id,
@@ -2668,6 +3084,13 @@ async def resolve_pages(
             agent=draft.agent,
         )
 
+        # Snapshot the current body hash of every cited node so the next
+        # sync's dirty predicate can spot an in-place body change (same UUID)
+        # and the editor can scope its delta. Keyed by node UUID string.
+        cited_content_hashes = await _live_node_hashes(
+            session, {str(node_id) for node_id in source_node_ids}
+        )
+
         resolved.append(
             ResolvedPage(
                 slug=spec.slug,
@@ -2681,6 +3104,9 @@ async def resolve_pages(
                 source_repo_doc_chunk_ids=source_repo_doc_chunk_ids,
                 unresolved_placeholders=unresolved,
                 quality=quality,
+                content_src=content_src,
+                cited_content_hashes=cited_content_hashes,
+                mode=draft.mode,
             )
         )
 
@@ -3075,6 +3501,7 @@ async def run_wiki_generation(
                 )
 
     report: DirtyReport | None = None
+    records: dict[str, PageRecord] = {}
     if mode == "incremental":
         assert plan is not None and overview is not None
         records = await load_page_records(session, repository_id=repository_id)
@@ -3161,7 +3588,17 @@ async def run_wiki_generation(
         session_factory=session_factory,
         checkout_path=checkout_path,
         specs_to_write=specs_to_write,
+        records=records,
+        dirty_reasons=dict(report.dirty) if report is not None else None,
     )
+    pages_edited = sum(1 for draft in drafts if draft.mode == "edit")
+    for draft in drafts:
+        if draft.mode == "edit":
+            logger.info(
+                "page_edit:%s:%s",
+                draft.slug,
+                (report.dirty.get(draft.slug, "?") if report is not None else "?"),
+            )
     errors.extend(f"page_failed:{slug}" for slug in page_failures)
     drafts = await synthesize_diagrams(
         llm=llm,
@@ -3278,13 +3715,14 @@ async def run_wiki_generation(
     wall_clock_ms = int((time.monotonic() - started) * 1000)
     logger.info(
         "wiki regen complete: repository_id=%s run_id=%s mode=%s planned=%d "
-        "written=%d persisted=%d skipped=%d clean_skipped=%d kept_for_quality=%d "
-        "unresolved=%d wall_clock_ms=%d errors=%d",
+        "written=%d edited=%d persisted=%d skipped=%d clean_skipped=%d "
+        "kept_for_quality=%d unresolved=%d wall_clock_ms=%d errors=%d",
         repository_id,
         run_id,
         mode,
         len(plan.pages),
         len(drafts),
+        pages_edited,
         len(persisted_ids),
         len(skipped_slugs),
         len(clean_slugs),
@@ -3304,6 +3742,7 @@ async def run_wiki_generation(
         pages_persisted=len(persisted_ids),
         pages_skipped=len(skipped_slugs),
         pages_clean_skipped=len(clean_slugs),
+        pages_edited=pages_edited,
         pages_orphaned_deleted=orphaned_deleted,
         unresolved_placeholders_total=len(unresolved_all),
         wall_clock_ms=wall_clock_ms,

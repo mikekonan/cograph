@@ -599,6 +599,10 @@ class PageDraft(BaseModel):
     body_md: str
     model: str
     agent: AgentTelemetry | None = None
+    # "write" — full agentic rewrite (default); "edit" — cheap single-shot
+    # edit of the existing body against the change delta. Drives `edit_streak`
+    # at persist (reset on write, +1 on edit) and the `pages_edited` tally.
+    mode: str = "write"
 
 
 CitationKind = Literal["node", "repo_doc_chunk"]
@@ -783,6 +787,14 @@ class ResolvedPage(BaseModel):
     source_repo_doc_chunk_ids: list[UUID]
     unresolved_placeholders: list[str]
     quality: WikiPageQuality = Field(default_factory=WikiPageQuality)
+    # Raw pre-resolve body (`[[node:qn]]` / `[[doc:path]]` placeholders intact)
+    # so the cheap edit pass can edit it; `content` above is post-resolve.
+    content_src: str | None = None
+    # {code_node_id: content_hash} for every cited node — the body-change
+    # detector for the dirty predicate and the editor delta.
+    cited_content_hashes: dict[str, str] = Field(default_factory=dict)
+    # Carried from the draft: "write" resets `edit_streak`, "edit" increments.
+    mode: str = "write"
 
 
 class WikiGenerationResult(BaseModel):
@@ -803,6 +815,11 @@ class WikiGenerationResult(BaseModel):
     # `touch_pages` bump. Disjoint from `pages_skipped` (content-hash
     # match after a full rewrite).
     pages_clean_skipped: int = 0
+    # Dirty pages the cheap edit pass rewrote in place (subset of
+    # pages_written): a single tool-less editor call against the change
+    # delta instead of the full agentic loop. The dominant cost saver for
+    # minor changes.
+    pages_edited: int = 0
     pages_orphaned_deleted: int
     unresolved_placeholders_total: int
     wall_clock_ms: int

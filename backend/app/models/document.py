@@ -76,3 +76,24 @@ class Document(TimestampMixin, Base):
         String(64), nullable=True
     )
     wiki_schema_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Edit-mode stamps (mig 0063). `content_src` is the raw pre-resolve body
+    # carrying `[[node:qn]]` / `[[doc:path]]` placeholders; `content` is
+    # post-resolve (placeholders already rendered to links), so the cheap edit
+    # pass edits `content_src` and re-resolves. NULL on legacy / quality-keep
+    # rows → edit-mode can't run → those pages take a full write until
+    # rewritten once (safe: that is today's behaviour).
+    content_src: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # {code_node_id: content_hash} snapshot of every cited node at write time.
+    # Ingest UPDATEs a changed node in place (same UUID, new content_hash), so
+    # this catches a cited node's body change even when the node has dropped
+    # out of the page's retrieval top-k. NULL → clause skipped (legacy).
+    cited_content_hashes: Mapped[dict[str, str] | None] = mapped_column(
+        JSONB().with_variant(JSON(), "sqlite"),
+        nullable=True,
+    )
+    # Consecutive cheap edits since the last full write; reset to 0 on a full
+    # write. Caps slow prose drift — at `edit_streak_cap` the page is
+    # force-rewritten from scratch.
+    edit_streak: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )

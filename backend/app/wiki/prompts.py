@@ -806,6 +806,61 @@ Rules:
 """
 
 
+PAGE_EDITOR_SYSTEM: str = """\
+You are a senior code analyst UPDATING one existing wiki page after a small
+change to the repository. You are NOT writing the page from scratch — a
+complete, previously-correct draft is given to you in <current_page>, and
+your job is to revise it MINIMALLY so it reflects the change described in
+<change_delta>, and nothing more.
+
+You have NO tools. Every fact you state must be grounded in either:
+  - the <current_page> body (its existing prose and citations), or
+  - the evidence below (<retrieved_code_chunks>, <retrieved_doc_chunks>,
+    <graph_neighbors>) — the symbols and docs available to cite.
+Do not invent identifiers, signatures, or behavior. If the delta removed a
+symbol and you have no replacement evidence, delete or rephrase the prose
+that referenced it rather than guessing.
+
+<change_delta> has up to three groups:
+  - changed: symbols whose CODE changed (renamed, re-signatured, or body
+    rewritten). Re-read their current code in <retrieved_code_chunks> and
+    update any prose, signatures, tables, or excerpts that describe them so
+    they match. Keep their `[[node:…]]` citations.
+  - removed: symbols that no longer exist in the repo. Remove their
+    `[[node:…]]` citations and revise the surrounding prose so it reads
+    correctly without them — leave no dangling reference.
+  - new: symbols now relevant to this page that it did not cover. Add
+    concise coverage ONLY where it fits the page's existing structure and
+    the change clearly calls for it. Do not pad.
+
+Editing rules:
+- Preserve every still-correct sentence VERBATIM. Touch only what the delta
+  forces. Do not reorganize sections, restyle prose, or "improve" wording
+  the change did not affect — a diff that rewrites untouched paragraphs
+  fails this task.
+- Keep the page's headings, section order, `Source: path:Lstart-Lend`
+  attribution lines, and `<!-- answers: slug -->` coverage markers intact
+  unless the delta makes a specific one wrong.
+- Do NOT emit a Mermaid diagram. Any diagram is regenerated downstream and
+  has been removed from <current_page>; do not add one back.
+
+Citation grammar (identical to how the page was written):
+    [[node:fully.qualified.Name]]   for code symbols present in the evidence
+    [[doc:path/to/doc.md#section]]  for in-repo doc chunks in the evidence
+Only emit a `[[node:…]]` whose qualified name appears in the evidence below
+or already appears (still valid) in <current_page>. Emit a `[[doc:…]]` only
+for a path shown in <retrieved_doc_chunks>.
+
+Coverage contract: every `covers_questions` slug the page currently answers
+must keep its `<!-- answers: slug -->` marker followed by at least one
+verified citation in that section. Do not drop coverage while editing.
+
+Output the full revised markdown body ONLY — no JSON, no commentary, no
+outer fences. Begin with the H1 page title. Output the COMPLETE page, not a
+diff or a fragment.
+"""
+
+
 PAGE_OUTLINE_SYSTEM: str = """\
 You are a senior code analyst preparing the OUTLINE for ONE wiki page in
 a two-pass writing flow. You have the same tool surface as the
@@ -2182,6 +2237,88 @@ def build_page_writer_user(
     )
 
 
+def _format_change_delta(
+    changed: list[str],
+    removed: list[str],
+    new: list[str],
+) -> str:
+    """Render the three-bucket symbol delta for the page editor.
+
+    `changed`/`removed`/`new` are qualified names. The editor uses these to
+    decide what prose to touch: re-read changed symbols, drop removed ones,
+    optionally cover new ones. Empty delta means "refresh against current
+    evidence" — e.g. a cited node's summary regenerated without a body diff.
+    """
+    lines: list[str] = []
+    if changed:
+        lines.append("changed (code changed — re-read current code and update prose/signatures/tables):")
+        lines.extend(f"  - {qn}" for qn in changed)
+    if removed:
+        lines.append("removed (no longer in the repo — drop their [[node:…]] citations and fix the prose):")
+        lines.extend(f"  - {qn}" for qn in removed)
+    if new:
+        lines.append("new (now relevant — add concise coverage only where it fits the existing structure):")
+        lines.extend(f"  - {qn}" for qn in new)
+    if not lines:
+        return "(no symbol-level delta — refresh the page against the current evidence below)"
+    return "\n".join(lines)
+
+
+def build_page_editor_user(
+    *,
+    spec: PageSpec,
+    bundle: PageBundle,
+    sibling_pages: list[PageSpec],
+    current_body: str,
+    changed_symbols: list[str],
+    removed_symbols: list[str],
+    new_symbols: list[str],
+) -> str:
+    """User block for the edit pass (PAGE_EDITOR_SYSTEM).
+
+    Renders the existing page body (pre-resolve `content_src`, with any
+    trailing Mermaid block already stripped by the caller), the three-bucket
+    symbol delta, the freshly-retrieved evidence for this page, and a short
+    list of siblings for cross-linking. Unlike the writer block there is no
+    `<repo_context>` background and no tools — the editor grounds entirely in
+    the existing prose plus the evidence shown here, so it must be
+    self-contained.
+    """
+    delta_block = _format_change_delta(changed_symbols, removed_symbols, new_symbols)
+    return (
+        "Revise the existing wiki page in <current_page> to reflect the "
+        "change in <change_delta>, editing as little as possible. Output the "
+        "complete revised markdown body.\n\n"
+        "<page_spec>\n"
+        f"slug: {spec.slug}\n"
+        f"title: {spec.title}\n"
+        f"parent_slug: {spec.parent_slug or '(none)'}\n"
+        f"covers_questions: {_format_covers_questions(spec.covers_questions)}\n"
+        "</page_spec>\n\n"
+        "<change_delta>\n"
+        f"{delta_block}\n"
+        "</change_delta>\n\n"
+        "<current_page>\n"
+        f"{current_body.strip()}\n"
+        "</current_page>\n\n"
+        "<retrieved_code_chunks>\n"
+        f"{_format_code_chunks(bundle)}\n"
+        "</retrieved_code_chunks>\n\n"
+        "<retrieved_doc_chunks>\n"
+        f"{_format_doc_chunks(bundle)}\n"
+        "</retrieved_doc_chunks>\n\n"
+        "<graph_neighbors>\n"
+        f"{_format_graph_neighbors(bundle)}\n"
+        "</graph_neighbors>\n\n"
+        "<sibling_pages>\n"
+        f"{_format_sibling_pages(sibling_pages, spec.slug)}\n"
+        "</sibling_pages>\n\n"
+        "Output the revised markdown body only — no JSON, no commentary, no "
+        "outer fences. Begin with the H1 page title. Output the COMPLETE "
+        "page, not a diff."
+    )
+
+
 def _format_subgraph_triples(triples: list[tuple[str, str, str]]) -> str:
     if not triples:
         return "(no graph neighbors — diagram should fall back to a high-level summary)"
@@ -2237,6 +2374,7 @@ __all__ = [
     "REPO_ANALYZER_SYSTEM",
     "PAGE_PLANNER_SYSTEM",
     "PAGE_WRITER_SYSTEM",
+    "PAGE_EDITOR_SYSTEM",
     "PAGE_OUTLINE_SYSTEM",
     "PAGE_PROSE_SYSTEM",
     "DIAGRAM_SYNTHESIZER_SYSTEM",
@@ -2246,6 +2384,7 @@ __all__ = [
     "build_repo_analyzer_user",
     "build_page_planner_user",
     "build_page_writer_user",
+    "build_page_editor_user",
     "build_page_writer_repair_user",
     "build_page_outline_user",
     "build_page_prose_user",

@@ -30,6 +30,16 @@ For such a change, edit `SURFACE_SHA_HISTORY[current]` IN PLACE (not
 append), keep `WIKI_SCHEMA_VERSION`, and carry `[wiki-schema-no-bump]` in
 the commit.
 
+Adding a NEW regeneration path is the other no-bump exception. The cheap
+edit pass (`PAGE_EDITOR_SYSTEM`, `_edit_one` in `pipeline.py`) only ever
+rewrites pages the dirty predicate already flagged for rewrite this run;
+it never touches a clean cached page, and the full write path that
+produced every v1 page is unchanged. So no persisted artifact is
+invalidated — a bump would force the full rebuild we are trying to avoid.
+Such an addition still moves the surface SHA (a new prompt is part of the
+surface), so it too edits `SURFACE_SHA_HISTORY[current]` in place with
+`[wiki-schema-no-bump]`.
+
 Two guards enforce this:
 
 1. `SURFACE_SHA_HISTORY` + the unit test in
@@ -63,10 +73,13 @@ WIKI_SCHEMA_VERSION = 1
 # version -> sha256 of the canonical quality surface at the moment that
 # version shipped. Append-only history: each bump adds one entry.
 SURFACE_SHA_HISTORY: dict[int, str] = {
-    # Edited in place (not appended) when version 1 shipped the spec_hash
-    # reuse-key narrowing (drop purpose / sources_hint) — a no-bump change
-    # paired with a backfill, see the docstring carve-out below.
-    1: "13e731a40087c36b687b97b478b2016433bd0f8cb4c151b1c294d5cc345b89d6",
+    # Edited in place (not appended) twice within version 1, both no-bump
+    # changes (see the docstring carve-outs): (1) the spec_hash reuse-key
+    # narrowing (drop purpose / sources_hint), paired with a backfill; and
+    # (2) adding PAGE_EDITOR_SYSTEM for the cheap edit path — a new regen
+    # path that never invalidates a v1-written page (the write path is
+    # unchanged), so a bump would force a needless full rebuild of every repo.
+    1: "783cc6ff01df0b45f491a415f85eb8d32be355d241ac6baa2be95b1d54a04ab7",
 }
 
 
@@ -109,6 +122,7 @@ def compute_quality_surface_sha() -> str:
             "repo_analyzer_system": prompts.REPO_ANALYZER_SYSTEM,
             "page_planner_system": prompts.PAGE_PLANNER_SYSTEM,
             "page_writer_system": prompts.PAGE_WRITER_SYSTEM,
+            "page_editor_system": prompts.PAGE_EDITOR_SYSTEM,
             "page_outline_system": prompts.PAGE_OUTLINE_SYSTEM,
             "page_prose_system": prompts.PAGE_PROSE_SYSTEM,
             "diagram_synthesizer_system": prompts.DIAGRAM_SYNTHESIZER_SYSTEM,

@@ -197,6 +197,23 @@ class ScriptedRepo:
         await session.flush()
         self.node_summaries[qualified_name] = summary
 
+    async def change_node_body(
+        self, session: AsyncSession, qualified_name: str, *, content: str
+    ) -> None:
+        """In-place body edit: ingest matches on `(file_path, symbol_key)` and
+        UPDATEs the row when the signature is unchanged, so the UUID lives and
+        only `content`/`content_hash` move (`builder.persist_graph`). Distinct
+        from `change_node` (signature / rename / move ⇒ delete + recreate ⇒ new
+        UUID). This is exactly the change `cited_node_content_changed` catches:
+        the body moved but the UUID liveness check can't see it."""
+        node = await session.get(CodeNode, self.node_ids[qualified_name])
+        assert node is not None
+        node.content = content
+        node.content_hash = _sha(content)
+        node.end_line = max(1, content.count("\n") + 1)
+        await session.flush()
+        self.node_contents[qualified_name] = content
+
     async def delete_node(self, session: AsyncSession, qualified_name: str) -> None:
         node_id = self.node_ids.pop(qualified_name)
         node = await session.get(CodeNode, node_id)
@@ -546,8 +563,19 @@ class StrictProvider:
 
 def harness_config(**overrides: Any) -> WikiGenerationConfig:
     """Serial writes so queue order == plan order; small floor so 4-page
-    plans pass validation."""
-    defaults: dict[str, Any] = {"write_concurrency": 1, "page_count_min": 1}
+    plans pass validation.
+
+    `enable_edit_mode` defaults OFF here so the equivalence/budget/cost
+    matrices exercise the full agentic write path they were written for
+    (their scripted queues hold tool turns, not editor `complete_text`
+    bodies). The cheap edit path has its own dedicated suite that opts in
+    with `enable_edit_mode=True`.
+    """
+    defaults: dict[str, Any] = {
+        "write_concurrency": 1,
+        "page_count_min": 1,
+        "enable_edit_mode": False,
+    }
     defaults.update(overrides)
     return WikiGenerationConfig(**defaults)
 
@@ -626,6 +654,75 @@ async def run_incremental(
     )
     if expected_dirty:
         assert_drained(provider)
+    return result
+
+
+def queue_edit_run(
+    provider: FakeStructuredProvider,
+    repo_state: ScriptedRepo,
+    pages: list[ScriptedPage],
+    *,
+    edit_slugs: set[str],
+    write_slugs: set[str],
+) -> None:
+    """Queue an incremental run mixing the cheap edit path and full writes.
+
+    Edit pages pop one `complete_text` body (in plan order, during page
+    dispatch); write pages consume tool turns; diagrams for any drafted
+    page pop `complete_text` after all bodies (plan order). The editor is
+    told to omit the diagram, so an edit body is `page_body` with no
+    Mermaid — identical to what the write path's `write_page` tool emits."""
+    for page in pages:
+        if page.slug in edit_slugs:
+            provider.queue(page_body(repo_state, page))
+    for page in pages:
+        if page.slug in write_slugs:
+            queue_page_turns(provider, repo_state, page)
+    for page in pages:
+        if page.slug in (edit_slugs | write_slugs) and page.diagram:
+            provider.queue(MERMAID_BLOCK)
+
+
+async def run_incremental_edits(
+    session: AsyncSession,
+    repo_state: ScriptedRepo,
+    pages: list[ScriptedPage],
+    *,
+    source_commit: str,
+    edit_slugs: set[str],
+    write_slugs: set[str] = frozenset(),
+    config: WikiGenerationConfig | None = None,
+) -> WikiGenerationResult:
+    """Incremental run with edit mode ON: `edit_slugs` take the cheap path,
+    `write_slugs` the full write. Asserts incremental mode over exactly
+    `edit_slugs | write_slugs`, `pages_edited == len(edit_slugs)` (an edit
+    that escalated would undercount AND fail the drain), and an exact drain."""
+    expected_dirty = set(edit_slugs) | set(write_slugs)
+    provider = FakeStructuredProvider()
+    queue_edit_run(
+        provider,
+        repo_state,
+        pages,
+        edit_slugs=set(edit_slugs),
+        write_slugs=set(write_slugs),
+    )
+    result = await run_pipeline(
+        session,
+        repo_state,
+        llm=provider,
+        source_commit=source_commit,
+        config=config or harness_config(enable_edit_mode=True),
+    )
+    assert result.errors == [], f"unexpected errors: {result.errors}"
+    assert result.mode == "incremental", f"expected incremental, got {result.mode}"
+    assert set(result.dirty_reasons) == expected_dirty, (
+        f"dirty set mismatch: {set(result.dirty_reasons)} != {expected_dirty}"
+    )
+    assert result.pages_edited == len(edit_slugs), (
+        f"pages_edited {result.pages_edited} != {len(edit_slugs)} "
+        f"(dirty_reasons={result.dirty_reasons})"
+    )
+    assert_drained(provider)
     return result
 
 
