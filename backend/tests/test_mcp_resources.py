@@ -253,9 +253,13 @@ async def test_wiki_tree_resource_serves_compacted_wiki(app, db_session) -> None
     assert "func main" not in entry["lead"]  # code fence stripped
     assert entry["sections"] == ["What it does"]
     assert entry["covers_questions"] == ["use-cases"]
-    # The compact map is the ONLY form of the wiki over MCP: the payload
-    # must not advertise a per-page URI for agents to follow, nor the
-    # whole-repo graph snapshot (a 40-60k-token dump removed from MCP).
+    # Summarized is the DEFAULT surface: the payload marks itself as such and
+    # points at the pull-only tool for full bodies — but advertises no per-page
+    # resource URI for agents to follow, nor the whole-repo graph snapshot
+    # (a 40-60k-token dump removed from MCP).
+    assert payload["wiki_form"] == "summarized"
+    assert payload["full_page_tool"] == "cograph_wiki_page"
+    assert "cograph_wiki_page" in payload["hint"]
     assert "page_template" not in payload["resources"]
     assert "page" not in payload["resources"]
     assert "graph" not in payload["resources"]
@@ -263,8 +267,9 @@ async def test_wiki_tree_resource_serves_compacted_wiki(app, db_session) -> None
 
 @pytest.mark.asyncio
 async def test_wiki_page_resource_is_not_served_over_mcp(app, db_session) -> None:
-    # Full generated-wiki pages are deliberately unreachable from agents:
-    # the per-page resource was removed, so reading its old URI must fail.
+    # Full pages are reachable only via the cograph_wiki_page TOOL, never as a
+    # resource URI: there is no per-page resource, so reading its old URI must
+    # fail (the summarized map stays the only advertised wiki resource).
     repo = Repository(
         host="github.com",
         owner="acme",

@@ -93,9 +93,9 @@ def register(server: FastMCP, services: MCPServices) -> None:
                     }
                 )
 
-            # Fallback: wiki Overview page, served in its COMPACT form only
-            # (lead prose + section headings). Full generated-wiki bodies are
-            # deliberately unreachable over MCP — the compact map is the wiki.
+            # Fallback: wiki Overview page, served in its SUMMARIZED form here
+            # (lead overview + section headings). The full body is pull-only,
+            # via the cograph_wiki_page tool — not returned from this readme call.
             wiki_page = await services.wiki_queries.get_page_by_slug(
                 session=session,
                 repository_id=repository.id,

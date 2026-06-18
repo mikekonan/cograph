@@ -13,6 +13,7 @@ from backend.app.mcp.tools.repository_readme import (
 from backend.app.mcp.tools.retrieve import register as register_retrieve_tool
 from backend.app.mcp.tools.route import register as register_route_tool
 from backend.app.mcp.tools.search_code import register as register_search_code_tool
+from backend.app.mcp.tools.wiki_page import register as register_wiki_page_tool
 
 
 def register_tools(server: FastMCP, services: MCPServices) -> None:
@@ -26,3 +27,4 @@ def register_tools(server: FastMCP, services: MCPServices) -> None:
     register_repository_readme_tool(server, services)
     register_read_file_range_tool(server, services)
     register_outline_tool(server, services)
+    register_wiki_page_tool(server, services)

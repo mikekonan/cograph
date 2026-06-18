@@ -53,6 +53,11 @@ from backend.app.rag.snippet import (
     make_snippet,
 )
 from backend.app.wiki import WikiQueryService
+from backend.app.wiki.compact import (
+    extract_section,
+    extract_sections,
+    truncate_markdown,
+)
 
 
 @dataclass(slots=True, kw_only=True)
@@ -739,10 +744,24 @@ async def wiki_tree_resource_payload(
                 "resources": _wiki_resource_uris(repository=repository),
                 "items": tree,
                 "total": total,
-                # The compacted whole-wiki map (~2-3k tokens): every page's
+                # The summarized whole-wiki map (~2-3k tokens): every page's
                 # lead prose, section headings, and covered questions. This is
-                # the ONLY form of the generated wiki served over MCP — full
-                # page bodies are deliberately not reachable from agents.
+                # the DEFAULT wiki surface over MCP. Full page bodies are not
+                # pushed here to keep the resource cheap — an agent that needs a
+                # page (or one section) verbatim pulls it on demand via the
+                # cograph_wiki_page tool (see `full_page_tool` below).
+                "wiki_form": "summarized",
+                "full_page_tool": "cograph_wiki_page",
+                "hint": (
+                    "This is the summarized wiki: per page a lead overview, "
+                    "section headings, and the reader-questions it answers. "
+                    "It is the default surface and is enough for conceptual / "
+                    "architectural framing. When one page warrants the full "
+                    "prose, diagrams, or code samples, call "
+                    "cograph_wiki_page(repository=<slug>, page=<page-slug>) — "
+                    "or pass section=<heading> to pull just that section. Do "
+                    "not pull full pages by default; start from this summary."
+                ),
                 "compact": compact,
             }
         )
@@ -752,14 +771,94 @@ def _wiki_resource_uris(
     *,
     repository: Repository,
 ) -> dict[str, str]:
-    # Deliberately no per-page URI (the compact map is the only form of the
-    # generated wiki served over MCP) and no graph URI (the whole-repo graph
-    # snapshot was a 40-60k-token dump; targeted tools — search_code,
-    # retrieve, read_node, related — cover every agent need).
+    # Deliberately no per-page URI: the summarized map is the only wiki form
+    # *advertised* as a resource (so it, and only it, lands in an agent's
+    # context by default). Full page bodies are reachable, but pull-only —
+    # through the cograph_wiki_page tool, which an agent calls deliberately
+    # rather than receiving up front. No graph URI either (the whole-repo graph
+    # snapshot was a 40-60k-token dump; search_code / retrieve / read_node /
+    # related cover every agent need).
     slug_path = f"{repository.host}/{repository.owner}/{repository.name}"
     return {
         "tree": f"cograph://repo/{slug_path}/wiki",
     }
+
+
+# A full wiki page is an on-demand pull, not a pushed resource. Cap the body so
+# a single call can't blow an agent's budget; if `content_truncated` is true the
+# agent should narrow to one `section` (sections are far smaller than a whole
+# page). The cap is enforced verbatim (line-boundary cut, structure preserved) —
+# not via the query-snippet excerpter, which would flatten newlines and clamp.
+_WIKI_PAGE_MAX_CHARS = 12000
+
+
+def _approx_tokens(text: str) -> int:
+    # Coarse 4-chars-per-token estimate — a self-budgeting signal for the
+    # agent, not an accounting figure (matches the spirit of the search tools'
+    # total_tokens_estimate without pulling a tokenizer onto the read path).
+    return (len(text) + 3) // 4
+
+
+async def wiki_page_payload(
+    *,
+    services: MCPServices,
+    repository: Repository,
+    page: str,
+    section: str | None = None,
+    max_chars: int = _WIKI_PAGE_MAX_CHARS,
+) -> object:
+    async with services.session_manager.session() as session:
+        await require_ready_repository(
+            session=session,
+            repository_id=repository.id,
+        )
+        wiki_page = await services.wiki_queries.get_page_by_slug(
+            session=session,
+            repository_id=repository.id,
+            slug=page,
+        )
+    if wiki_page is None:
+        raise ValueError(
+            f"NOT_FOUND: No wiki page '{page}' for this repository"
+        )
+
+    body = wiki_page.content
+    section_title: str | None = None
+    if section is not None and section.strip():
+        extracted = extract_section(wiki_page.content, section)
+        if extracted is None:
+            available = extract_sections(wiki_page.content)
+            listed = ", ".join(available) if available else "(none)"
+            raise ValueError(
+                f"NOT_FOUND: Section '{section}' not in wiki page '{page}'. "
+                f"Available sections: {listed}"
+            )
+        body = extracted
+        # Echo the canonical heading (from the matched heading line) rather than
+        # the agent's raw input, which may differ in case/whitespace.
+        section_title = extracted.splitlines()[0].lstrip("#").strip() or section
+
+    content, truncated = truncate_markdown(body, max_chars=max_chars)
+    return encode_payload(
+        {
+            "repository_slug": (
+                f"{repository.host}/{repository.owner}/{repository.name}"
+            ),
+            "wiki_slug": wiki_page.slug,
+            "title": wiki_page.title,
+            "section": section_title,
+            "content": content,
+            "content_truncated": truncated,
+            "tokens_estimate": _approx_tokens(content),
+            "note": (
+                "Full generated-wiki page body, fetched on demand and returned "
+                "verbatim. The default wiki surface is the summarized compact "
+                "map (the cograph_wiki_tree resource); pull full pages only "
+                "when that summary is too terse. If content_truncated is true, "
+                "request a single section= to get the rest in full."
+            ),
+        }
+    )
 
 
 async def require_ready_repository(

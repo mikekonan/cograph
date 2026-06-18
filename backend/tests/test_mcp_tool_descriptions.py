@@ -70,6 +70,7 @@ def test_at_least_the_known_tools_are_registered(all_tool_descriptions) -> None:
         "cograph_repository_readme",
         "cograph_read_file_range",
         "cograph_outline",
+        "cograph_wiki_page",
     }
     missing = required - set(all_tool_descriptions)
     assert not missing, f"missing tools: {sorted(missing)}"

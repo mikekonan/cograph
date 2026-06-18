@@ -24,15 +24,18 @@ def register_resources(server: FastMCP, services: MCPServices) -> None:
     @server.resource(
         "cograph://repo/{host}/{owner}/{name}/wiki",
         name="cograph_wiki_tree",
-        title="Repository wiki (compacted)",
+        title="Repository wiki (summarized)",
         description=(
-            "The generated wiki for a ready repository, served compacted: "
-            "the page tree plus, per page, its lead prose, section "
+            "The generated wiki for a ready repository, served SUMMARIZED: "
+            "the page tree plus, per page, a lead overview, its section "
             "headings, and the reader-questions it answers (~2-3k tokens for "
-            "the whole wiki). This is the ONLY form of the generated wiki "
-            "available over MCP — there is no full-page resource. Cite "
-            "entries as `wiki/<slug>`; drill into the underlying code via "
-            "retrieve/search instead of looking for longer wiki prose."
+            "the whole wiki). This summary is the DEFAULT wiki surface and is "
+            "enough for conceptual / architectural framing. When one page "
+            "warrants the full prose, diagrams, or code samples, pull it on "
+            "demand with the cograph_wiki_page tool (page=<slug>, or "
+            "section=<heading> for just one section) — full bodies are "
+            "pull-only, not advertised here, to keep this resource cheap. "
+            "Cite entries as `wiki/<slug>`."
         ),
         mime_type="application/json",
     )

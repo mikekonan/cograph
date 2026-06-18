@@ -164,22 +164,28 @@ and loses "what the team says it does and why." Reading it first also
 makes every later query better: you learn the repo's own vocabulary
 before you search with it.
 
-That resource IS the wiki, in the only form it is served over MCP: the
-page tree plus, for every page, its lead prose, its section headings,
-and the reader-questions it answers — the whole wiki in ~2-3k tokens.
-There is no full-page wiki resource and no way to fetch longer wiki
-prose; do not look for one. Use the compacted wiki for the conceptual /
-architectural framing (what a component is, why it exists, how pieces
-relate), then go to the CODE for depth: `cograph_retrieve`,
-`cograph_search_code`, `cograph_read_node` give you the file-anchored
-evidence to cite.
+That resource is the wiki SUMMARIZED — the default surface: the page
+tree plus, for every page, a lead overview, its section headings, and
+the reader-questions it answers — the whole wiki in ~2-3k tokens. It is
+enough for the conceptual / architectural framing (what a component is,
+why it exists, how pieces relate). Read it first, then go to the CODE
+for depth: `cograph_retrieve`, `cograph_search_code`, `cograph_read_node`
+give you the file-anchored evidence to cite.
+
+When the summary of one page is too terse for your question, pull that
+page in full ON DEMAND with `cograph_wiki_page(repository=<slug>,
+page=<page-slug>)` — or pass `section=<heading>` (a heading from that
+page's section list) to pull just one section and spend fewer tokens.
+This is a deliberate, per-page pull: do NOT fetch full pages by default
+or sweep them in bulk — start from the summary and pull only the few
+pages that warrant the full prose, diagrams, or code samples.
 
 Do NOT reach for `cograph_retrieve(mode="wiki")` to surface the
 generated wiki — that mode searches the repository's own checked-in text
-files (README, docs, CI yaml), not the generated pages. The wiki
-resource above is the only path to the generated wiki. Cite compact
-entries as `wiki/<slug>`; that counts as full provenance, same as code
-citations.
+files (README, docs, CI yaml), not the generated pages. The summarized
+wiki resource plus `cograph_wiki_page` are the two paths to the
+generated wiki. Cite wiki entries as `wiki/<slug>`; that counts as full
+provenance, same as code citations.
 
 Repos with `wiki_total == 0` are exempt from this gate — there is
 nothing to read. Mention this explicitly in your reasoning if relevant

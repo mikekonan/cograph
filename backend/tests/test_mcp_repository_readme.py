@@ -143,9 +143,11 @@ async def test_repository_readme_picks_longest_when_multiple_matches(client, db_
 
 
 async def test_repository_readme_falls_back_to_compacted_wiki_overview(client, db_session):
-    # The fallback must serve the COMPACT form (lead + section headings),
-    # never the full page body — full generated-wiki prose is deliberately
-    # unreachable over MCP.
+    # No README indexed → fall back to the wiki Overview, served SUMMARIZED
+    # (lead overview + section headings), never the raw page with its code
+    # fences. The lead now spends its budget on the opening prose across
+    # sections, so it reads as a real overview rather than the one-line teaser
+    # under the H1 — to read the page in full an agent uses cograph_wiki_page.
     _, plaintext = await _seed_pat_user(db_session)
     repo = await _seed_repository(db_session)
 
@@ -162,7 +164,7 @@ async def test_repository_readme_falls_back_to_compacted_wiki_overview(client, d
                 "Project summary indexed by the wiki agent.\n"
                 "```go\nfunc main() {}\n```\n"
                 "## Architecture\n"
-                "Deep prose the agent must not receive.\n"
+                "A layered design over a shared core.\n"
             ),
             content_hash="content-hash",
             source_hash="source-hash",
@@ -182,12 +184,16 @@ async def test_repository_readme_falls_back_to_compacted_wiki_overview(client, d
     result = json.loads(response.json()["result"]["content"][0]["text"])
     assert result["source"] == "wiki"
     assert result["wiki_slug"] == "overview"
+    # Lead carries the overview prose: the H1 brief AND the body of the
+    # opening section, up to budget.
     assert "Project summary" in result["lead"]
+    assert "A layered design over a shared core." in result["lead"]
     assert result["sections"] == ["Architecture"]
-    # Compact-only: no full body, no code fences, no section prose.
+    # Summarized form only: no full-body key, code fences stripped, and the
+    # heading text itself never leaks into the lead.
     assert "content" not in result
     assert "func main" not in json.dumps(result)
-    assert "Deep prose" not in json.dumps(result)
+    assert "Architecture" not in result["lead"]
 
 
 async def test_repository_readme_returns_not_found_when_nothing_indexed(client, db_session):
