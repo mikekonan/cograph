@@ -102,7 +102,7 @@ This is the single number the SKILL.md tells agents to watch.
 
 ## Tool catalog
 
-Twelve tools (target). Status flags mark migration progress.
+Fourteen tools (target). Status flags mark migration progress.
 
 | Tool | Status | Returns | Use when |
 |------|--------|---------|----------|
@@ -119,6 +119,7 @@ Twelve tools (target). Status flags mark migration progress.
 | `cograph_collection_search(query, ...)` | ✅ | Excerpt envelope (md_chunk layer) | Search inside a collection |
 | `cograph_read_chunk(collection_id, chunk_id)` | ✅ | Full chunk body | After `collection_search`, when truncated |
 | `cograph_read_file_range(slug, path, start, end)` | ✅ | File range body | Read lines `[start, end]` of a file (≤ 1000 lines) |
+| `cograph_wiki_page(repository, page, section?)` | ✅ | `{wiki_slug, section, content, content_truncated, tokens_estimate, …}` | The summarized wiki map's lead is too terse — pull ONE generated-wiki page (or one named `section`) in full, on demand |
 | ~~`cograph.search`~~ | 🚫 | — | Replaced by `cograph_retrieve(mode=…)` |
 | ~~`cograph.node`~~ | 🚫 | — | Renamed to `cograph_read_node` |
 
@@ -145,6 +146,7 @@ implementation lives in code). If fewer than two candidates clear
 | "Find class / function `Name`" | `cograph_search_code(query="Name")` |
 | "Where is feature Y implemented?" | `cograph_retrieve(query=…, mode="code")` |
 | "What does the wiki say about Z?" | `cograph_retrieve(query=…, mode="wiki")` |
+| Summarized wiki lead too terse; want a full page / section | `cograph_wiki_page(repository, page, section?)` |
 | Code AND wiki together | `cograph_retrieve(query=…, mode="mixed")` (only when target unclear) |
 | "Read this node fully" | `cograph_read_node(node_id, with_graph=false)` |
 | "Show me lines 100-200 of foo.py" | `cograph_read_file_range(slug, path, 100, 200)` |
@@ -189,8 +191,9 @@ prompt layers an MCP client receives without any client-side wiring:
    briefing after a context compaction without re-running `initialize`.
    Returns `{content, updated_at, is_default}`.
 3. **`cograph://my-context` resource**. The ACL-aware "where am I"
-   surface — returns the caller's readable repositories and collections
-   (`slug`, `display_name`, `count`). Per-user data lives here, not in
+   surface — returns the caller's readable repositories (each with its
+   `wiki_total` generated-page count, so the agent sees which repos have a
+   wiki worth reading) and collections. Per-user data lives here, not in
    `instructions=`, because FastMCP renders `instructions=`
    synchronously before the per-request context is bound.
 
@@ -204,6 +207,30 @@ admin → /admin?tab=mcp → PATCH /api/admin/mcp/briefing →
 The in-process cache (`_RENDERED_CACHE`) is refreshed by both the
 lifespan boot and the PATCH endpoint so a save propagates without
 restarting the process.
+
+## Generated-wiki surface
+
+The LLM-generated wiki is served **summarized by default** — full page
+bodies are never pushed into the agent's context unasked.
+
+- **`cograph://repo/{host}/{owner}/{name}/wiki` resource** — the default
+  surface. Carries the navigation tree plus a *compacted map*: per page a
+  `lead` (opening narrative, code/diagrams stripped), the `sections`
+  (heading list), and `covers_questions`. Roughly 2-3k tokens for a whole
+  repo versus ~60k for the full bodies. Computed deterministically (no
+  LLM) from the stored page content on every read, so a
+  compaction/prompt change lands on the next read at **zero token cost** —
+  old thin summaries regenerate to the new shape on first read after a
+  deploy. The payload marks itself `wiki_form: "summarized"` and points at
+  `full_page_tool: "cograph_wiki_page"`; it advertises **no** per-page
+  resource URI and **no** whole-repo graph snapshot.
+- **`cograph_wiki_page(repository, page, section?)` tool** — the
+  deliberate pull for one page (or one named `section`) in full, verbatim
+  (code fences and mermaid kept, newlines preserved). A tool, not a
+  resource, precisely so full bodies stay out of context until the agent
+  asks for them. Bounded to ~12k chars with `content_truncated` /
+  `tokens_estimate` flags; an unknown `section` returns `NOT_FOUND` with
+  the available section list so the agent can retry.
 
 ## Implementation references
 
