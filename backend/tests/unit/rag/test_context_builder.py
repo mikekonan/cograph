@@ -198,3 +198,59 @@ async def test_build_respects_include_flags_and_skips_missing_summary():
     assert response.results[0].score is None
     assert response.results[0].related_repo_doc_chunks == []
     assert response.nodes == {}
+
+
+@pytest.mark.asyncio
+async def test_build_caps_results_to_top_k():
+    # Each code node fans out into CODE + AST_SUMMARY rows, so two nodes
+    # would yield four rows. top_k=2 must trim the fanned-out list to two,
+    # keeping the highest-ranked node's rows in fused order.
+    n1, n2 = uuid4(), uuid4()
+    builder = ContextBuilder(graph_pivot=_StubGraphPivot({}))
+    builder._load_code_nodes = AsyncMock(  # type: ignore[method-assign]
+        return_value={
+            n1: SimpleNamespace(
+                id=n1,
+                name="a",
+                qualified_name="m.a",
+                file_path="m.py",
+                start_line=1,
+                end_line=2,
+                content="def a(): ...",
+                signature="def a()",
+            ),
+            n2: SimpleNamespace(
+                id=n2,
+                name="b",
+                qualified_name="m.b",
+                file_path="m.py",
+                start_line=3,
+                end_line=4,
+                content="def b(): ...",
+                signature="def b()",
+            ),
+        }
+    )
+    builder._load_node_summaries = AsyncMock(return_value={n1: "summary a", n2: "summary b"})  # type: ignore[method-assign]
+    builder._load_linked_repo_doc_chunks = AsyncMock(return_value={})  # type: ignore[method-assign]
+    builder._load_repo_doc_chunks = AsyncMock(return_value={})  # type: ignore[method-assign]
+
+    response = await builder.build(
+        AsyncMock(),
+        chunks=[
+            RetrievedChunk(store="code", chunk_id=n1, content="x", score=0.9, metadata={"vector_rank": 1}),
+            RetrievedChunk(store="code", chunk_id=n2, content="x", score=0.5, metadata={"vector_rank": 2}),
+        ],
+        requested_layers={RetrievalLayer.CODE, RetrievalLayer.AST_SUMMARY},
+        repository_id=uuid4(),
+        include_chunks=False,
+        include_graph=False,
+        include_scores=False,
+        top_k=2,
+    )
+
+    assert len(response.results) == 2
+    assert response.results[0].layer is RetrievalLayer.CODE
+    assert response.results[0].provenance.qualified_name == "m.a"
+    assert response.results[1].layer is RetrievalLayer.AST_SUMMARY
+    assert response.total_tokens_estimate == sum(len(r.snippet) for r in response.results) // 4

@@ -20,6 +20,7 @@ from backend.app.models.enums import QueryLogSource, QueryLogStatus
 from backend.app.models.user import User
 from backend.app.query_logs import enqueue_query_log
 from backend.app.rag.context_builder import (
+    BROAD_RETRIEVAL_LAYERS,
     ContextBuilder,
     RetrievalLayer,
     RetrievalResponse,
@@ -145,7 +146,7 @@ async def retrieve(
             repository_id=payload.repository_id,
             requested_layers=set(payload.stores)
             if payload.stores
-            else set(RetrievalLayer),
+            else set(BROAD_RETRIEVAL_LAYERS),
             top_k=payload.top_k,
             as_of=payload.as_of,
             since=payload.since,

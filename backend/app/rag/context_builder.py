@@ -36,6 +36,17 @@ class RetrievalLayer(StrEnum):
     REPO_DOC = "repo_doc"
 
 
+# Layers surfaced by a *broad* search (MCP `mode="mixed"`, REST default).
+# Deliberately excludes the bare AST layer: an AST result repeats the CODE
+# result's node verbatim (same provenance) with only the signature as its
+# snippet, so on a broad query it doubles the row count and triples
+# provenance for zero new information. Power users still reach it via an
+# explicit `stores=[ast]` or `mode="code"`.
+BROAD_RETRIEVAL_LAYERS: frozenset[RetrievalLayer] = frozenset(
+    {RetrievalLayer.CODE, RetrievalLayer.AST_SUMMARY, RetrievalLayer.REPO_DOC}
+)
+
+
 class CandidateFrom(StrEnum):
     VECTOR = "vector"
     LEXICAL = "lexical"
@@ -147,6 +158,7 @@ class ContextBuilder:
         query: str | None = None,
         snippet_chars: int = DEFAULT_SNIPPET_CHARS,
         mode: str | None = None,
+        top_k: int | None = None,
     ) -> RetrievalResponse:
         query_terms = extract_query_terms(query) if query else []
 
@@ -258,6 +270,13 @@ class ContextBuilder:
                         metadata=_chunk_metadata(chunk, include_scores=include_scores),
                     )
                 )
+
+        # `top_k` caps the *retriever* (distinct chunks), but a code chunk
+        # fans out into CODE + AST_SUMMARY rows, so the result list can
+        # exceed top_k. Cap here so top_k means "at most this many rows" —
+        # the count the agent budgets against. Rows stay in fused-rank order.
+        if top_k is not None and len(results) > top_k:
+            results = results[:top_k]
 
         return RetrievalResponse(
             results=results,

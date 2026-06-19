@@ -92,6 +92,10 @@ The agent should be able to self-budget without parsing every result:
   the response — a conservative proxy that avoids tokenizer roundtrips.
 - A `top_k=10` `cograph_retrieve` with default `snippet_chars=600` is
   capped at ~1.5K tokens of *snippet* payload regardless of source size.
+- `top_k` is clamped to 25 and bounds the result count: each result is one
+  distinct hit, and `mode="mixed"` no longer emits a separate bare-`ast`
+  row per node (it duplicated the `code` row), so the count never balloons
+  past `top_k`. Raise `top_k` only when the answer truly spans many files.
 - `cograph_read_node` / `cograph_read_chunk` return full content. Agents
   should reach for them only when `content_truncated=true` AND the answer
   needs the full body.

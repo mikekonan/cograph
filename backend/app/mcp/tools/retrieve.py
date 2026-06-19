@@ -14,7 +14,7 @@ from backend.app.mcp.services import (
     resolve_readable_repository_by_slug,
     retrieve_payload,
 )
-from backend.app.rag.context_builder import RetrievalLayer
+from backend.app.rag.context_builder import BROAD_RETRIEVAL_LAYERS, RetrievalLayer
 from backend.app.rag.snippet import (
     DEFAULT_SNIPPET_CHARS,
     MAX_SNIPPET_CHARS,
@@ -23,16 +23,26 @@ from backend.app.rag.snippet import (
 
 RetrieveMode = Literal["code", "wiki", "mixed"]
 
+# Hard ceiling on `top_k`. A mixed retrieve fans out across layers, so a
+# high top_k returns a payload that dominates the agent's context. Clamp
+# (not reject) so an over-eager agent still gets a bounded answer.
+MAX_TOP_K = 25
+
 _MODE_TO_LAYERS: dict[RetrieveMode, set[RetrievalLayer]] = {
     "code": {RetrievalLayer.CODE, RetrievalLayer.AST, RetrievalLayer.AST_SUMMARY},
     "wiki": {RetrievalLayer.REPO_DOC},
-    "mixed": set(RetrievalLayer),
+    # `mixed` drops the bare AST layer (signature duplicates the CODE body
+    # row for the same node) — see BROAD_RETRIEVAL_LAYERS.
+    "mixed": set(BROAD_RETRIEVAL_LAYERS),
 }
 
 _RETRIEVE_DESCRIPTION = (
     "Hybrid search across code, AST summaries, and repo docs of one repository. "
     "Returns query-anchored excerpts with citations and a "
     "`total_tokens_estimate` so the agent can self-budget.\n"
+    "`top_k` bounds the number of results (clamped to 25); each result is a "
+    "distinct hit, so start at the default 10 and only raise it if the answer "
+    "is genuinely spread across many files.\n"
     "`repository` is required — retrieval is always scoped to a single "
     "repository slug. If you don't know which repository holds the answer, "
     "call cograph_route first and retrieve from each candidate it returns.\n"
@@ -53,7 +63,8 @@ class RetrieveToolArgs(BaseModel):
     repository: str = Field(min_length=1)
     mode: RetrieveMode = "mixed"
     stores: list[RetrievalLayer] | None = None
-    top_k: int = Field(default=10, ge=1, le=100)
+    # Upper bound is enforced by `_clamp_top_k` (clamp, not 422).
+    top_k: int = Field(default=10, ge=1)
     snippet_chars: int = Field(
         default=DEFAULT_SNIPPET_CHARS,
         ge=MIN_SNIPPET_CHARS,
@@ -73,6 +84,11 @@ class RetrieveToolArgs(BaseModel):
         if not stripped:
             raise ValueError("query must not be blank")
         return stripped
+
+    @field_validator("top_k")
+    @classmethod
+    def _clamp_top_k(cls, value: int) -> int:
+        return min(value, MAX_TOP_K)
 
     @model_validator(mode="after")
     def _validate_temporal_window(self) -> "RetrieveToolArgs":

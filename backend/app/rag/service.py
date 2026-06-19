@@ -111,6 +111,7 @@ async def retrieve_composite(
         query=query,
         snippet_chars=snippet_chars,
         mode=mode,
+        top_k=top_k,
     )
 
 
