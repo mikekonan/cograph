@@ -9,11 +9,12 @@ The incremental path rests on two orthogonal reuse axes:
    `WIKI_SCHEMA_VERSION`, and both model ids must match.
 
 2. **Per-page reuse** — every persisted wiki page carries three stamps:
-   `spec_hash` (what the page was asked to be), `retrieval_fingerprint`
-   (what evidence the repo offered for it), `wiki_schema_version` (which
-   pipeline wrote it). A page is *clean* — skipped entirely, zero LLM
-   calls — iff its row exists, all stamps match the current run, every
-   cited source still exists, and its recorded quality isn't `degraded`.
+   `spec_hash` (what the page was asked to be), `cited_fingerprint` (a hash
+   of just the evidence the page cited — see `cited_fingerprint`), and
+   `wiki_schema_version` (which pipeline wrote it). A page is *clean* —
+   skipped entirely, zero LLM calls — iff its row exists, all stamps match
+   the current run, every cited source still exists, and its recorded
+   quality isn't `degraded`.
 
 Dirty decisions are pure functions here so the predicate is unit-testable
 without a DB or provider; the DB-touching orchestration lives in
@@ -25,16 +26,15 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from uuid import UUID
 
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.app.llm.usage import llm_stage
 from backend.app.models.wiki_artifact import WikiArtifact
-from backend.app.wiki.retrieval import PageBundle, WikiRetrievalService
 from backend.app.wiki.schemas import (
     MindMap,
     PagePlan,
@@ -75,9 +75,9 @@ def spec_hash(spec: PageSpec) -> str:
       reshuffles its source hints), so hashing them made *any* re-plan
       dirty *every* page — a full-wiki rewrite triggered by planner jitter,
       not by a real change. This was the dominant spurious-cost driver.
-    * `sources_hint` is subsumed by `bundle_fingerprint`: the evidence
-      actually retrieved for the page is the authoritative dirty signal,
-      so a hint list adds only noise.
+    * `sources_hint` is subsumed by `cited_fingerprint`: the evidence the
+      page actually cited is the authoritative dirty signal, so a hint
+      list adds only noise.
     * `purpose` is a framing hint; absent any contract or evidence change,
       a reworded purpose doesn't change the page's substance. The residual
       staleness window (reworded purpose, identical contract + evidence,
@@ -99,36 +99,59 @@ def spec_hash(spec: PageSpec) -> str:
     )
 
 
-def bundle_fingerprint(*, embed_model: str, bundle: PageBundle) -> str:
-    """Hash of the evidence `for_page` retrieved for one page.
+def cited_fingerprint(
+    *,
+    cited_node_ids: Sequence[str],
+    cited_chunk_ids: Sequence[str],
+    node_content_hashes: Mapping[str, str],
+    node_summaries: Mapping[str, str | None],
+    chunk_contents: Mapping[str, str],
+) -> str:
+    """Hash of the evidence a page actually *cited*, not the whole bundle.
 
-    Includes content hashes, not just ids: a code node's *summary* can be
-    regenerated (neighbor change) while the node row — and its UUID —
-    survives, and the writer reads that summary via the bundle. Sorted as a
-    set so ANN rank jitter between runs doesn't dirty a page whose evidence
-    membership and content are unchanged. Graph neighbors are excluded —
-    second-order context whose churn isn't worth a rewrite.
+    Keyed strictly by the page's recorded citations (`source_node_ids` /
+    `source_repo_doc_chunk_ids`) — the uncited tail of the top-k is
+    deliberately excluded. That tail churns on every push as ANN rank
+    jitters, which is what made the old `bundle_fingerprint` dirty pages at
+    zero real change; keying on citations removes that false signal at the
+    source.
+
+    Retrieval-free by construction: every input is fetchable from the DB by
+    id (`code_nodes.content_hash`, `code_node_summaries.summary`,
+    `repo_document_chunks.content`), so the fingerprint needs no embed call
+    and can be backfilled offline. For the same reason `embed_model` is NOT
+    an input — the cited set doesn't depend on the embedder, so an embedder
+    swap must not dirty a page (the artifact-reuse gate handles that).
+
+    A cited id with no live data contributes empty components; liveness
+    itself is caught upstream by the cheap predicate, so the fingerprint
+    only has to move when *content* moves. Sorted as a set so id order is
+    irrelevant.
     """
     evidence: list[tuple[str, str, str, str]] = []
-    for chunk in bundle.code_chunks:
+    for node_id in cited_node_ids:
         evidence.append(
             (
                 "node",
-                str(chunk.code_node_id),
-                hashlib.sha256(chunk.snippet.encode("utf-8")).hexdigest(),
-                hashlib.sha256((chunk.summary or "").encode("utf-8")).hexdigest(),
+                node_id,
+                node_content_hashes.get(node_id, ""),
+                hashlib.sha256(
+                    (node_summaries.get(node_id) or "").encode("utf-8")
+                ).hexdigest(),
             )
         )
-    for chunk in bundle.doc_chunks:
+    for chunk_id in cited_chunk_ids:
         evidence.append(
             (
                 "doc",
-                str(chunk.chunk_id),
-                hashlib.sha256(chunk.snippet.encode("utf-8")).hexdigest(),
+                chunk_id,
+                hashlib.sha256(
+                    (chunk_contents.get(chunk_id) or "").encode("utf-8")
+                ).hexdigest(),
                 "",
             )
         )
-    return _canonical_hash({"embed_model": embed_model, "evidence": sorted(evidence)})
+    return _canonical_hash({"evidence": sorted(evidence)})
 
 
 # ---------------------------------------------------------------------------
@@ -142,11 +165,16 @@ class PageRecord:
 
     slug: str
     spec_hash: str | None
-    retrieval_fingerprint: str | None
     wiki_schema_version: int | None
     source_node_ids: tuple[str, ...]
     source_repo_doc_chunk_ids: tuple[str, ...]
     quality_status: QualityStatus | None
+    # P1 cited-only reuse stamp (mig 0064). None → "adopt": a missing stamp is
+    # NOT dirty — the runtime recomputes it from the cited evidence and
+    # persists it on this sync. That NULL-is-not-dirty rule is the deploy
+    # floor: a deploy (or a skipped backfill) stamps lazily instead of
+    # triggering a regeneration storm.
+    cited_fingerprint: str | None = None
     # {code_node_id: content_hash} stamped at the last write/edit. None on
     # legacy / pre-0063 rows → the body-change clause is skipped (degrades to
     # the UUID-only liveness checks, i.e. today's behaviour).
@@ -165,7 +193,7 @@ def page_dirty_cheap_reason(
     wiki_schema_version: int = WIKI_SCHEMA_VERSION,
 ) -> str | None:
     """Dirty checks that need no retrieval call. None ⇒ still a clean
-    candidate (the fingerprint check decides).
+    candidate (the cited-fingerprint check decides).
 
     `degraded` quality is dirty by design — the page self-heals on the
     next sync instead of freezing a gate-exhausted draft forever.
@@ -175,11 +203,16 @@ def page_dirty_cheap_reason(
 
     `cited_node_content_changed` closes the body-change blind spot: ingest
     UPDATEs a changed node in place (same UUID, new content_hash), so the
-    UUID liveness check above can't see it, and `bundle_fingerprint` only
-    catches it while the node is in the page's top-k. Comparing the stored
+    UUID liveness check above can't see it. Comparing the stored
     `cited_content_hashes` against the live hashes (`live_node_hashes`)
-    dirties the page whenever a cited node's body moved, top-k or not.
-    Skipped when either map is absent (legacy rows / no hash fetch).
+    dirties the page whenever a cited node's body moved, top-k or not — and
+    it works on legacy rows that predate the cited fingerprint. Skipped when
+    either map is absent (legacy rows / no hash fetch).
+
+    Notably absent: any "missing fingerprint" clause. A NULL
+    `cited_fingerprint` is NOT dirty here; it is *adopted* by the
+    cited-fingerprint pass (see `page_cited_reason`), which is what keeps a
+    deploy from triggering a regeneration storm.
     """
     if record is None:
         return "missing_row"
@@ -187,8 +220,6 @@ def page_dirty_cheap_reason(
         return "schema_version"
     if record.spec_hash != current_spec_hash:
         return "spec_changed"
-    if record.retrieval_fingerprint is None:
-        return "no_fingerprint"
     if record.quality_status is None:
         return "quality_unknown"
     if record.quality_status is QualityStatus.DEGRADED:
@@ -207,13 +238,26 @@ def page_dirty_cheap_reason(
     return None
 
 
-def page_fingerprint_reason(
-    *, record: PageRecord, current_fingerprint: str
+def page_cited_reason(
+    *, record: PageRecord, current_cited_fingerprint: str
 ) -> str | None:
-    """Final dirty clause: the evidence the repo would offer the page today
-    differs from what it was written against."""
-    if record.retrieval_fingerprint != current_fingerprint:
-        return "retrieval_drift"
+    """Dirty iff the page's *cited* evidence changed since it was written.
+
+    Compares a hash of only what the page actually cited — recomputed from
+    the DB by id (no embed call) — against the stored stamp. The uncited
+    tail of the old retrieval bundle churned on ANN rank jitter and dirtied
+    pages at zero real change; keying on citations removes that.
+
+    A None stored stamp means "adopt", NOT dirty: the page predates the
+    cited-fingerprint column (legacy / un-backfilled), so the caller stamps
+    the freshly computed value on this sync and the page stays clean. That
+    NULL-is-not-dirty rule is the deploy-safety floor — a deploy or a skipped
+    backfill stamps lazily instead of forcing a rewrite.
+    """
+    if record.cited_fingerprint is None:
+        return None
+    if record.cited_fingerprint != current_cited_fingerprint:
+        return "cited_evidence_changed"
     return None
 
 
@@ -229,12 +273,26 @@ class DirtyReport:
     dirty: dict[str, str]  # slug -> reason
     clean: list[str]
     total: int
+    # slug -> freshly computed cited_fingerprint for clean pages whose stored
+    # stamp was NULL ("adopt"). The orchestrator persists these so the lazy
+    # floor stamps exactly once and never rewrites. Empty unless adopting.
+    adopt: dict[str, str] = field(default_factory=dict)
+    # Slugs whose ENTIRE cited subject vanished — every cited node id AND every
+    # cited chunk id is gone from the live graph, so the page documents nothing
+    # that still exists. Always a subset of `dirty`. A node's UUID is stable
+    # across in-place content edits (ingest UPDATEs by symbol_key), so an
+    # edited citation does NOT collapse — only a delete or rename loses the id.
+    # This is the residual re-plan signal `structural_hash` misses: mass
+    # deletion of PRIVATE symbols leaves the public manifest (and thus the
+    # structural hash) untouched, yet orphans the pages that documented them.
+    collapsed: frozenset[str] = field(default_factory=frozenset)
 
     @property
-    def dirty_ratio(self) -> float:
+    def coverage_collapse_ratio(self) -> float:
+        """Fraction of the plan whose pages lost their whole cited subject."""
         if self.total <= 0:
             return 1.0
-        return len(self.dirty) / self.total
+        return len(self.collapsed) / self.total
 
 
 async def load_page_records(
@@ -253,13 +311,13 @@ async def load_page_records(
         row.slug: PageRecord(
             slug=row.slug,
             spec_hash=row.spec_hash,
-            retrieval_fingerprint=row.retrieval_fingerprint,
             wiki_schema_version=row.wiki_schema_version,
             source_node_ids=tuple(str(nid) for nid in (row.source_node_ids or [])),
             source_repo_doc_chunk_ids=tuple(
                 str(cid) for cid in (row.source_repo_doc_chunk_ids or [])
             ),
             quality_status=_existing_quality_status(row.quality),
+            cited_fingerprint=row.cited_fingerprint,
             cited_content_hashes=(
                 {str(k): str(v) for k, v in row.cited_content_hashes.items()}
                 if row.cited_content_hashes
@@ -272,39 +330,25 @@ async def load_page_records(
     }
 
 
-async def _live_id_set(session: AsyncSession, column, cited: set[str]) -> set[str]:
-    """Batched existence check: which of `cited` UUID strings still exist.
-
-    Unparseable ids are simply absent from the result — the predicate then
-    reports the citing page as dirty, which is the safe direction.
-    """
+def _parseable_uuids(cited: set[str]) -> list[UUID]:
+    """UUIDs we can look up. Unparseable ids are dropped here; the cheap
+    predicate then reports the citing page dirty (the safe direction)."""
     parseable: list[UUID] = []
     for raw in cited:
         try:
             parseable.append(UUID(raw))
         except ValueError:
             continue
-    if not parseable:
-        return set()
-    rows = (
-        await session.execute(select(column).where(column.in_(parseable)))
-    ).scalars()
-    return {str(value) for value in rows}
+    return parseable
 
 
 async def _live_node_hashes(session: AsyncSession, cited: set[str]) -> dict[str, str]:
     """Batched `{id: content_hash}` for the cited code nodes that still
     exist. Liveness is key presence; a hash that differs from the stored
-    snapshot means the node's body changed in place (same UUID). Unparseable
-    ids are dropped — they surface as `cited_node_missing` upstream."""
+    snapshot means the node's body changed in place (same UUID)."""
     from backend.app.models.code_node import CodeNode
 
-    parseable: list[UUID] = []
-    for raw in cited:
-        try:
-            parseable.append(UUID(raw))
-        except ValueError:
-            continue
+    parseable = _parseable_uuids(cited)
     if not parseable:
         return {}
     rows = (
@@ -317,38 +361,108 @@ async def _live_node_hashes(session: AsyncSession, cited: set[str]) -> dict[str,
     return {str(node_id): content_hash for node_id, content_hash in rows}
 
 
+async def _live_node_summaries(
+    session: AsyncSession, cited: set[str]
+) -> dict[str, str]:
+    """Batched `{code_node_id: summary}` for cited nodes that carry a summary.
+
+    A neighbor-change regeneration rewrites the summary text while the node
+    UUID lives, so the summary is part of the cited fingerprint. Nodes with
+    no summary row are simply absent (the fingerprint uses an empty
+    component for them)."""
+    from backend.app.models.code_node_summary import CodeNodeSummary
+
+    parseable = _parseable_uuids(cited)
+    if not parseable:
+        return {}
+    rows = (
+        await session.execute(
+            select(CodeNodeSummary.code_node_id, CodeNodeSummary.summary).where(
+                CodeNodeSummary.code_node_id.in_(parseable)
+            )
+        )
+    ).all()
+    return {str(node_id): summary for node_id, summary in rows}
+
+
+async def _live_chunk_contents(
+    session: AsyncSession, cited: set[str]
+) -> dict[str, str]:
+    """Batched `{chunk_id: content}` for cited repo-doc chunks that still
+    exist. Presence is liveness; the content is hashed into the cited
+    fingerprint so an in-place doc edit dirties the citing page."""
+    from backend.app.models.repo_document import RepoDocumentChunk
+
+    parseable = _parseable_uuids(cited)
+    if not parseable:
+        return {}
+    rows = (
+        await session.execute(
+            select(RepoDocumentChunk.id, RepoDocumentChunk.content).where(
+                RepoDocumentChunk.id.in_(parseable)
+            )
+        )
+    ).all()
+    return {str(chunk_id): content for chunk_id, content in rows}
+
+
+async def compute_cited_fingerprints(
+    session: AsyncSession,
+    *,
+    citations_by_slug: Mapping[str, tuple[Sequence[str], Sequence[str]]],
+) -> dict[str, str]:
+    """Cited fingerprint per slug, recomputed from current DB state.
+
+    Single source of truth for both ends of the reuse loop: the dirty
+    predicate (did the cited evidence differ from the stamp?) and the write
+    path (what stamp do we persist?). Both hash the same DB-sourced
+    components — `code_nodes.content_hash`, `code_node_summaries.summary`,
+    `repo_document_chunks.content` — so a freshly written page's stamp
+    equals what the next sync recomputes for it, with no spurious drift. No
+    embed call: every input is fetched by id.
+    """
+    all_nodes: set[str] = set()
+    all_chunks: set[str] = set()
+    for node_ids, chunk_ids in citations_by_slug.values():
+        all_nodes.update(node_ids)
+        all_chunks.update(chunk_ids)
+    node_hashes = await _live_node_hashes(session, all_nodes)
+    node_summaries = await _live_node_summaries(session, all_nodes)
+    chunk_contents = await _live_chunk_contents(session, all_chunks)
+    return {
+        slug: cited_fingerprint(
+            cited_node_ids=node_ids,
+            cited_chunk_ids=chunk_ids,
+            node_content_hashes=node_hashes,
+            node_summaries=node_summaries,
+            chunk_contents=chunk_contents,
+        )
+        for slug, (node_ids, chunk_ids) in citations_by_slug.items()
+    }
+
+
 async def compute_dirty_slugs(
     session: AsyncSession,
     *,
     repository_id: UUID,
     plan: PagePlan,
     records: dict[str, PageRecord],
-    retriever: WikiRetrievalService,
-    overview: RepoOverview,
-    code_top_k: int,
-    docs_top_k: int,
-    graph_pivot_top_k: int,
     wiki_schema_version: int = WIKI_SCHEMA_VERSION,
 ) -> DirtyReport:
     """Decide, for every page in `plan`, whether it must be rewritten.
 
-    Three passes:
-      1. one batched liveness SELECT per cited-id kind (code nodes,
-         repo-doc chunks) across all records;
+    All DB-only — no retrieval, no embed call:
+      1. one batched SELECT per cited-id kind (code-node content hashes,
+         code-node summaries, repo-doc chunk contents) across all records;
       2. the cheap predicate per page (`page_dirty_cheap_reason`);
-      3. for survivors only — recompute the retrieval fingerprint via
-         `retriever.for_page` (one embed call per page, zero LLM calls)
-         and compare against the stamp.
+      3. for survivors — recompute the page's *cited* fingerprint from those
+         components and compare to the stamp (`page_cited_reason`). A NULL
+         stamp adopts: the page is clean and its freshly computed fingerprint
+         is recorded in `adopt` for the orchestrator to persist.
 
-    The `index` page narrates the whole wiki (sibling links, reading
-    order), so any dirty sibling marks it dirty too.
-
-    A retrieval failure during pass 3 marks the page dirty
-    (`retrieval_error`) — the full path would have written it with an
-    empty bundle, so rewriting is the equivalence-preserving choice.
+    The `index` page narrates the whole wiki (sibling links, reading order),
+    so any dirty sibling marks it dirty too.
     """
-    from backend.app.models.repo_document import RepoDocumentChunk
-
     cited_nodes: set[str] = set()
     cited_chunks: set[str] = set()
     plan_slugs = {spec.slug for spec in plan.pages}
@@ -358,14 +472,24 @@ async def compute_dirty_slugs(
         cited_nodes.update(record.source_node_ids)
         cited_chunks.update(record.source_repo_doc_chunk_ids)
     live_node_hashes = await _live_node_hashes(session, cited_nodes)
+    node_summaries = await _live_node_summaries(session, cited_nodes)
+    chunk_contents = await _live_chunk_contents(session, cited_chunks)
     live_node_ids = set(live_node_hashes.keys())
-    live_chunk_ids = await _live_id_set(session, RepoDocumentChunk.id, cited_chunks)
+    live_chunk_ids = set(chunk_contents.keys())
 
     dirty: dict[str, str] = {}
     clean: list[str] = []
-    embed_model = retriever.embedder.model
+    adopt: dict[str, str] = {}
+    collapsed: set[str] = set()
     for spec in plan.pages:
         record = records.get(spec.slug)
+        if record is not None:
+            cited_n = set(record.source_node_ids)
+            cited_c = set(record.source_repo_doc_chunk_ids)
+            if (cited_n or cited_c) and not (
+                cited_n & live_node_ids or cited_c & live_chunk_ids
+            ):
+                collapsed.add(spec.slug)
         reason = page_dirty_cheap_reason(
             record=record,
             current_spec_hash=spec_hash(spec),
@@ -376,36 +500,18 @@ async def compute_dirty_slugs(
         )
         if reason is None:
             assert record is not None  # cheap pass returns missing_row otherwise
-            try:
-                with llm_stage("wiki.retrieval"):
-                    bundle = await retriever.for_page(
-                        session=session,
-                        repository_id=repository_id,
-                        purpose=spec.purpose,
-                        sources_hint=spec.sources_hint,
-                        code_top_k=code_top_k,
-                        docs_top_k=docs_top_k,
-                        graph_pivot_top_k=graph_pivot_top_k,
-                        domain_concepts=list(overview.business_context.domain_concepts),
-                        business_confidence=overview.business_context.confidence,
-                    )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "compute_dirty_slugs: retrieval failed for slug=%s (%s); "
-                    "marking dirty",
-                    spec.slug,
-                    exc,
-                )
-                bundle = None
-            if bundle is None:
-                reason = "retrieval_error"
-            else:
-                reason = page_fingerprint_reason(
-                    record=record,
-                    current_fingerprint=bundle_fingerprint(
-                        embed_model=embed_model, bundle=bundle
-                    ),
-                )
+            current = cited_fingerprint(
+                cited_node_ids=record.source_node_ids,
+                cited_chunk_ids=record.source_repo_doc_chunk_ids,
+                node_content_hashes=live_node_hashes,
+                node_summaries=node_summaries,
+                chunk_contents=chunk_contents,
+            )
+            reason = page_cited_reason(
+                record=record, current_cited_fingerprint=current
+            )
+            if reason is None and record.cited_fingerprint is None:
+                adopt[spec.slug] = current
         if reason is not None:
             dirty[spec.slug] = reason
         else:
@@ -415,10 +521,17 @@ async def compute_dirty_slugs(
         dirty["index"] = "sibling_dirty"
         if "index" in clean:
             clean.remove("index")
+        adopt.pop("index", None)  # it'll be rewritten → fresh stamp via write path
 
     for slug, reason in sorted(dirty.items()):
         logger.info("page_dirty:%s:%s", slug, reason)
-    return DirtyReport(dirty=dirty, clean=clean, total=len(plan.pages))
+    return DirtyReport(
+        dirty=dirty,
+        clean=clean,
+        total=len(plan.pages),
+        adopt=adopt,
+        collapsed=frozenset(collapsed),
+    )
 
 
 # ---------------------------------------------------------------------------

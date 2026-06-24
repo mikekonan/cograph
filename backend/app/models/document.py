@@ -75,6 +75,14 @@ class Document(TimestampMixin, Base):
     retrieval_fingerprint: Mapped[str | None] = mapped_column(
         String(64), nullable=True
     )
+    # P1 cited-only, retrieval-free fingerprint (mig 0064): a hash of just the
+    # evidence the page actually CITED (node content_hash + summary, doc-chunk
+    # text), recomputable from the DB by id — no embed call. Supersedes
+    # `retrieval_fingerprint` (whole-bundle, embedder-dependent), which churned
+    # on uncited top-k jitter and dirtied pages at zero real change. NULL →
+    # "adopt" (compute + stamp on the next sync, NOT dirty), so a deploy or a
+    # skipped backfill can never trigger a regeneration storm.
+    cited_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     wiki_schema_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Edit-mode stamps (mig 0063). `content_src` is the raw pre-resolve body
     # carrying `[[node:qn]]` / `[[doc:path]]` placeholders; `content` is

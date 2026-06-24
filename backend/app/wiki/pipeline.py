@@ -74,7 +74,7 @@ from backend.app.wiki.incremental import (
     PageRecord,
     _live_node_hashes,
     artifact_reusable,
-    bundle_fingerprint,
+    compute_cited_fingerprints,
     compute_dirty_slugs,
     load_artifact,
     load_page_records,
@@ -206,13 +206,15 @@ class WikiGenerationConfig:
     persist: bool = True
     # Incremental reuse: skip Stage 2/1.5/3 when the persisted artifact is
     # reusable, and skip Stage 4 for pages whose stamps + cited sources +
-    # retrieval fingerprint are unchanged. `full_rebuild_dirty_ratio` is
-    # the backstop: when more than this fraction of planned pages is
-    # dirty, fall back to a full re-plan + rebuild (coherence beats
-    # savings at that point). Requires `persist` — the stamps live in
-    # the DB.
+    # cited fingerprint are unchanged. `full_rebuild_collapse_ratio` is the
+    # re-plan backstop: when more than this fraction of planned pages lost
+    # their ENTIRE cited subject (coverage collapse — see DirtyReport), the
+    # plan no longer fits the repo, so fall back to a full re-plan. Dirty
+    # VOLUME alone never triggers it — edited citations keep stable node ids
+    # and are just rewritten in place; only true subject loss re-plans.
+    # Requires `persist` — the stamps live in the DB.
     incremental: bool = True
-    full_rebuild_dirty_ratio: float = 0.5
+    full_rebuild_collapse_ratio: float = 0.5
     enable_diagrams: bool = True
     enable_cross_linker: bool = False
     # T5: two-pass writing for high-importance pages. When False, every
@@ -646,7 +648,7 @@ _EDITABLE_REASONS: frozenset[str] = frozenset(
         "cited_node_content_changed",
         "cited_node_missing",
         "cited_chunk_missing",
-        "retrieval_drift",
+        "cited_evidence_changed",
     }
 )
 
@@ -3400,7 +3402,7 @@ async def run_wiki_generation(
     Incremental control flow (`config.incremental`, default on; requires
     `config.persist`). There is no manual full-rebuild override: a full
     re-plan is reached adaptively (no reusable artifact, a structural-hash
-    change, or the dirty set crossing `full_rebuild_dirty_ratio`):
+    change, or coverage collapse crossing `full_rebuild_collapse_ratio`):
 
         1. Stage 1+0 always run (no LLM).
         2. When the persisted artifact is reusable (structural hash,
@@ -3408,10 +3410,11 @@ async def run_wiki_generation(
            skipped and overview/mindmap/plan rehydrate from the artifact
            — mode "incremental". Steering plans rebuild from the file
            (free) instead of the artifact so steering edits take effect.
-        3. The dirty set decides which pages Stage 4 rewrites. Above
-           `config.full_rebuild_dirty_ratio` the run falls back to a
-           full re-plan, after which unchanged pages are still salvaged
-           by the same predicate (savings only ever shrink LLM work).
+        3. The dirty set decides which pages Stage 4 rewrites. When more
+           than `config.full_rebuild_collapse_ratio` of pages lost their
+           whole cited subject the run falls back to a full re-plan, after
+           which unchanged pages are still salvaged by the same predicate
+           (savings only ever shrink LLM work).
         4. Clean pages are never rewritten: their rows get an audit-only
            `touch_pages` bump, and the orphan sweep keeps every planned
            slug regardless of whether it was written this run.
@@ -3510,18 +3513,15 @@ async def run_wiki_generation(
             repository_id=repository_id,
             plan=plan,
             records=records,
-            retriever=retriever,
-            overview=overview,
-            code_top_k=cfg.code_top_k,
-            docs_top_k=cfg.docs_top_k,
-            graph_pivot_top_k=cfg.graph_pivot_top_k,
         )
-        if report.dirty_ratio > cfg.full_rebuild_dirty_ratio:
+        if report.coverage_collapse_ratio > cfg.full_rebuild_collapse_ratio:
             logger.info(
-                "wiki incremental: dirty ratio %.2f > %.2f — falling back to "
-                "full rebuild (dirty=%d/%d)",
-                report.dirty_ratio,
-                cfg.full_rebuild_dirty_ratio,
+                "wiki incremental: coverage collapsed %.2f > %.2f — %d/%d pages "
+                "lost their whole cited subject; re-planning (dirty=%d/%d)",
+                report.coverage_collapse_ratio,
+                cfg.full_rebuild_collapse_ratio,
+                len(report.collapsed),
+                report.total,
                 len(report.dirty),
                 report.total,
             )
@@ -3548,11 +3548,6 @@ async def run_wiki_generation(
                 repository_id=repository_id,
                 plan=plan,
                 records=records,
-                retriever=retriever,
-                overview=overview,
-                code_top_k=cfg.code_top_k,
-                docs_top_k=cfg.docs_top_k,
-                graph_pivot_top_k=cfg.graph_pivot_top_k,
             )
 
     assert overview is not None and plan is not None
@@ -3650,10 +3645,20 @@ async def run_wiki_generation(
         spec_hashes_by_slug = {
             page_spec.slug: spec_hash(page_spec) for page_spec in plan.pages
         }
-        fingerprints_by_slug = {
-            slug: bundle_fingerprint(embed_model=embed_model, bundle=bundle)
-            for slug, bundle in bundles_by_slug.items()
-        }
+        # Stamp the evidence each written page actually CITED, recomputed from
+        # the DB (node content_hash + summary, doc-chunk content) — the same
+        # source the dirty predicate reads next sync, so a freshly written
+        # page's stamp matches and it stays clean. No embed call.
+        cited_fingerprints_by_slug = await compute_cited_fingerprints(
+            session,
+            citations_by_slug={
+                page.slug: (
+                    [str(nid) for nid in page.source_node_ids],
+                    [str(cid) for cid in page.source_repo_doc_chunk_ids],
+                )
+                for page in resolved
+            },
+        )
         (
             persisted_ids,
             skipped_slugs,
@@ -3668,7 +3673,7 @@ async def run_wiki_generation(
             pages=resolved,
             wiki_schema_version=WIKI_SCHEMA_VERSION,
             spec_hashes_by_slug=spec_hashes_by_slug,
-            fingerprints_by_slug=fingerprints_by_slug,
+            cited_fingerprints_by_slug=cited_fingerprints_by_slug,
         )
         pages_clean_touched = await document_store.touch_pages(
             session=session,
@@ -3676,6 +3681,7 @@ async def run_wiki_generation(
             slugs=clean_slugs,
             sync_run_id=sync_run_id,
             source_commit=source_commit,
+            cited_fingerprints=report.adopt if report is not None else None,
         )
         # Every planned slug survives the orphan sweep — clean pages were
         # not rewritten this run but are very much part of the wiki — and

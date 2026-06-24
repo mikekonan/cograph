@@ -4,7 +4,7 @@ Write-side stamping (PR1):
 
 - `run_wiki_generation` persists/refreshes the singleton `wiki_artifacts`
   row (structural_hash, plan, overview, mindmap, model ids).
-- Every upserted page row carries `spec_hash`, `retrieval_fingerprint`,
+- Every upserted page row carries `spec_hash`, `cited_fingerprint`,
   and `wiki_schema_version` — on both the full-write and the
   content-hash-skip paths.
 - The quality-keep path does NOT stamp: a kept row still holds old
@@ -181,6 +181,12 @@ async def test_rerun_updates_artifact_in_place(db_session: AsyncSession) -> None
     repo = await _make_repo(db_session)
     slugs = ["index", "architecture", "getting-started"]
     await _run(db_session, repo, slugs=slugs, source_commit="commit-1")
+    first = (
+        await db_session.execute(
+            select(WikiArtifact).where(WikiArtifact.repository_id == repo.id)
+        )
+    ).scalar_one()
+    hash_after_first = first.structural_hash
     await _run(db_session, repo, slugs=slugs, source_commit="commit-2")
 
     artifacts = (
@@ -195,8 +201,9 @@ async def test_rerun_updates_artifact_in_place(db_session: AsyncSession) -> None
     # UNIQUE(repository_id): the rerun upserts, never duplicates.
     assert len(artifacts) == 1
     assert artifacts[0].source_commit == "commit-2"
-    # Same repo content → same structural hash across runs.
-    assert len(artifacts[0].structural_hash) == 64
+    # Same repo content → byte-identical structural hash across runs. A drift
+    # would silently bust `artifact_reusable` and re-plan the whole wiki.
+    assert artifacts[0].structural_hash == hash_after_first
 
 
 async def test_run_stamps_pages_with_incremental_keys(
@@ -223,8 +230,8 @@ async def test_run_stamps_pages_with_incremental_keys(
         assert row.wiki_schema_version == WIKI_SCHEMA_VERSION
         assert row.spec_hash is not None and len(row.spec_hash) == 64
         assert (
-            row.retrieval_fingerprint is not None
-            and len(row.retrieval_fingerprint) == 64
+            row.cited_fingerprint is not None
+            and len(row.cited_fingerprint) == 64
         )
 
 
@@ -247,7 +254,7 @@ async def test_content_skip_rerun_restamps_pages(db_session: AsyncSession) -> No
     )
     for row in rows:
         row.spec_hash = None
-        row.retrieval_fingerprint = None
+        row.cited_fingerprint = None
         row.wiki_schema_version = None
     await db_session.flush()
 
@@ -264,7 +271,7 @@ async def test_content_skip_rerun_restamps_pages(db_session: AsyncSession) -> No
     for row in rows:
         assert row.wiki_schema_version == WIKI_SCHEMA_VERSION
         assert row.spec_hash is not None
-        assert row.retrieval_fingerprint is not None
+        assert row.cited_fingerprint is not None
 
 
 # ---------------------------------------------------------------------------
@@ -311,7 +318,7 @@ async def test_quality_keep_does_not_stamp(db_session: AsyncSession) -> None:
         pages=[ok_page],
         wiki_schema_version=WIKI_SCHEMA_VERSION,
         spec_hashes_by_slug={"index": "spec-old"},
-        fingerprints_by_slug={"index": "fp-old"},
+        cited_fingerprints_by_slug={"index": "fp-old"},
     )
 
     degraded_page = _resolved_page(
@@ -327,7 +334,7 @@ async def test_quality_keep_does_not_stamp(db_session: AsyncSession) -> None:
         pages=[degraded_page],
         wiki_schema_version=WIKI_SCHEMA_VERSION,
         spec_hashes_by_slug={"index": "spec-new"},
-        fingerprints_by_slug={"index": "fp-new"},
+        cited_fingerprints_by_slug={"index": "fp-new"},
     )
     assert kept == ["index"]
 
@@ -341,7 +348,7 @@ async def test_quality_keep_does_not_stamp(db_session: AsyncSession) -> None:
     assert row.content == "# Good body"
     # Stamps untouched — still describing the content the row actually holds.
     assert row.spec_hash == "spec-old"
-    assert row.retrieval_fingerprint == "fp-old"
+    assert row.cited_fingerprint == "fp-old"
     # Audit fields still bump.
     assert row.source_commit == "commit-2"
 
@@ -370,7 +377,7 @@ async def test_full_update_overwrites_stamps(db_session: AsyncSession) -> None:
             ],
             wiki_schema_version=WIKI_SCHEMA_VERSION,
             spec_hashes_by_slug={"index": spec},
-            fingerprints_by_slug={"index": fp},
+            cited_fingerprints_by_slug={"index": fp},
         )
 
     row = (
@@ -382,7 +389,7 @@ async def test_full_update_overwrites_stamps(db_session: AsyncSession) -> None:
     ).scalar_one()
     assert row.content == "# v2"
     assert row.spec_hash == "spec-2"
-    assert row.retrieval_fingerprint == "fp-2"
+    assert row.cited_fingerprint == "fp-2"
     assert row.wiki_schema_version == WIKI_SCHEMA_VERSION
 
 
@@ -414,7 +421,7 @@ async def test_content_skip_upgrades_quality_when_strictly_better(
             ],
             wiki_schema_version=WIKI_SCHEMA_VERSION,
             spec_hashes_by_slug={"index": "spec"},
-            fingerprints_by_slug={"index": "fp"},
+            cited_fingerprints_by_slug={"index": "fp"},
         )
 
     row = (

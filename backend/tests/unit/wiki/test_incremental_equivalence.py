@@ -145,16 +145,24 @@ async def test_deleted_cited_node_rewrites_citing_page(
 
 
 # ---------------------------------------------------------------------------
-# Scenario 5: new file enters a page's top-k (no citation involved)
+# Scenario 5: a new uncited node enters a page's top-k (the $64 fix)
 # ---------------------------------------------------------------------------
 
 
-async def test_new_node_entering_topk_dirties_via_fingerprint(
+async def test_new_uncited_node_in_topk_does_not_dirty(
     db_session: AsyncSession,
 ) -> None:
-    """A new non-exported node (no manifest change → not structural) whose
-    content matches beta's retrieval query enters beta's bundle. The page
-    cites nothing new, but the evidence offer changed → retrieval_drift."""
+    """THE $64 root-cause fix, end to end.
+
+    A new non-exported node (no manifest change → not structural) whose
+    content matches beta's retrieval query enters beta's top-k. beta cites
+    nothing new — the node is uncited noise in the bundle. The old
+    whole-bundle fingerprint folded the entire top-k in, so this uncited
+    arrival flipped beta's stamp and forced a rewrite; fanning out across a
+    real repo on every push, that is the regeneration storm that burned the
+    day's tokens. The cited fingerprint is keyed only by what beta actually
+    cites, so the newcomer moves nothing: zero rewrites (StrictProvider
+    proves no LLM call), still byte-identical to a full rebuild at c2."""
 
     async def mutate(session: AsyncSession, repo_state: ScriptedRepo) -> None:
         await repo_state.add_node(
@@ -163,38 +171,25 @@ async def test_new_node_entering_topk_dirties_via_fingerprint(
             content="def _beta_extra():\n    return 'betaflow extra detail'",
         )
 
-    repo_a = await ScriptedRepo.create(db_session, "wiki-eq-topk-inc")
-    await seed_standard(db_session, repo_a)
-    await run_full(db_session, repo_a, STANDARD_PAGES, source_commit="c1")
-    await mutate(db_session, repo_a)
-    result = await run_incremental(
-        db_session,
-        repo_a,
-        STANDARD_PAGES,
-        source_commit="c2",
-        expected_dirty={"beta", "index"},
-    )
-    assert result.dirty_reasons["beta"] == "retrieval_drift"
-
-    repo_b = await ScriptedRepo.create(db_session, "wiki-eq-topk-ctl")
-    await seed_standard(db_session, repo_b)
-    await mutate(db_session, repo_b)
-    await run_full(db_session, repo_b, STANDARD_PAGES, source_commit="c2")
-    assert await business_view(db_session, repo_a) == await business_view(
-        db_session, repo_b
-    )
+    await _assert_equivalent(db_session, mutate=mutate, expected_dirty=set())
 
 
 # ---------------------------------------------------------------------------
-# Scenario 6: repo-doc chunk changed
+# Scenario 6: a repo-doc chunk changes but no page cites it
 # ---------------------------------------------------------------------------
 
 
-async def test_changed_doc_chunk_dirties_doc_evidence_page(
+async def test_changed_uncited_doc_chunk_does_not_dirty(
     db_session: AsyncSession,
 ) -> None:
-    """gamma's bundle includes the guide chunk; recreating the chunk (new
-    UUID, like ingest) shifts the fingerprint without touching structure."""
+    """The doc-evidence twin of the uncited-node case. The guide chunk lands
+    in gamma's retrieval bundle (shared "gammaflow" tokens) but gamma cites
+    only its node — no page cites the chunk. Recreating the chunk (new UUID,
+    like ingest) moved the old whole-bundle fingerprint and dirtied gamma;
+    the cited fingerprint, blind to uncited bundle members, leaves every page
+    clean and byte-identical to a full rebuild. (The changed-CITED-chunk path
+    is covered by the `cited_chunk_missing` predicate in
+    test_incremental_dirty; scripted pages cite only nodes.)"""
 
     async def mutate(session: AsyncSession, repo_state: ScriptedRepo) -> None:
         await repo_state.change_doc_chunk(
@@ -204,9 +199,7 @@ async def test_changed_doc_chunk_dirties_doc_evidence_page(
             "gammaflow guidebook: gammaflow internals walkthrough, rev2.",
         )
 
-    await _assert_equivalent(
-        db_session, mutate=mutate, expected_dirty={"gamma", "index"}
-    )
+    await _assert_equivalent(db_session, mutate=mutate, expected_dirty=set())
 
 
 # ---------------------------------------------------------------------------
@@ -360,7 +353,7 @@ async def test_schema_version_mismatch_forces_full_rebuild(
 
 
 # ---------------------------------------------------------------------------
-# Scenario 10: model change → artifact unusable → full rebuild
+# Scenario 10: embed-model change → artifact unusable → re-plan, salvage all
 # ---------------------------------------------------------------------------
 
 
@@ -370,9 +363,16 @@ class _RenamedEmbed(FakeEmbedProvider):
         return "fake-embed-v2"
 
 
-async def test_embed_model_change_forces_full_rebuild(
+async def test_embed_model_change_replans_but_salvages_all_pages(
     db_session: AsyncSession,
 ) -> None:
+    """Swapping the embed model makes the artifact unreusable — it is keyed
+    on embed_model — so the run re-plans (mode=full). But the cited
+    fingerprint carries NO embed_model term: the evidence each page cites is
+    byte-for-byte the same, so the salvage pass finds every page clean and
+    rewrites NOTHING. Under the old whole-bundle fingerprint embed_model WAS
+    a term, so this same swap re-paid for the entire wiki; now it costs only
+    the cheap re-plan, zero page writes."""
     repo = await ScriptedRepo.create(db_session, "wiki-eq-embed")
     await seed_standard(db_session, repo)
     await run_full(db_session, repo, STANDARD_PAGES, source_commit="c1")
@@ -381,19 +381,31 @@ async def test_embed_model_change_forces_full_rebuild(
         hybrid=DeterministicDbHybrid(),  # type: ignore[arg-type]
         embedder=_RenamedEmbed(dims=8),
     )
-    result = await run_full(
+    provider = FakeStructuredProvider()
+    # The re-plan consumes analyze/mindmap/plan turns; salvage writes no page.
+    queue_full_run(provider, repo, STANDARD_PAGES, write_slugs=set())
+    result = await run_pipeline(
         db_session,
         repo,
-        STANDARD_PAGES,
+        llm=provider,
         source_commit="c2",
         retriever=retriever,
     )
+    assert result.errors == []
     assert result.mode == "full"
-    # Old fingerprints were stamped under fake-embed-v1 → every page drifts.
-    assert set(result.dirty_reasons) == {p.slug for p in STANDARD_PAGES}
-    assert all(
-        reason in ("retrieval_drift", "sibling_dirty")
-        for reason in result.dirty_reasons.values()
+    assert result.dirty_reasons == {}
+    assert result.pages_written == 0
+    assert_drained(provider)
+
+    # Pair the zero-cost claim with freshness: the salvaged wiki must be
+    # byte-identical to a full rebuild at c2 — savings, not stale content.
+    repo_b = await ScriptedRepo.create(db_session, "wiki-eq-embed-ctl")
+    await seed_standard(db_session, repo_b)
+    await run_full(
+        db_session, repo_b, STANDARD_PAGES, source_commit="c2", retriever=retriever
+    )
+    assert await business_view(db_session, repo) == await business_view(
+        db_session, repo_b
     )
 
 
@@ -416,71 +428,46 @@ async def test_chat_model_change_forces_full_rebuild(
 
 
 # ---------------------------------------------------------------------------
-# Scenario 11: dirty-ratio threshold
+# Scenario 11: dirty volume never forces a rebuild — only coverage collapse does
 # ---------------------------------------------------------------------------
 
 
-async def test_dirty_at_exact_threshold_stays_incremental(
+async def test_many_edited_pages_stay_incremental(
     db_session: AsyncSession,
 ) -> None:
-    """2 dirty of 4 planned = 0.5 — NOT strictly above the 0.5 default →
-    incremental mode survives. (Boundary contract: `>`.)"""
+    """Every cited body changes in place, so all four pages are dirty —
+    dirty ratio 1.0. The retired dirty-volume backstop would have abandoned
+    the plan and full-rebuilt the whole wiki right here (the $64 storm).
+    Coverage collapse asks a different question — did any page lose its
+    entire SUBJECT? — and the answer is no: an in-place edit keeps the
+    node UUID alive (ingest UPDATEs by symbol_key). So the run stays
+    incremental, rewrites the four dirty pages in place, and still matches
+    a full rebuild byte for byte.
+
+    On the pre-collapse code this fails at `run_incremental`'s
+    mode=="incremental" assertion — 1.0 > 0.5 forced a full re-plan."""
 
     async def mutate(session: AsyncSession, repo_state: ScriptedRepo) -> None:
-        await repo_state.change_node(
+        await repo_state.change_node_body(
             session,
             "pkg.alpha_main",
             content="def alpha_main():\n    return 'alphaflow v2'",
         )
-
-    await _assert_equivalent(
-        db_session, mutate=mutate, expected_dirty={"alpha", "index"}
-    )
-
-
-async def test_dirty_above_threshold_falls_back_to_full(
-    db_session: AsyncSession,
-) -> None:
-    """3 dirty of 4 = 0.75 > 0.5 → the run abandons the incremental plan,
-    re-plans via LLM, and the salvage pass keeps gamma untouched."""
-
-    async def mutate(session: AsyncSession, repo_state: ScriptedRepo) -> None:
-        await repo_state.change_node(
-            session,
-            "pkg.alpha_main",
-            content="def alpha_main():\n    return 'alphaflow v2'",
-        )
-        await repo_state.change_node(
+        await repo_state.change_node_body(
             session,
             "pkg.beta_main",
             content="def beta_main():\n    return 'betaflow v2'",
         )
+        await repo_state.change_node_body(
+            session,
+            "pkg.gamma_main",
+            content="def gamma_main():\n    return 'gammaflow v2'",
+        )
 
-    repo_a = await ScriptedRepo.create(db_session, "wiki-eq-thresh-inc")
-    await seed_standard(db_session, repo_a)
-    await run_full(db_session, repo_a, STANDARD_PAGES, source_commit="c1")
-    await mutate(db_session, repo_a)
-
-    provider = FakeStructuredProvider()
-    queue_full_run(
-        provider,
-        repo_a,
-        STANDARD_PAGES,
-        write_slugs={"alpha", "beta", "index"},
-    )
-    result = await run_pipeline(db_session, repo_a, llm=provider, source_commit="c2")
-    assert result.errors == []
-    assert result.mode == "full"
-    assert set(result.dirty_reasons) == {"alpha", "beta", "index"}
-    assert result.pages_clean_skipped == 1  # gamma salvaged
-    assert_drained(provider)
-
-    repo_b = await ScriptedRepo.create(db_session, "wiki-eq-thresh-ctl")
-    await seed_standard(db_session, repo_b)
-    await mutate(db_session, repo_b)
-    await run_full(db_session, repo_b, STANDARD_PAGES, source_commit="c2")
-    assert await business_view(db_session, repo_a) == await business_view(
-        db_session, repo_b
+    await _assert_equivalent(
+        db_session,
+        mutate=mutate,
+        expected_dirty={"alpha", "beta", "gamma", "index"},
     )
 
 

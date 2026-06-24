@@ -154,11 +154,15 @@ class _StageSpyEmbed(FakeEmbedProvider):
         return await super().embed(texts)
 
 
-async def test_fingerprint_recompute_books_to_retrieval_stage(
+async def test_clean_run_recomputes_fingerprints_without_embedding(
     db_session: AsyncSession,
 ) -> None:
-    """Dirty-set fingerprint recomputes run under wiki.retrieval, so the
-    (tiny) embed spend of "checked, nothing to do" stays attributable."""
+    """The cited fingerprint is retrieval-free: a clean re-sync recomputes
+    every page's stamp straight from the DB (node content_hash + summary,
+    doc-chunk content) and never calls the embedder. Under the old
+    whole-bundle fingerprint the dirty check re-ran retrieval — an embed call
+    per page on every push, even when nothing changed — so this is the spend
+    the narrowing erases."""
     spy = _StageSpyEmbed()
     retriever = WikiRetrievalService(
         hybrid=DeterministicDbHybrid(),  # type: ignore[arg-type]
@@ -179,8 +183,11 @@ async def test_fingerprint_recompute_books_to_retrieval_stage(
         retriever=retriever,
     )
     assert result.mode == "incremental"
-    assert spy.stages, "clean run must recompute fingerprints via the embedder"
-    assert set(spy.stages) == {"wiki.retrieval"}
+    assert result.pages_written == 0
+    assert spy.stages == [], (
+        "clean dirty-check must not embed — the cited fingerprint reads the "
+        f"DB, not retrieval (saw embed stages: {spy.stages})"
+    )
 
 
 # ---------------------------------------------------------------------------

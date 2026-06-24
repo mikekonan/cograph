@@ -12,23 +12,24 @@ for the SAME repo state, e.g.:
 
 - any system prompt or user-prompt builder in `prompts.py`
 - writer agent-loop semantics (turn budgets, gates, repair flows)
-- the spec-hash / bundle-fingerprint algorithms in `incremental.py`
+- the spec-hash / cited-fingerprint algorithms in `incremental.py`
 - plan normalization rules in `pipeline.py`
 
 Pure refactors, logging, and telemetry changes do NOT need a bump.
 
 Reuse-key *narrowing* is a deliberate exception. A `spec_hash` /
-`bundle_fingerprint` change that only drops fields — making strictly more
+`cited_fingerprint` change that only drops fields — making strictly more
 pages eligible for reuse, never fewer — does NOT change what the LLM
 produces for a given repo state; it only improves reuse. Bumping in that
 case would be self-defeating: a version mismatch forces a full rebuild of
-every repo, the exact cost we are cutting. The condition that makes this
-safe is a *backfill*: existing `documents.spec_hash` stamps must be
-rewritten to the new formula in the same release (see migration 0062), so
-no row is ever compared old-formula-against-new and spuriously dirtied.
-For such a change, edit `SURFACE_SHA_HISTORY[current]` IN PLACE (not
-append), keep `WIKI_SCHEMA_VERSION`, and carry `[wiki-schema-no-bump]` in
-the commit.
+every repo, the exact cost we are cutting. What makes it safe is that no
+row is ever compared old-formula-against-new and spuriously dirtied — via
+either a *backfill* (rewrite existing `documents.spec_hash` stamps to the
+new formula in the same release, see migration 0062) or a *new nullable
+stamp adopted lazily* (e.g. `documents.cited_fingerprint`, mig 0064: a NULL
+value is recomputed and stamped on the next sync, never dirtied). For such
+a change, edit `SURFACE_SHA_HISTORY[current]` IN PLACE (not append), keep
+`WIKI_SCHEMA_VERSION`, and carry `[wiki-schema-no-bump]` in the commit.
 
 Adding a NEW regeneration path is the other no-bump exception. The cheap
 edit pass (`PAGE_EDITOR_SYSTEM`, `_edit_one` in `pipeline.py`) only ever
@@ -73,13 +74,16 @@ WIKI_SCHEMA_VERSION = 1
 # version -> sha256 of the canonical quality surface at the moment that
 # version shipped. Append-only history: each bump adds one entry.
 SURFACE_SHA_HISTORY: dict[int, str] = {
-    # Edited in place (not appended) twice within version 1, both no-bump
-    # changes (see the docstring carve-outs): (1) the spec_hash reuse-key
-    # narrowing (drop purpose / sources_hint), paired with a backfill; and
-    # (2) adding PAGE_EDITOR_SYSTEM for the cheap edit path — a new regen
-    # path that never invalidates a v1-written page (the write path is
-    # unchanged), so a bump would force a needless full rebuild of every repo.
-    1: "783cc6ff01df0b45f491a415f85eb8d32be355d241ac6baa2be95b1d54a04ab7",
+    # Edited in place (not appended) within version 1 — all no-bump changes
+    # (see the docstring carve-outs): (1) the spec_hash reuse-key narrowing
+    # (drop purpose / sources_hint), paired with a backfill; (2) adding
+    # PAGE_EDITOR_SYSTEM for the cheap edit path — a new regen path that
+    # never invalidates a v1-written page (the write path is unchanged); and
+    # (3) replacing bundle_fingerprint with cited_fingerprint (hash only the
+    # cited evidence, not the whole top-k) — a strict narrowing whose new
+    # `documents.cited_fingerprint` stamp is adopted lazily (NULL → recompute
+    # + stamp, never dirty, mig 0064), so no repo is force-rebuilt.
+    1: "49a44dfe9509f21a9a456b4f1025be5e23af69a4194cff256adc12e51aaff6f4",
 }
 
 
@@ -141,7 +145,7 @@ def compute_quality_surface_sha() -> str:
         "hash_algorithms": {
             "canonical_hash": _normalized_source(incremental._canonical_hash),
             "spec_hash": _normalized_source(incremental.spec_hash),
-            "bundle_fingerprint": _normalized_source(incremental.bundle_fingerprint),
+            "cited_fingerprint": _normalized_source(incremental.cited_fingerprint),
             "structural_hash": _normalized_source(context.compute_structural_hash),
         },
     }

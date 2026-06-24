@@ -72,7 +72,6 @@ def _record(**over: object) -> PageRecord:
     base: dict[str, object] = {
         "slug": "alpha",
         "spec_hash": "spec",
-        "retrieval_fingerprint": "fp",
         "wiki_schema_version": WIKI_SCHEMA_VERSION,
         "source_node_ids": ("11111111-1111-1111-1111-111111111111",),
         "source_repo_doc_chunk_ids": (),
@@ -95,14 +94,13 @@ def _cfg(**over: object) -> WikiGenerationConfig:
         ("cited_node_content_changed", True),
         ("cited_node_missing", True),
         ("cited_chunk_missing", True),
-        ("retrieval_drift", True),
+        ("cited_evidence_changed", True),
         # Contract / structural / quality reasons never edit.
         ("spec_changed", False),
         ("schema_version", False),
         ("quality_degraded", False),
         ("missing_row", False),
         ("sibling_dirty", False),
-        ("no_fingerprint", False),
         (None, False),
     ],
 )
@@ -115,7 +113,7 @@ def test_edit_eligible_by_reason(reason: str | None, expected: bool) -> None:
 
 def test_edit_eligible_requires_content_src() -> None:
     assert not _edit_eligible(
-        reason="retrieval_drift",
+        reason="cited_evidence_changed",
         record=_record(content_src=None),
         cfg=_cfg(),
         is_index=False,
@@ -124,7 +122,7 @@ def test_edit_eligible_requires_content_src() -> None:
 
 def test_edit_eligible_requires_current_schema() -> None:
     assert not _edit_eligible(
-        reason="retrieval_drift",
+        reason="cited_evidence_changed",
         record=_record(wiki_schema_version=WIKI_SCHEMA_VERSION - 1),
         cfg=_cfg(),
         is_index=False,
@@ -135,7 +133,7 @@ def test_edit_eligible_never_edits_index() -> None:
     """The index narrates the whole wiki (ToC, reading order) — full-write
     keeps its cross-links honest when a sibling moves."""
     assert not _edit_eligible(
-        reason="retrieval_drift",
+        reason="cited_evidence_changed",
         record=_record(slug="index"),
         cfg=_cfg(),
         is_index=True,
@@ -145,16 +143,16 @@ def test_edit_eligible_never_edits_index() -> None:
 def test_edit_eligible_respects_streak_cap() -> None:
     cfg = _cfg(edit_streak_cap=3)
     assert _edit_eligible(
-        reason="retrieval_drift", record=_record(edit_streak=2), cfg=cfg, is_index=False
+        reason="cited_evidence_changed", record=_record(edit_streak=2), cfg=cfg, is_index=False
     )
     assert not _edit_eligible(
-        reason="retrieval_drift", record=_record(edit_streak=3), cfg=cfg, is_index=False
+        reason="cited_evidence_changed", record=_record(edit_streak=3), cfg=cfg, is_index=False
     )
 
 
 def test_edit_eligible_off_when_disabled() -> None:
     assert not _edit_eligible(
-        reason="retrieval_drift",
+        reason="cited_evidence_changed",
         record=_record(),
         cfg=WikiGenerationConfig(enable_edit_mode=False),
         is_index=False,
@@ -163,7 +161,7 @@ def test_edit_eligible_off_when_disabled() -> None:
 
 def test_edit_eligible_missing_record() -> None:
     assert not _edit_eligible(
-        reason="retrieval_drift", record=None, cfg=_cfg(), is_index=False
+        reason="cited_evidence_changed", record=None, cfg=_cfg(), is_index=False
     )
 
 
@@ -287,8 +285,9 @@ async def _seeded_full(session: AsyncSession, name: str) -> ScriptedRepo:
 
 async def test_summary_regen_edits_page_equivalent(db_session: AsyncSession) -> None:
     """A neighbour-driven summary regen (node UUID alive, content unchanged)
-    drifts the page's retrieval fingerprint → `retrieval_drift`, churn 0 →
-    cheap edit. Output must equal a full rebuild."""
+    changes the page's cited evidence (the node summary is hashed into the
+    fingerprint) → `cited_evidence_changed`, churn 0 → cheap edit. Output
+    must equal a full rebuild."""
     repo_a = await _seeded_full(db_session, "edit-summary-inc")
     await repo_a.change_node_summary(db_session, "pkg.alpha_main", "alpha summary v2")
     result = await run_incremental_edits(
@@ -299,7 +298,7 @@ async def test_summary_regen_edits_page_equivalent(db_session: AsyncSession) -> 
         edit_slugs={"alpha"},
         write_slugs={"index"},
     )
-    assert result.dirty_reasons["alpha"] == "retrieval_drift"
+    assert result.dirty_reasons["alpha"] == "cited_evidence_changed"
 
     repo_b = await ScriptedRepo.create(db_session, "edit-summary-ctl")
     await seed_standard(db_session, repo_b)
@@ -527,8 +526,10 @@ async def test_shared_node_fans_out_edit_and_escalate(
         "pkg.alpha_main",
         content="def alpha_main():\n    return 'alphaflow v2 same topk'",
     )
-    # 3/5 dirty would trip the >50% full-rebuild backstop; this test is about
-    # per-page edit-vs-escalate fan-out, not that threshold, so lift it.
+    # In-place body edits keep stable node ids → zero coverage collapse, so the
+    # run stays incremental however many pages are dirty (no dirty-volume
+    # backstop to fight anymore). This test is about per-page edit-vs-escalate
+    # fan-out, which is unaffected.
     result = await run_incremental_edits(
         db_session,
         repo_a,
@@ -536,7 +537,7 @@ async def test_shared_node_fans_out_edit_and_escalate(
         source_commit="c2",
         edit_slugs={"alpha"},
         write_slugs={"solo", "index"},
-        config=harness_config(enable_edit_mode=True, full_rebuild_dirty_ratio=0.9),
+        config=harness_config(enable_edit_mode=True),
     )
     assert result.dirty_reasons["alpha"] == "cited_node_content_changed"
     assert result.dirty_reasons["solo"] == "cited_node_content_changed"

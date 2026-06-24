@@ -96,12 +96,12 @@ class WikiDocumentStore:
         pages: list[ResolvedPage],
         wiki_schema_version: int | None = None,
         spec_hashes_by_slug: dict[str, str] | None = None,
-        fingerprints_by_slug: dict[str, str] | None = None,
+        cited_fingerprints_by_slug: dict[str, str] | None = None,
     ) -> tuple[list[UUID], list[str], list[str]]:
         """Upsert pages keyed on `(repository_id, slug)`.
 
         The three incremental-reuse stamps (`spec_hash`,
-        `retrieval_fingerprint`, `wiki_schema_version`) are written on the
+        `cited_fingerprint`, `wiki_schema_version`) are written on the
         full-write and content-hash-skip paths but NOT on the quality-keep
         path: a kept row still holds the *old* content and citations, so its
         old fingerprint must keep marking it dirty until a better rewrite
@@ -117,7 +117,7 @@ class WikiDocumentStore:
         if not pages:
             return [], [], []
         spec_hashes = spec_hashes_by_slug or {}
-        fingerprints = fingerprints_by_slug or {}
+        cited_fingerprints = cited_fingerprints_by_slug or {}
 
         slugs = [page.slug for page in pages]
         existing_stmt = select(Document).where(
@@ -181,7 +181,7 @@ class WikiDocumentStore:
                 existing.sort_order = page.sort_order
                 existing.parent_slug = page.parent_slug
                 existing.spec_hash = spec_hashes.get(page.slug)
-                existing.retrieval_fingerprint = fingerprints.get(page.slug)
+                existing.cited_fingerprint = cited_fingerprints.get(page.slug)
                 existing.wiki_schema_version = wiki_schema_version
                 existing.content_src = page.content_src
                 existing.cited_content_hashes = page.cited_content_hashes
@@ -217,7 +217,7 @@ class WikiDocumentStore:
                     citations=citations_payload,
                     quality=quality_payload,
                     spec_hash=spec_hashes.get(page.slug),
-                    retrieval_fingerprint=fingerprints.get(page.slug),
+                    cited_fingerprint=cited_fingerprints.get(page.slug),
                     wiki_schema_version=wiki_schema_version,
                     content_src=page.content_src,
                     cited_content_hashes=page.cited_content_hashes,
@@ -241,7 +241,7 @@ class WikiDocumentStore:
                 existing.citations = citations_payload
                 existing.quality = quality_payload
                 existing.spec_hash = spec_hashes.get(page.slug)
-                existing.retrieval_fingerprint = fingerprints.get(page.slug)
+                existing.cited_fingerprint = cited_fingerprints.get(page.slug)
                 existing.wiki_schema_version = wiki_schema_version
                 existing.content_src = page.content_src
                 existing.cited_content_hashes = page.cited_content_hashes
@@ -261,13 +261,20 @@ class WikiDocumentStore:
         slugs: list[str],
         sync_run_id: UUID | None,
         source_commit: str,
+        cited_fingerprints: dict[str, str] | None = None,
     ) -> int:
         """Bump audit fields on clean (skipped) pages without touching
-        content, quality, or the incremental stamps. Returns updated count.
+        content or quality. Returns updated count.
 
         The incremental orchestrator calls this for pages it decided not
         to rewrite, so `source_commit` reflects the sync that last
         *verified* the page — not the one that last wrote it.
+
+        `cited_fingerprints` is the lazy-floor "adopt" set: clean pages whose
+        stored `cited_fingerprint` was NULL get the freshly computed value
+        stamped here (a one-time per-page UPDATE, only on the syncs right
+        after a deploy / for un-backfilled rows). The page is NOT rewritten —
+        the stamp just records the evidence the already-current body cited.
         """
         if not slugs:
             return 0
@@ -281,6 +288,16 @@ class WikiDocumentStore:
             .values(sync_run_id=sync_run_id, source_commit=source_commit)
         )
         result = await session.execute(stmt)
+        for slug, fingerprint in (cited_fingerprints or {}).items():
+            await session.execute(
+                update(Document)
+                .where(
+                    Document.repository_id == repository_id,
+                    Document.doc_type == self.DOC_TYPE,
+                    Document.slug == slug,
+                )
+                .values(cited_fingerprint=fingerprint)
+            )
         return int(result.rowcount or 0)
 
     async def delete_orphan_pages(

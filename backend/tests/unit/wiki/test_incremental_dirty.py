@@ -1,7 +1,7 @@
 """Pure-function tests for the incremental-wiki dirty predicate.
 
 No DB, no provider: these tests specify the `incremental.py` API — the
-hashes (`spec_hash`, `bundle_fingerprint`, `compute_structural_hash`),
+hashes (`spec_hash`, `cited_fingerprint`, `compute_structural_hash`),
 the per-page dirty clauses, and the artifact-reuse key.
 """
 
@@ -21,14 +21,13 @@ from backend.app.wiki.context import (
 from backend.app.wiki.incremental import (
     PageRecord,
     artifact_reusable,
-    bundle_fingerprint,
+    cited_fingerprint,
+    page_cited_reason,
     page_dirty_cheap_reason,
-    page_fingerprint_reason,
     rehydrate_artifact,
     spec_hash,
 )
 from backend.app.wiki.manifests import PublicApiEntry, RepoManifests
-from backend.app.wiki.retrieval import CodeChunk, DocChunk, PageBundle
 from backend.app.wiki.schemas import (
     MindMap,
     PagePlan,
@@ -224,110 +223,92 @@ def test_migration_0062_backfill_updates_only_planned_slugs() -> None:
 
 
 # ---------------------------------------------------------------------------
-# bundle_fingerprint
+# cited_fingerprint  (P1: retrieval-free, cited-only)
 # ---------------------------------------------------------------------------
 
 
-def _code_chunk(
-    *, node_id=None, snippet: str = "def f(): ...", summary: str | None = "does f"
-) -> CodeChunk:
-    return CodeChunk(
-        qualified_name="pkg.f",
-        file_path="pkg/f.py",
-        start_line=1,
-        end_line=3,
-        language="python",
-        summary=summary,
-        snippet=snippet,
-        code_node_id=node_id or uuid4(),
-        rank=1,
-        score=0.9,
+def _cited(
+    node_ids,
+    chunk_ids=(),
+    *,
+    contents=None,
+    summaries=None,
+    chunk_texts=None,
+) -> str:
+    """cited_fingerprint over plain id lists + DB-shaped component maps."""
+    return cited_fingerprint(
+        cited_node_ids=list(node_ids),
+        cited_chunk_ids=list(chunk_ids),
+        node_content_hashes=contents or {},
+        node_summaries=summaries or {},
+        chunk_contents=chunk_texts or {},
     )
 
 
-def _doc_chunk(*, chunk_id=None, snippet: str = "## Setup") -> DocChunk:
-    return DocChunk(
-        file_path="README.md",
-        chunk_index=0,
-        snippet=snippet,
-        chunk_id=chunk_id or uuid4(),
-        rank=1,
-        score=0.5,
+def test_cited_fingerprint_blind_to_uncited_churn() -> None:
+    """The $64 root-cause fix.
+
+    The fingerprint reads ONLY the cited ids out of the component maps, so
+    churn in *uncited* evidence — the extra top-k members the old
+    whole-bundle hash folded in, whose ANN rank jittered on every push —
+    cannot move it. Here a page cites {A, B}; an uncited C changes content
+    between pushes and is then replaced by a D. The cited fingerprint is
+    identical across all of it.
+    """
+    a, b = str(uuid4()), str(uuid4())
+    c, d = str(uuid4()), str(uuid4())
+    contents = {a: "ha", b: "hb"}
+    summaries = {a: "sa", b: "sb"}
+    base = _cited([a, b], contents=contents, summaries=summaries)
+    with_c1 = _cited(
+        [a, b], contents={**contents, c: "hc1"}, summaries={**summaries, c: "sc"}
     )
-
-
-def test_fingerprint_stable_for_identical_evidence() -> None:
-    node_id, chunk_id = uuid4(), uuid4()
-    a = PageBundle(
-        code_chunks=[_code_chunk(node_id=node_id)],
-        doc_chunks=[_doc_chunk(chunk_id=chunk_id)],
+    with_c2 = _cited(
+        [a, b], contents={**contents, c: "hc2"}, summaries={**summaries, c: "sc"}
     )
-    b = PageBundle(
-        code_chunks=[_code_chunk(node_id=node_id)],
-        doc_chunks=[_doc_chunk(chunk_id=chunk_id)],
+    with_d = _cited(
+        [a, b], contents={**contents, d: "hd"}, summaries={**summaries, d: "sd"}
     )
-    assert bundle_fingerprint(embed_model="m", bundle=a) == bundle_fingerprint(
-        embed_model="m", bundle=b
-    )
+    assert base == with_c1 == with_c2 == with_d
 
 
-def test_fingerprint_insensitive_to_evidence_order() -> None:
-    """ANN rank jitter must not dirty a page whose evidence set is unchanged."""
-    id_a, id_b = uuid4(), uuid4()
-    chunk_a = _code_chunk(node_id=id_a, snippet="a")
-    chunk_b = _code_chunk(node_id=id_b, snippet="b")
-    fwd = PageBundle(code_chunks=[chunk_a, chunk_b])
-    rev = PageBundle(code_chunks=[chunk_b, chunk_a])
-    assert bundle_fingerprint(embed_model="m", bundle=fwd) == bundle_fingerprint(
-        embed_model="m", bundle=rev
-    )
+def test_cited_fingerprint_changes_on_cited_content() -> None:
+    a = str(uuid4())
+    before = _cited([a], contents={a: "h1"}, summaries={a: "s"})
+    after = _cited([a], contents={a: "h2"}, summaries={a: "s"})
+    assert before != after
 
 
-def test_fingerprint_changes_on_membership() -> None:
-    base = PageBundle(code_chunks=[_code_chunk()])
-    grown = PageBundle(code_chunks=base.code_chunks + [_code_chunk(snippet="new")])
-    assert bundle_fingerprint(embed_model="m", bundle=base) != bundle_fingerprint(
-        embed_model="m", bundle=grown
-    )
+def test_cited_fingerprint_changes_on_cited_summary() -> None:
+    """A cited node's summary regenerates on a neighbor change while its body
+    (content_hash) and UUID survive — the fingerprint must still move."""
+    a = str(uuid4())
+    before = _cited([a], contents={a: "h"}, summaries={a: "old summary"})
+    after = _cited([a], contents={a: "h"}, summaries={a: "new summary"})
+    assert before != after
 
 
-def test_fingerprint_changes_on_snippet_content() -> None:
-    node_id = uuid4()
-    before = PageBundle(code_chunks=[_code_chunk(node_id=node_id, snippet="v1")])
-    after = PageBundle(code_chunks=[_code_chunk(node_id=node_id, snippet="v2")])
-    assert bundle_fingerprint(embed_model="m", bundle=before) != bundle_fingerprint(
-        embed_model="m", bundle=after
-    )
+def test_cited_fingerprint_changes_on_cited_chunk_content() -> None:
+    c = str(uuid4())
+    before = _cited([], [c], chunk_texts={c: "## Setup v1"})
+    after = _cited([], [c], chunk_texts={c: "## Setup v2"})
+    assert before != after
 
 
-def test_fingerprint_changes_on_summary_only() -> None:
-    """A node's summary can regenerate (neighbor change) while the node row
-    and UUID survive — content hashes in the fingerprint must catch it."""
-    node_id = uuid4()
-    before = PageBundle(code_chunks=[_code_chunk(node_id=node_id, summary="old")])
-    after = PageBundle(code_chunks=[_code_chunk(node_id=node_id, summary="new")])
-    assert bundle_fingerprint(embed_model="m", bundle=before) != bundle_fingerprint(
-        embed_model="m", bundle=after
-    )
+def test_cited_fingerprint_order_independent() -> None:
+    """Set-keyed: citation order (ANN rank jitter) must not move it."""
+    a, b = str(uuid4()), str(uuid4())
+    contents = {a: "ha", b: "hb"}
+    assert _cited([a, b], contents=contents) == _cited([b, a], contents=contents)
 
 
-def test_fingerprint_changes_on_embed_model() -> None:
-    bundle = PageBundle(code_chunks=[_code_chunk(node_id=uuid4())])
-    assert bundle_fingerprint(
-        embed_model="fake-embed-v1", bundle=bundle
-    ) != bundle_fingerprint(embed_model="fake-embed-v2", bundle=bundle)
-
-
-def test_fingerprint_ignores_graph_neighbors() -> None:
-    node_id = uuid4()
-    bare = PageBundle(code_chunks=[_code_chunk(node_id=node_id)])
-    with_neighbors = PageBundle(
-        code_chunks=[_code_chunk(node_id=node_id)],
-        graph_neighbors=[],
-    )
-    assert bundle_fingerprint(embed_model="m", bundle=bare) == bundle_fingerprint(
-        embed_model="m", bundle=with_neighbors
-    )
+def test_cited_fingerprint_missing_inputs_are_deterministic() -> None:
+    """A cited id with no live content/summary contributes empty components
+    (liveness is caught upstream); the hash stays deterministic and still
+    differs from the populated case."""
+    a = str(uuid4())
+    assert _cited([a]) == _cited([a])
+    assert _cited([a]) != _cited([a], contents={a: "h"})
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +324,6 @@ def _record(**overrides: object) -> PageRecord:
     base: dict[str, object] = {
         "slug": "auth",
         "spec_hash": "spec-1",
-        "retrieval_fingerprint": "fp-1",
         "wiki_schema_version": WIKI_SCHEMA_VERSION,
         "source_node_ids": (_NODE_A,),
         "source_repo_doc_chunk_ids": (_CHUNK_A,),
@@ -384,10 +364,6 @@ def test_dirty_on_spec_change() -> None:
     assert _cheap(_record(), current_spec_hash="spec-2") == "spec_changed"
 
 
-def test_dirty_when_fingerprint_missing() -> None:
-    assert _cheap(_record(retrieval_fingerprint=None)) == "no_fingerprint"
-
-
 def test_dirty_on_degraded_quality() -> None:
     assert _cheap(_record(quality_status=QualityStatus.DEGRADED)) == (
         "quality_degraded"
@@ -412,12 +388,37 @@ def test_dirty_when_cited_chunk_missing() -> None:
     assert _cheap(_record(), live_chunk_ids=set()) == "cited_chunk_missing"
 
 
-def test_fingerprint_reason_on_drift() -> None:
-    record = _record()
-    assert page_fingerprint_reason(record=record, current_fingerprint="fp-1") is None
+# ---------------------------------------------------------------------------
+# page_cited_reason  (P1: cited-only dirty clause, NULL → adopt)
+# ---------------------------------------------------------------------------
+
+
+def test_cited_reason_clean_when_fingerprint_matches() -> None:
+    record = _record(cited_fingerprint="cf-1")
+    assert page_cited_reason(record=record, current_cited_fingerprint="cf-1") is None
+
+
+def test_cited_reason_dirty_when_cited_evidence_changed() -> None:
+    record = _record(cited_fingerprint="cf-1")
     assert (
-        page_fingerprint_reason(record=record, current_fingerprint="fp-2")
-        == "retrieval_drift"
+        page_cited_reason(record=record, current_cited_fingerprint="cf-2")
+        == "cited_evidence_changed"
+    )
+
+
+def test_cited_reason_null_stamp_adopts_not_dirty() -> None:
+    """The deploy-safety floor: a None stored stamp ADOPTS, never dirties.
+
+    Pages written before the cited-fingerprint column existed land with a
+    NULL stamp. `page_cited_reason` returns None for them regardless of the
+    freshly computed value — so the runtime stamps it and the page stays
+    clean, never a rewrite. This is what keeps a deploy (or a skipped
+    backfill) from triggering a regeneration storm.
+    """
+    record = _record(cited_fingerprint=None)
+    assert page_cited_reason(record=record, current_cited_fingerprint="cf-1") is None
+    assert (
+        page_cited_reason(record=record, current_cited_fingerprint="anything") is None
     )
 
 
