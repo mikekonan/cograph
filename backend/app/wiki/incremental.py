@@ -286,6 +286,13 @@ class DirtyReport:
     # deletion of PRIVATE symbols leaves the public manifest (and thus the
     # structural hash) untouched, yet orphans the pages that documented them.
     collapsed: frozenset[str] = field(default_factory=frozenset)
+    # Spec carry-over (full-mode re-plan only): slug -> the PRIOR plan's spec
+    # for pages reused instead of rewritten. The orchestrator substitutes these
+    # into the plan it persists so the artifact's spec_hash matches the reused
+    # page's stored stamp — otherwise the next incremental sync would read the
+    # re-planned (reworded) contract as spec drift and rewrite the page a run
+    # later. Empty unless `compute_dirty_slugs` was given `prior_specs`.
+    reconciled_specs: dict[str, PageSpec] = field(default_factory=dict)
 
     @property
     def coverage_collapse_ratio(self) -> float:
@@ -448,6 +455,7 @@ async def compute_dirty_slugs(
     plan: PagePlan,
     records: dict[str, PageRecord],
     wiki_schema_version: int = WIKI_SCHEMA_VERSION,
+    prior_specs: Mapping[str, PageSpec] | None = None,
 ) -> DirtyReport:
     """Decide, for every page in `plan`, whether it must be rewritten.
 
@@ -459,6 +467,13 @@ async def compute_dirty_slugs(
          components and compare to the stamp (`page_cited_reason`). A NULL
          stamp adopts: the page is clean and its freshly computed fingerprint
          is recorded in `adopt` for the orchestrator to persist.
+
+    `prior_specs` (full-mode re-plan only) pins each page that also existed in
+    the prior plan to that prior contract for the spec-drift gate, so a
+    non-deterministic re-plan can't dirty a page whose cited evidence is
+    unchanged; the carried spec is returned in `reconciled_specs` for the
+    caller to persist. Omitted (None) in incremental mode, where the plan is
+    already the reused artifact and no drift is possible.
 
     The `index` page narrates the whole wiki (sibling links, reading order),
     so any dirty sibling marks it dirty too.
@@ -481,6 +496,7 @@ async def compute_dirty_slugs(
     clean: list[str] = []
     adopt: dict[str, str] = {}
     collapsed: set[str] = set()
+    reconciled: dict[str, PageSpec] = {}
     for spec in plan.pages:
         record = records.get(spec.slug)
         if record is not None:
@@ -490,9 +506,26 @@ async def compute_dirty_slugs(
                 cited_n & live_node_ids or cited_c & live_chunk_ids
             ):
                 collapsed.add(spec.slug)
+        # Spec carry-over: a page that was in the prior plan has its contract
+        # pinned to that plan for the spec-drift gate, so a re-planned (LLM,
+        # non-deterministic) contract can't fire `spec_changed`. Only its
+        # evidence/quality/liveness — tested by the very same gates below —
+        # can dirty it. This is what stops full-mode re-plans from rewriting
+        # pages whose code never moved. A deliberate restructure goes through
+        # the OWNER "Rebuild wiki" hatch (incremental off), which disables the
+        # salvage pass entirely and never passes `prior_specs` here.
+        prior_spec = (
+            prior_specs.get(spec.slug)
+            if prior_specs is not None
+            and record is not None
+            and record.spec_hash is not None
+            else None
+        )
         reason = page_dirty_cheap_reason(
             record=record,
-            current_spec_hash=spec_hash(spec),
+            current_spec_hash=(
+                spec_hash(prior_spec) if prior_spec is not None else spec_hash(spec)
+            ),
             live_node_ids=live_node_ids,
             live_chunk_ids=live_chunk_ids,
             live_node_hashes=live_node_hashes,
@@ -516,12 +549,15 @@ async def compute_dirty_slugs(
             dirty[spec.slug] = reason
         else:
             clean.append(spec.slug)
+            if prior_spec is not None:
+                reconciled[spec.slug] = prior_spec
 
     if dirty and "index" in plan_slugs and "index" not in dirty:
         dirty["index"] = "sibling_dirty"
         if "index" in clean:
             clean.remove("index")
         adopt.pop("index", None)  # it'll be rewritten → fresh stamp via write path
+        reconciled.pop("index", None)  # rewritten → uses the fresh plan's spec
 
     for slug, reason in sorted(dirty.items()):
         logger.info("page_dirty:%s:%s", slug, reason)
@@ -531,6 +567,7 @@ async def compute_dirty_slugs(
         total=len(plan.pages),
         adopt=adopt,
         collapsed=frozenset(collapsed),
+        reconciled_specs=reconciled,
     )
 
 
