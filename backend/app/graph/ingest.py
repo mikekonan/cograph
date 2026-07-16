@@ -233,7 +233,8 @@ class GraphIngestService:
         non_go_files = tuple(
             source_file
             for source_file in source_files
-            if detect_graph_language(source_file.relative_to(root_path)) is not GraphLanguage.GO
+            if detect_graph_language(source_file.relative_to(root_path))
+            is not GraphLanguage.GO
         )
         go_package_selections = await asyncio.to_thread(
             _select_go_packages_from_files,
@@ -241,14 +242,18 @@ class GraphIngestService:
             tuple(
                 source_file
                 for source_file in source_files
-                if detect_graph_language(source_file.relative_to(root_path)) is GraphLanguage.GO
+                if detect_graph_language(source_file.relative_to(root_path))
+                is GraphLanguage.GO
             ),
             go_profile,
         )
         relative_paths = tuple(
             sorted(
                 [
-                    *(source_file.relative_to(root_path).as_posix() for source_file in non_go_files),
+                    *(
+                        source_file.relative_to(root_path).as_posix()
+                        for source_file in non_go_files
+                    ),
                     *(
                         selected_file.relative_path
                         for package in go_package_selections
@@ -316,7 +321,9 @@ class GraphIngestService:
 
         for source_file in non_go_files:
             relative_path = source_file.relative_to(root_path)
-            source_text = await asyncio.to_thread(source_file.read_text, encoding="utf-8")
+            source_text = await asyncio.to_thread(
+                source_file.read_text, encoding="utf-8"
+            )
             content_hash = _content_hash(source_text)
             if existing_module_hashes.get(relative_path.as_posix()) == content_hash:
                 continue
@@ -463,70 +470,79 @@ class GraphIngestService:
             if _change_touches_go_package(change):
                 for package_key in _change_go_package_keys(change):
                     go_package_keys.add(package_key)
+                # Cross-language renames: the go-package reingest reconciles
+                # only .go files — the non-Go side still needs its own change
+                # (a.ts → a.go leaves stale TS rows; a.go → a.ts leaves the
+                # new file unindexed).
+                if change.kind == "R" and change.old_file_path:
+                    old_language = detect_graph_language(Path(change.old_file_path))
+                    if old_language not in (None, GraphLanguage.GO):
+                        non_go_changes.append(
+                            GitFileChange(kind="D", file_path=change.old_file_path)
+                        )
+                new_language = detect_graph_language(Path(change.file_path))
+                if new_language not in (None, GraphLanguage.GO):
+                    added = GitFileChange(kind="A", file_path=change.file_path)
+                    if not (
+                        new_language in _JS_TS_LANGUAGES
+                        and _js_ts_change_pruned(root_path, added)
+                    ):
+                        non_go_changes.append(added)
                 continue
 
-            if detect_graph_language(Path(change.file_path)) is None:
+            language = detect_graph_language(Path(change.file_path))
+            if language is None:
+                # Rename out of any indexable extension (a.ts → a.txt): the
+                # old rows are stale — downgrade to a delete.
+                if change.kind == "R" and change.old_file_path:
+                    if detect_graph_language(Path(change.old_file_path)) is not None:
+                        non_go_changes.append(
+                            GitFileChange(kind="D", file_path=change.old_file_path)
+                        )
+                continue
+            if language in _JS_TS_LANGUAGES and _js_ts_change_pruned(root_path, change):
+                # The new location is pruned (noise dir, minified, over-cap).
+                # If the OLD location could have been indexed (rename out of
+                # src/, file grew past the cap), downgrade to a delete so its
+                # rows don't go stale; pure noise churn (dist/, node_modules/)
+                # short-circuits without touching the DB.
+                old_path = (
+                    change.old_file_path if change.kind == "R" else change.file_path
+                )
+                if (
+                    old_path
+                    and change.kind != "A"
+                    and detect_graph_language(Path(old_path)) is not None
+                    and not _is_js_ts_noise(Path(old_path))
+                ):
+                    non_go_changes.append(GitFileChange(kind="D", file_path=old_path))
                 continue
             non_go_changes.append(change)
 
+        # All deletes run before any insert (non-go deletes here, go stale
+        # deletes inside the package loop below, non-go inserts last):
+        # a cross-language rename (a.go -> a.ts with the same qualified
+        # name) must see the stale rows gone, or the new file savepoint-
+        # skips on the QN collision and both sides vanish.
         for change in non_go_changes:
             if change.kind == "D":
-                peers = await self._collect_delete_peer_ids(
-                    session=session,
-                    repository_id=repository_id,
-                    file_path=change.file_path,
-                )
-                delete_peer_ids.update(peers)
-                await session.execute(
-                    delete(SourceFile).where(
-                        SourceFile.repository_id == repository_id,
-                        SourceFile.file_path == change.file_path,
-                    )
-                )
+                doomed_path = change.file_path
+            elif change.kind == "R" and change.old_file_path:
+                doomed_path = change.old_file_path
+            else:
                 continue
-
-            if change.kind == "R" and change.old_file_path:
-                peers = await self._collect_delete_peer_ids(
-                    session=session,
-                    repository_id=repository_id,
-                    file_path=change.old_file_path,
-                )
-                delete_peer_ids.update(peers)
-                await session.execute(
-                    delete(SourceFile).where(
-                        SourceFile.repository_id == repository_id,
-                        SourceFile.file_path == change.old_file_path,
-                    )
-                )
-
-            absolute = root_path / change.file_path
-            if not absolute.exists():
-                continue
-
-            source_text = await asyncio.to_thread(absolute.read_text, encoding="utf-8")
-            build_result = await self._parse_and_persist(
+            peers = await self._collect_delete_peer_ids(
                 session=session,
                 repository_id=repository_id,
-                root_path=root_path,
-                relative_path=Path(change.file_path),
-                source_text=source_text,
-                commit_sha=commit_sha,
-                go_module_path=go_module_path,
-                go_profile=None,
+                file_path=doomed_path,
             )
-            inserted_nodes += build_result.inserted_nodes
-            replaced_files.extend(build_result.replaced_files)
-            resolved_delta += build_result.resolved_calls
-            unresolved_delta += build_result.unresolved_calls
-            processed_files += 1
-            if processed_files % _PROGRESS_LOG_EVERY == 0:
-                _log_ingest_progress(
-                    repository_id=repository_id,
-                    mode="incremental",
-                    processed=processed_files,
-                    total=total_changes,
-                    current_file=change.file_path,
+            delete_peer_ids.update(peers)
+            await session.execute(
+                delete(SourceFile).where(
+                    SourceFile.repository_id == repository_id,
+                    SourceFile.file_path == doomed_path,
                 )
+            )
 
         go_package_selections = await asyncio.to_thread(
             _select_go_packages_from_keys,
@@ -538,13 +554,26 @@ class GraphIngestService:
             package.package_key: package for package in go_package_selections
         }
 
-        for package_key in sorted(go_package_keys):
-            package = selections_by_key.get(
+        packages_by_key = {
+            package_key: selections_by_key.get(
                 package_key,
                 GoPackageSelection(package_key=package_key, selected_files=()),
             )
-            selected_paths = {selected_file.relative_path for selected_file in package.selected_files}
-            stale_paths = sorted(existing_go_paths_by_package.get(package_key, set()) - selected_paths)
+            for package_key in sorted(go_package_keys)
+        }
+
+        # Stale-path deletes for ALL packages before ANY package insert:
+        # a file move that keeps its package name (z/a.go -> a.go, still
+        # `package z`) keeps its QN too — inserting package "." while the
+        # old z/a.go rows are live savepoint-skips on the collision, and
+        # the later "z" cleanup would wipe the only surviving copy.
+        for package_key, package in packages_by_key.items():
+            selected_paths = {
+                selected_file.relative_path for selected_file in package.selected_files
+            }
+            stale_paths = sorted(
+                existing_go_paths_by_package.get(package_key, set()) - selected_paths
+            )
             for stale_path in stale_paths:
                 peers = await self._collect_delete_peer_ids(
                     session=session,
@@ -559,6 +588,7 @@ class GraphIngestService:
                     )
                 )
 
+        for package in packages_by_key.values():
             changed_selected_files = [
                 selected_file
                 for selected_file in package.selected_files
@@ -595,6 +625,38 @@ class GraphIngestService:
                         total=total_changes,
                         current_file=selected_file.relative_path,
                     )
+
+        for change in non_go_changes:
+            if change.kind == "D":
+                continue
+            absolute = root_path / change.file_path
+            if not absolute.exists():
+                continue
+
+            source_text = await asyncio.to_thread(absolute.read_text, encoding="utf-8")
+            build_result = await self._parse_and_persist(
+                session=session,
+                repository_id=repository_id,
+                root_path=root_path,
+                relative_path=Path(change.file_path),
+                source_text=source_text,
+                commit_sha=commit_sha,
+                go_module_path=go_module_path,
+                go_profile=None,
+            )
+            inserted_nodes += build_result.inserted_nodes
+            replaced_files.extend(build_result.replaced_files)
+            resolved_delta += build_result.resolved_calls
+            unresolved_delta += build_result.unresolved_calls
+            processed_files += 1
+            if processed_files % _PROGRESS_LOG_EVERY == 0:
+                _log_ingest_progress(
+                    repository_id=repository_id,
+                    mode="incremental",
+                    processed=processed_files,
+                    total=total_changes,
+                    current_file=change.file_path,
+                )
 
         if delete_peer_ids:
             await self._builder.rebuild_relationships_scoped(
@@ -825,10 +887,10 @@ class GraphIngestService:
                 # defining `type Config struct` that the build profile
                 # failed to disambiguate). Skip init/blank here so the
                 # guard doesn't trip on the per-file disambiguator.
-                if (
-                    node.node_type is GraphNodeType.FUNCTION
-                    and node.name in {"init", "_"}
-                ):
+                if node.node_type is GraphNodeType.FUNCTION and node.name in {
+                    "init",
+                    "_",
+                }:
                     continue
                 existing_path = seen_qualified_names.get(node.qualified_name)
                 if existing_path is None:
@@ -878,14 +940,20 @@ class GraphIngestService:
         if not root_path.is_dir():
             raise NotADirectoryError(f"Checkout path is not a directory: {root_path}")
 
-        return tuple(
-            sorted(
-                path
-                for path in root_path.rglob("*")
-                if path.is_file()
-                and detect_graph_language(path.relative_to(root_path)) is not None
-            )
-        )
+        files: list[Path] = []
+        for path in root_path.rglob("*"):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(root_path)
+            language = detect_graph_language(relative)
+            if language is None:
+                continue
+            if language in _JS_TS_LANGUAGES and (
+                _is_js_ts_noise(relative) or path.stat().st_size > _JS_TS_MAX_FILE_BYTES
+            ):
+                continue
+            files.append(path)
+        return tuple(sorted(files))
 
 
 def _select_go_packages_from_files(
@@ -895,7 +963,9 @@ def _select_go_packages_from_files(
 ) -> tuple[GoPackageSelection, ...]:
     files_by_package: dict[str, list[Path]] = defaultdict(list)
     for file_path in go_files:
-        files_by_package[_package_key(file_path.relative_to(root_path))].append(file_path)
+        files_by_package[_package_key(file_path.relative_to(root_path))].append(
+            file_path
+        )
     return tuple(
         select_go_package_files(
             root_path=root_path,
@@ -943,6 +1013,36 @@ def _package_key(file_path: Path) -> str:
     return parent or "."
 
 
+# Generated/vendored JS-ecosystem output. Deliberately NOT shared with
+# language_scanner._SKIP_DIR_NAMES: `vendor`/`env` there would prune Go/Python
+# files that are indexed today. This filter is scoped to TS/JS files only, so
+# adding these languages keeps every existing repo's discovery set — and thus
+# its structural hashes — byte-identical.
+_JS_TS_SKIP_DIR_NAMES = frozenset(
+    {"node_modules", "dist", "build", ".next", ".nuxt", ".output", ".turbo", "coverage"}
+)
+_JS_TS_MIN_SUFFIXES = (".min.js", ".min.mjs", ".min.cjs")
+_JS_TS_MAX_FILE_BYTES = 1_048_576  # mirrors language_scanner._MAX_FILE_BYTES
+_JS_TS_LANGUAGES = frozenset({GraphLanguage.TYPESCRIPT, GraphLanguage.JAVASCRIPT})
+
+
+def _is_js_ts_noise(relative_path: Path) -> bool:
+    if any(part in _JS_TS_SKIP_DIR_NAMES for part in relative_path.parts[:-1]):
+        return True
+    return relative_path.name.lower().endswith(_JS_TS_MIN_SUFFIXES)
+
+
+def _js_ts_change_pruned(root_path: Path, change: GitFileChange) -> bool:
+    """The change's (new) location is pruned: noise dir, minified, or over-cap."""
+    relative = Path(change.file_path)
+    if _is_js_ts_noise(relative):
+        return True
+    if change.kind == "D":
+        return False
+    absolute = root_path / relative
+    return absolute.is_file() and absolute.stat().st_size > _JS_TS_MAX_FILE_BYTES
+
+
 def _touches_root_go_mod(change: GitFileChange) -> bool:
     return change.file_path == "go.mod" or change.old_file_path == "go.mod"
 
@@ -969,10 +1069,13 @@ def _change_go_package_keys(change: GitFileChange) -> tuple[str, ...]:
     return tuple(package_keys)
 
 
-def _detect_git_changes_safely(root_path: Path, since_commit: str) -> list[GitFileChange] | None:
+def _detect_git_changes_safely(
+    root_path: Path, since_commit: str
+) -> list[GitFileChange] | None:
     if not _SHA_PATTERN.match(since_commit):
         logger.warning(
-            "git_diff_invalid_sha", extra={"since": since_commit, "repo": str(root_path)}
+            "git_diff_invalid_sha",
+            extra={"since": since_commit, "repo": str(root_path)},
         )
         return None
     try:

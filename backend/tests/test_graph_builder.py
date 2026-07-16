@@ -366,7 +366,9 @@ async def test_graph_builder_replaces_existing_nodes_for_same_file(db_session):
     # change, so the symbol-stable UUID is preserved and metadata updates in
     # place.
     assert persisted_nodes["service.helper"].id == first_ids["service.helper"]
-    assert persisted_nodes["service.helper"].node_metadata["unresolved_calls"] == ["normalize"]
+    assert persisted_nodes["service.helper"].node_metadata["unresolved_calls"] == [
+        "normalize"
+    ]
 
 
 async def _build_two_files(db_session, helper_source: str, caller_source: str):
@@ -443,7 +445,7 @@ async def test_graph_builder_collapses_typing_overload_stubs(db_session):
     db_session.add(repository)
     await db_session.flush()
 
-    source_text = '''from typing import overload
+    source_text = """from typing import overload
 
 
 @overload
@@ -452,7 +454,7 @@ def f(x: int) -> int: ...
 def f(x: str) -> str: ...
 def f(x):
     return x
-'''
+"""
     extracted = GraphExtractor().extract(
         GraphParser().parse_source(file_path="m.py", source_text=source_text)
     )
@@ -487,7 +489,9 @@ def f(x):
     assert result.inserted_nodes == len(persisted)
 
 
-async def test_graph_builder_resolves_go_package_calls_and_rebinds_method_parent(db_session):
+async def test_graph_builder_resolves_go_package_calls_and_rebinds_method_parent(
+    db_session,
+):
     repository = Repository(
         host="example.com",
         git_url="git@github.com:mikekonan/cograph.git",
@@ -728,7 +732,9 @@ async def test_rebuild_relationships_scoped_survives_id_set_larger_than_chunk_si
     # 10 leaf helpers + 1 hub function that calls every helper → 11 nodes
     # and 10 CALLS edges. With IN_CHUNK_SIZE=3, the touched set (11 ids)
     # forces 4 chunks for each IN-list scan inside the resolver.
-    helper_defs = "\n".join(f"def helper_{i}() -> int:\n    return {i}\n" for i in range(10))
+    helper_defs = "\n".join(
+        f"def helper_{i}() -> int:\n    return {i}\n" for i in range(10)
+    )
     hub_def = (
         "def hub() -> int:\n"
         + "    return (\n"
@@ -886,3 +892,108 @@ async def test_graph_builder_persist_graph_flush_budget(db_session, monkeypatch)
     # post-new-edge add_all, and the final commit-prep. Add one flush
     # per new SourceFile in `_upsert_source_files` (one here).
     assert flush_count <= 5
+
+
+async def test_graph_builder_resolves_typescript_calls(db_session):
+    # Cross-file via relative import, aliased import, and `this.` — the three
+    # resolution paths TS/JS relies on (mirrors the Python/Go coverage above).
+    repository = Repository(
+        host="example.com",
+        git_url="git@github.com:mikekonan/ts-app.git",
+        name="ts-app",
+        owner="mikekonan",
+        branch="main",
+        status=RepositoryStatus.PENDING,
+        sync_schedule=SyncSchedule.MANUAL,
+    )
+    db_session.add(repository)
+    await db_session.flush()
+
+    files = (
+        (
+            "src/repo.ts",
+            "export function save(id: string): void {}\n"
+            "export function helper(id: string): void {}\n",
+        ),
+        (
+            "src/service.ts",
+            'import { save, helper as h } from "./repo";\n'
+            "\n"
+            "export class Svc {\n"
+            "  audit(id: string): void {}\n"
+            "  login(id: string): void {\n"
+            "    save(id);\n"
+            "    h(id);\n"
+            "    this.audit(id);\n"
+            "  }\n"
+            "}\n",
+        ),
+    )
+    builder = GraphBuilder()
+    for path, text in files:
+        extracted = GraphExtractor().extract(
+            GraphParser().parse_source(file_path=path, source_text=text)
+        )
+        await builder.persist_graph(
+            session=db_session,
+            repository_id=repository.id,
+            extracted_graph=extracted,
+        )
+    await db_session.commit()
+
+    nodes = {
+        node.qualified_name: node
+        for node in (
+            await db_session.scalars(
+                select(CodeNode).where(CodeNode.repository_id == repository.id)
+            )
+        ).all()
+    }
+
+    login_node = nodes["src.service.Svc.login"]
+    assert set(login_node.callees) == {
+        str(nodes["src.repo.save"].id),
+        str(nodes["src.repo.helper"].id),
+        str(nodes["src.service.Svc.audit"].id),
+    }
+    assert login_node.node_metadata.get("unresolved_calls") is None
+
+
+async def test_graph_builder_does_not_rewrite_this_outside_class_members(db_session):
+    # Codex-debate F7: a top-level function's `this` is caller-bound — the
+    # class-member rewrite must be gated on the parent actually being a class.
+    repository = Repository(
+        host="example.com",
+        git_url="git@github.com:mikekonan/ts-app.git",
+        name="ts-app",
+        owner="mikekonan",
+        branch="main",
+        status=RepositoryStatus.PENDING,
+        sync_schedule=SyncSchedule.MANUAL,
+    )
+    db_session.add(repository)
+    await db_session.flush()
+
+    source_text = (
+        "export function g(): void {}\nexport function f(): void {\n  this.g();\n}\n"
+    )
+    extracted = GraphExtractor().extract(
+        GraphParser().parse_source(file_path="src/mod.ts", source_text=source_text)
+    )
+    await GraphBuilder().persist_graph(
+        session=db_session,
+        repository_id=repository.id,
+        extracted_graph=extracted,
+    )
+    await db_session.commit()
+
+    nodes = {
+        node.qualified_name: node
+        for node in (
+            await db_session.scalars(
+                select(CodeNode).where(CodeNode.repository_id == repository.id)
+            )
+        ).all()
+    }
+    # `this.g` from a module-level function must NOT resolve to src.mod.g.
+    assert nodes["src.mod.f"].callees == []

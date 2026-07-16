@@ -5,9 +5,10 @@ from pathlib import Path
 
 from sqlalchemy import event, select
 
-from backend.app.graph.ingest import GraphIngestService
+from backend.app.graph.go_variants import resolve_go_index_profile
+from backend.app.graph.ingest import GitFileChange, GraphIngestService
 from backend.app.models.code_node import CodeNode
-from backend.app.models.enums import RepositoryStatus, SyncSchedule
+from backend.app.models.enums import CodeNodeType, RepositoryStatus, SyncSchedule
 from backend.app.models.repository import Repository
 
 
@@ -513,14 +514,16 @@ async def test_graph_ingest_emits_structured_start_and_done_logs(
     assert "ingest_done" in events
 
     start_record = next(
-        record for record in caplog.records
+        record
+        for record in caplog.records
         if record.__dict__.get("event") == "ingest_start"
     )
     assert start_record.__dict__["mode"] == "full"
     assert start_record.__dict__["repository_id"] == str(repository.id)
 
     done_record = next(
-        record for record in caplog.records
+        record
+        for record in caplog.records
         if record.__dict__.get("event") == "ingest_done"
     )
     assert done_record.__dict__["mode"] == "full"
@@ -696,3 +699,525 @@ async def test_one_fk_violation_does_not_kill_the_whole_ingest(
     assert "bad.beta" not in persisted
 
     assert result is not None
+
+
+# --- TS/JS quality gates -----------------------------------------------------
+# Gate A: the junk filter is scoped to TS/JS files ONLY — Go/Python discovery
+# stays byte-identical, so adding TS/JS support is a $0 no-op for every
+# existing repo (no structural_hash movement, no re-embeds, no wiki churn).
+# Gate B: JS-ecosystem junk (node_modules, dist, minified, over-cap) never
+# produces code_nodes — no tokens are ever spent embedding/summarizing it.
+
+
+def test_discover_source_files_junk_filter_is_scoped_to_ts_js(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.ts").write_text("export const x = 1;\n", "utf-8")
+    (tmp_path / "src" / "ok.js").write_text("module.exports = 1;\n", "utf-8")
+    (tmp_path / "src" / "util.py").write_text("KEEP = 1\n", "utf-8")
+    (tmp_path / "src" / "bundle.min.js").write_text("!function(){}();\n", "utf-8")
+    (tmp_path / "src" / "lib.min.mjs").write_text("export{};\n", "utf-8")
+    (tmp_path / "src" / "huge.ts").write_text("x" * 1_048_577, "utf-8")
+
+    junk_ts_js = {
+        "node_modules/pkg": "index.js",
+        "dist": "gen.ts",
+        "build": "out.js",
+        ".next": "page.tsx",
+        ".nuxt": "n.ts",
+        ".output": "o.mjs",
+        ".turbo": "t.cts",
+        "coverage": "cov.js",
+    }
+    for directory, filename in junk_ts_js.items():
+        target = tmp_path / directory
+        target.mkdir(parents=True, exist_ok=True)
+        (target / filename).write_text("export const junk = 1;\n", "utf-8")
+    # Go/Python inside those same dirs are indexed today — must survive.
+    (tmp_path / "node_modules" / "pkg" / "keep.go").write_text(
+        "package keep\n", "utf-8"
+    )
+    (tmp_path / "node_modules" / "pkg" / "keep.py").write_text("KEEP = 1\n", "utf-8")
+    (tmp_path / "dist" / "keep.go").write_text("package keep\n", "utf-8")
+
+    discovered = {
+        path.relative_to(tmp_path).as_posix()
+        for path in GraphIngestService()._discover_source_files(tmp_path)
+    }
+
+    assert discovered == {
+        "src/app.ts",
+        "src/ok.js",
+        "src/util.py",
+        "node_modules/pkg/keep.go",
+        "node_modules/pkg/keep.py",
+        "dist/keep.go",
+    }
+
+
+async def test_graph_ingest_skips_js_ecosystem_junk_end_to_end(db_session, tmp_path):
+    repository = Repository(
+        host="example.com",
+        git_url="git@github.com:mikekonan/ts-app.git",
+        name="ts-app",
+        owner="mikekonan",
+        branch="main",
+        status=RepositoryStatus.PENDING,
+        sync_schedule=SyncSchedule.MANUAL,
+    )
+    db_session.add(repository)
+    await db_session.flush()
+
+    checkout = tmp_path / "checkout"
+    (checkout / "src").mkdir(parents=True)
+    (checkout / "src" / "app.ts").write_text(
+        "export function main(): void {}\n", "utf-8"
+    )
+    decoy = checkout / "node_modules" / "left-pad"
+    decoy.mkdir(parents=True)
+    (decoy / "index.js").write_text(
+        "module.exports = function leftPad() {};\n", "utf-8"
+    )
+    (checkout / "dist").mkdir()
+    (checkout / "dist" / "bundle.min.js").write_text(
+        "!function(){function junk(){}}();\n", "utf-8"
+    )
+
+    result = await GraphIngestService().ingest_checkout(
+        session=db_session,
+        repository_id=repository.id,
+        checkout_path=checkout,
+    )
+    await db_session.commit()
+
+    file_paths = {
+        node.file_path
+        for node in (
+            await db_session.scalars(
+                select(CodeNode).where(CodeNode.repository_id == repository.id)
+            )
+        ).all()
+    }
+    assert file_paths == {"src/app.ts"}
+    assert result.processed_files == 1
+
+
+async def test_incremental_ts_js_pruned_changes_skip_and_downgrade(
+    db_session, tmp_path
+):
+    repository = Repository(
+        host="example.com",
+        git_url="git@github.com:mikekonan/ts-app.git",
+        name="ts-app",
+        owner="mikekonan",
+        branch="main",
+        status=RepositoryStatus.PENDING,
+        sync_schedule=SyncSchedule.MANUAL,
+    )
+    db_session.add(repository)
+    await db_session.flush()
+
+    checkout = tmp_path / "checkout"
+    (checkout / "src").mkdir(parents=True)
+    (checkout / "src" / "app.ts").write_text(
+        "export function main(): void {}\n", "utf-8"
+    )
+    (checkout / "src" / "keep.ts").write_text(
+        "export function keep(): void {}\n", "utf-8"
+    )
+
+    service = GraphIngestService()
+    await service.ingest_checkout(
+        session=db_session,
+        repository_id=repository.id,
+        checkout_path=checkout,
+    )
+    await db_session.commit()
+
+    # Simulate a commit that moves a source file into dist/ and churns junk.
+    (checkout / "dist").mkdir()
+    (checkout / "src" / "app.ts").rename(checkout / "dist" / "app.ts")
+    (checkout / "dist" / "bundle.min.js").write_text("!function(){}();\n", "utf-8")
+    decoy = checkout / "node_modules" / "left-pad"
+    decoy.mkdir(parents=True)
+    (decoy / "index.js").write_text("module.exports = 1;\n", "utf-8")
+
+    await service._ingest_incremental_from_git(
+        session=db_session,
+        repository_id=repository.id,
+        root_path=checkout,
+        git_changes=[
+            GitFileChange(kind="M", file_path="dist/bundle.min.js"),
+            GitFileChange(kind="A", file_path="node_modules/left-pad/index.js"),
+            GitFileChange(
+                kind="R", old_file_path="src/app.ts", file_path="dist/app.ts"
+            ),
+        ],
+        commit_sha=None,
+        go_module_path=None,
+        go_profile=resolve_go_index_profile(checkout),
+    )
+    await db_session.commit()
+
+    file_paths = {
+        node.file_path
+        for node in (
+            await db_session.scalars(
+                select(CodeNode).where(CodeNode.repository_id == repository.id)
+            )
+        ).all()
+    }
+    # Rename into dist/ downgraded to a delete of the old rows; junk churn
+    # produced nothing.
+    assert file_paths == {"src/keep.ts"}
+
+
+async def _ingest_ts_app(db_session, tmp_path, copy_ts_app_fixture):
+    repository = Repository(
+        host="example.com",
+        git_url="git@github.com:mikekonan/ts-app.git",
+        name="ts-app",
+        owner="mikekonan",
+        branch="main",
+        status=RepositoryStatus.PENDING,
+        sync_schedule=SyncSchedule.MANUAL,
+    )
+    db_session.add(repository)
+    await db_session.flush()
+
+    checkout = copy_ts_app_fixture(tmp_path / "checkout")
+    service = GraphIngestService()
+    result = await service.ingest_checkout(
+        session=db_session,
+        repository_id=repository.id,
+        checkout_path=checkout,
+    )
+    await db_session.commit()
+    return repository, checkout, service, result
+
+
+async def test_graph_ingest_indexes_ts_app_fixture_repo_shape(
+    db_session, tmp_path, copy_ts_app_fixture
+):
+    repository, _, _, result = await _ingest_ts_app(
+        db_session, tmp_path, copy_ts_app_fixture
+    )
+
+    nodes = {
+        node.qualified_name: node
+        for node in (
+            await db_session.scalars(
+                select(CodeNode).where(CodeNode.repository_id == repository.id)
+            )
+        ).all()
+    }
+
+    # Decoys (node_modules, dist/*.min.js) never became nodes.
+    assert result.processed_files == 5
+    assert not any(
+        "node_modules" in node.file_path or node.file_path.startswith("dist/")
+        for node in nodes.values()
+    )
+
+    # Barrel: src/index.ts collapses to module QN `src`.
+    assert nodes["src"].node_type is CodeNodeType.MODULE
+
+    service = nodes["src.services.userService.UserService"]
+    assert service.node_type is CodeNodeType.CLASS
+    assert service.language == "typescript"
+    assert service.node_metadata["exported"] is True
+
+    error_type = nodes["src.services.userService.NotFoundError"]
+    assert error_type.node_metadata["bases"] == ["Error"]
+
+    assert nodes["src.types.Handler"].node_type is CodeNodeType.INTERFACE
+    assert nodes["src.types.Result"].node_type is CodeNodeType.TYPE_ALIAS
+    assert nodes["src.types.Color"].node_metadata["ts_kind"] == "enum"
+    assert nodes["src.components.Button.Button"].node_type is CodeNodeType.FUNCTION
+
+    # CJS: module.exports gates the export flag, not naming.
+    assert nodes["src.legacy.util.normalize"].node_metadata["exported"] is True
+    assert nodes["src.legacy.util.internalOnly"].node_metadata["exported"] is False
+    assert nodes["src.legacy.util.normalize"].language == "javascript"
+
+    # Call resolution: `this.audit` and the cross-file TS→JS relative import.
+    login = nodes["src.services.userService.UserService.login"]
+    assert str(nodes["src.services.userService.UserService.audit"].id) in login.callees
+    assert str(nodes["src.legacy.util.normalize"].id) in login.callees
+    assert result.resolved_calls > 0
+
+
+async def test_graph_ingest_ts_app_reingest_unchanged_is_free(
+    db_session, tmp_path, copy_ts_app_fixture
+):
+    # Gate C: an unchanged TS/JS repo re-syncs with zero parses — the same
+    # content_hash reuse that makes Go/Python repos $0.
+    repository, checkout, service, first = await _ingest_ts_app(
+        db_session, tmp_path, copy_ts_app_fixture
+    )
+    assert first.processed_files == 5
+
+    second = await service.ingest_checkout(
+        session=db_session,
+        repository_id=repository.id,
+        checkout_path=checkout,
+    )
+    await db_session.commit()
+
+    assert second.processed_files == 0
+    assert second.inserted_nodes == 0
+    assert second.replaced_files == ()
+
+
+async def test_graph_ingest_ts_app_single_file_change_touches_one_file(
+    db_session, tmp_path, copy_ts_app_fixture
+):
+    repository, checkout, service, _ = await _ingest_ts_app(
+        db_session, tmp_path, copy_ts_app_fixture
+    )
+    before = {
+        node.qualified_name: node.id
+        for node in (
+            await db_session.scalars(
+                select(CodeNode).where(CodeNode.repository_id == repository.id)
+            )
+        ).all()
+    }
+
+    target = checkout / "src" / "services" / "userService.ts"
+    target.write_text(
+        target.read_text(encoding="utf-8").replace("user ${id} not found", "gone"),
+        encoding="utf-8",
+    )
+    result = await service.ingest_checkout(
+        session=db_session,
+        repository_id=repository.id,
+        checkout_path=checkout,
+    )
+    await db_session.commit()
+
+    assert result.processed_files == 1
+    assert result.replaced_files == ("src/services/userService.ts",)
+    after = {
+        node.qualified_name: node.id
+        for node in (
+            await db_session.scalars(
+                select(CodeNode).where(CodeNode.repository_id == repository.id)
+            )
+        ).all()
+    }
+    # Untouched files keep their node UUIDs (embeddings survive).
+    assert (
+        after["src.components.Button.Button"] == before["src.components.Button.Button"]
+    )
+    assert after["src.legacy.util.normalize"] == before["src.legacy.util.normalize"]
+
+
+async def test_incremental_cross_extension_renames_reconcile_both_sides(
+    db_session, tmp_path
+):
+    # Codex-debate F5: a.ts → a.txt must delete the stale TS rows; a.go → a.ts
+    # must index the new TS file (the go-package reingest only sees .go).
+    repository = Repository(
+        host="example.com",
+        git_url="git@github.com:mikekonan/mixed.git",
+        name="mixed",
+        owner="mikekonan",
+        branch="main",
+        status=RepositoryStatus.PENDING,
+        sync_schedule=SyncSchedule.MANUAL,
+    )
+    db_session.add(repository)
+    await db_session.flush()
+
+    checkout = tmp_path / "checkout"
+    (checkout / "src").mkdir(parents=True)
+    (checkout / "pkg").mkdir()
+    (checkout / "go.mod").write_text("module example.com/mixed\n", "utf-8")
+    (checkout / "src" / "app.ts").write_text(
+        "export function main(): void {}\n", "utf-8"
+    )
+    (checkout / "pkg" / "tool.go").write_text(
+        'package pkg\n\nfunc Tool() string { return "x" }\n', "utf-8"
+    )
+    (checkout / "pkg" / "keep.go").write_text(
+        'package pkg\n\nfunc Keep() string { return "y" }\n', "utf-8"
+    )
+
+    service = GraphIngestService()
+    await service.ingest_checkout(
+        session=db_session,
+        repository_id=repository.id,
+        checkout_path=checkout,
+    )
+    await db_session.commit()
+
+    # Simulate the renames on disk.
+    (checkout / "src" / "app.ts").rename(checkout / "src" / "app.txt")
+    (checkout / "pkg" / "tool.go").rename(checkout / "src" / "tool.ts")
+    (checkout / "src" / "tool.ts").write_text(
+        "export function tool(): void {}\n", "utf-8"
+    )
+
+    await service._ingest_incremental_from_git(
+        session=db_session,
+        repository_id=repository.id,
+        root_path=checkout,
+        git_changes=[
+            GitFileChange(
+                kind="R", old_file_path="src/app.ts", file_path="src/app.txt"
+            ),
+            GitFileChange(
+                kind="R", old_file_path="pkg/tool.go", file_path="src/tool.ts"
+            ),
+        ],
+        commit_sha=None,
+        go_module_path="example.com/mixed",
+        go_profile=resolve_go_index_profile(checkout),
+    )
+    await db_session.commit()
+
+    file_paths = {
+        node.file_path
+        for node in (
+            await db_session.scalars(
+                select(CodeNode).where(CodeNode.repository_id == repository.id)
+            )
+        ).all()
+    }
+    assert "src/app.ts" not in file_paths  # stale TS rows reconciled
+    assert "pkg/tool.go" not in file_paths  # go side reconciled by package
+    assert "src/tool.ts" in file_paths  # new TS side actually indexed
+    assert "pkg/keep.go" in file_paths
+
+
+async def test_cross_language_rename_with_colliding_qualified_name(
+    db_session, tmp_path
+):
+    # Codex-debate must-fix: a.go (func X → QN a.X) renamed to a.ts
+    # (export function X → the same QN a.X). Inserts used to run before
+    # the go stale-path cleanup, so the TS file savepoint-skipped on the
+    # QN collision and the cleanup then wiped the go rows — both sides
+    # vanished. Deletes-before-inserts keeps a.X alive as TypeScript.
+    repository = Repository(
+        host="example.com",
+        git_url="git@github.com:mikekonan/collide.git",
+        name="collide",
+        owner="mikekonan",
+        branch="main",
+        status=RepositoryStatus.PENDING,
+        sync_schedule=SyncSchedule.MANUAL,
+    )
+    db_session.add(repository)
+    await db_session.flush()
+
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (checkout / "go.mod").write_text("module example.com/collide\n", "utf-8")
+    (checkout / "a.go").write_text(
+        'package a\n\nfunc X() string { return "go" }\n', "utf-8"
+    )
+
+    service = GraphIngestService()
+    await service.ingest_checkout(
+        session=db_session,
+        repository_id=repository.id,
+        checkout_path=checkout,
+    )
+    await db_session.commit()
+
+    (checkout / "a.go").unlink()
+    (checkout / "a.ts").write_text("export function X(): void {}\n", "utf-8")
+
+    await service._ingest_incremental_from_git(
+        session=db_session,
+        repository_id=repository.id,
+        root_path=checkout,
+        git_changes=[
+            GitFileChange(kind="R", old_file_path="a.go", file_path="a.ts"),
+        ],
+        commit_sha=None,
+        go_module_path="example.com/collide",
+        go_profile=resolve_go_index_profile(checkout),
+    )
+    await db_session.commit()
+
+    nodes = (
+        await db_session.scalars(
+            select(CodeNode).where(CodeNode.repository_id == repository.id)
+        )
+    ).all()
+    file_paths = {node.file_path for node in nodes}
+    assert "a.go" not in file_paths
+    functions = {
+        node.qualified_name: node
+        for node in nodes
+        if node.node_type is CodeNodeType.FUNCTION
+    }
+    assert "a.X" in functions
+    assert functions["a.X"].language == "typescript"
+    assert functions["a.X"].file_path == "a.ts"
+
+
+async def test_go_package_move_with_retained_package_name(db_session, tmp_path):
+    # Codex-debate round 3: z/a.go (package z, func X → QN z.X) moved to
+    # the repo root while KEEPING `package z` — the QN doesn't change.
+    # Per-package delete→insert interleave used to insert package "."
+    # first (savepoint-skip on the live z.X rows), then package "z"
+    # stale-cleanup wiped the old rows — z.X vanished entirely. Go stale
+    # deletes now run for ALL packages before any package inserts.
+    repository = Repository(
+        host="example.com",
+        git_url="git@github.com:mikekonan/pkgmove.git",
+        name="pkgmove",
+        owner="mikekonan",
+        branch="main",
+        status=RepositoryStatus.PENDING,
+        sync_schedule=SyncSchedule.MANUAL,
+    )
+    db_session.add(repository)
+    await db_session.flush()
+
+    checkout = tmp_path / "checkout"
+    (checkout / "z").mkdir(parents=True)
+    (checkout / "go.mod").write_text("module example.com/pkgmove\n", "utf-8")
+    (checkout / "z" / "a.go").write_text(
+        'package z\n\nfunc X() string { return "go" }\n', "utf-8"
+    )
+
+    service = GraphIngestService()
+    await service.ingest_checkout(
+        session=db_session,
+        repository_id=repository.id,
+        checkout_path=checkout,
+    )
+    await db_session.commit()
+
+    (checkout / "z" / "a.go").rename(checkout / "a.go")
+
+    await service._ingest_incremental_from_git(
+        session=db_session,
+        repository_id=repository.id,
+        root_path=checkout,
+        git_changes=[
+            GitFileChange(kind="R", old_file_path="z/a.go", file_path="a.go"),
+        ],
+        commit_sha=None,
+        go_module_path="example.com/pkgmove",
+        go_profile=resolve_go_index_profile(checkout),
+    )
+    await db_session.commit()
+
+    nodes = (
+        await db_session.scalars(
+            select(CodeNode).where(CodeNode.repository_id == repository.id)
+        )
+    ).all()
+    file_paths = {node.file_path for node in nodes}
+    assert "z/a.go" not in file_paths
+    functions = {
+        node.qualified_name: node
+        for node in nodes
+        if node.node_type is CodeNodeType.FUNCTION
+    }
+    assert "z.X" in functions
+    assert functions["z.X"].file_path == "a.go"

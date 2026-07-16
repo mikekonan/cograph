@@ -30,24 +30,31 @@ def _patch_pack(monkeypatch, *, downloaded: list[str]) -> list[list[str]]:
     return calls
 
 
+# The full grammar set: one per language plus the `tsx` extension override
+# (TypeScript spans two grammars — see LanguageDefinition.parser_name_by_extension).
+_ALL_GRAMMARS = ("go", "javascript", "python", "tsx", "typescript")
+
+
 def test_missing_grammars_reports_required_set_when_cache_empty(monkeypatch) -> None:
     _patch_pack(monkeypatch, downloaded=[])
-    assert missing_grammars() == ("go", "python")
+    assert missing_grammars() == _ALL_GRAMMARS
 
 
 def test_missing_grammars_empty_when_cache_complete(monkeypatch) -> None:
-    _patch_pack(monkeypatch, downloaded=["go", "python", "rust"])
+    _patch_pack(monkeypatch, downloaded=[*_ALL_GRAMMARS, "rust"])
     assert missing_grammars() == ()
 
 
 def test_download_missing_grammars_downloads_only_the_gap(monkeypatch) -> None:
-    calls = _patch_pack(monkeypatch, downloaded=["python"])
+    calls = _patch_pack(
+        monkeypatch, downloaded=["python", "typescript", "tsx", "javascript"]
+    )
     download_missing_grammars()
     assert calls == [["go"]]
 
 
 def test_download_missing_grammars_noop_when_cache_complete(monkeypatch) -> None:
-    calls = _patch_pack(monkeypatch, downloaded=["go", "python"])
+    calls = _patch_pack(monkeypatch, downloaded=list(_ALL_GRAMMARS))
     download_missing_grammars()
     assert calls == []
 

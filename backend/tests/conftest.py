@@ -38,9 +38,11 @@ def _restore_backend_logger_propagation():
     backend_logger.propagate = True
     yield
 
+
 _GRAPH_FIXTURES_ROOT = Path(__file__).parent / "fixtures" / "repos"
 _GO_TYPES_FIXTURE_ROOT = _GRAPH_FIXTURES_ROOT / "go_types"
 _GO_TYPES_MODULE_PATH = "github.com/mikekonan/go-types/v2"
+_TS_APP_FIXTURE_ROOT = _GRAPH_FIXTURES_ROOT / "ts_app"
 
 
 class AsyncTestClient:
@@ -150,9 +152,7 @@ async def app(request, settings: Settings) -> AsyncIterator:
             async with app.state.session_manager.engine.begin() as connection:
                 await connection.run_sync(Base.metadata.create_all)
             if skip_default_embedding is None:
-                await _seed_default_embedding_role(
-                    app.state.session_manager, settings
-                )
+                await _seed_default_embedding_role(app.state.session_manager, settings)
             yield app
             async with app.state.session_manager.engine.begin() as connection:
                 await connection.run_sync(Base.metadata.drop_all)
@@ -192,6 +192,22 @@ def copy_go_types_fixture(
 ) -> Callable[[Path], Path]:
     def _copy(destination: Path) -> Path:
         copytree(go_types_fixture_root, destination)
+        return destination
+
+    return _copy
+
+
+@pytest.fixture
+def ts_app_fixture_root() -> Path:
+    return _TS_APP_FIXTURE_ROOT
+
+
+@pytest.fixture
+def copy_ts_app_fixture(
+    ts_app_fixture_root: Path,
+) -> Callable[[Path], Path]:
+    def _copy(destination: Path) -> Path:
+        copytree(ts_app_fixture_root, destination)
         return destination
 
     return _copy

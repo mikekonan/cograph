@@ -9,7 +9,13 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.graph._chunking import chunked
-from backend.app.graph.extractor import ExtractedEdge, ExtractedGraph, ExtractedNode, GraphEdgeType, GraphNodeType
+from backend.app.graph.extractor import (
+    ExtractedEdge,
+    ExtractedGraph,
+    ExtractedNode,
+    GraphEdgeType,
+    GraphNodeType,
+)
 from backend.app.graph.ingest_cache import GraphIngestCache
 from backend.app.graph.temporal import NodeTemporalMetadata
 from backend.app.models.code_edge import CodeEdge
@@ -189,7 +195,9 @@ class GraphBuilder:
                 last_changed_commit=(
                     temporal.last_changed_commit if temporal is not None else commit_sha
                 ),
-                last_changed_at=temporal.last_changed_at if temporal is not None else None,
+                last_changed_at=temporal.last_changed_at
+                if temporal is not None
+                else None,
             )
             session.add(new_node)
             nodes_by_qualified_name[extracted_node.qualified_name] = new_node
@@ -208,7 +216,9 @@ class GraphBuilder:
             if extracted_node.parent_qualified_name is None:
                 db_node.parent_id = None
                 continue
-            parent_node = nodes_by_qualified_name.get(extracted_node.parent_qualified_name)
+            parent_node = nodes_by_qualified_name.get(
+                extracted_node.parent_qualified_name
+            )
             if parent_node is not None:
                 db_node.parent_id = parent_node.id
 
@@ -257,7 +267,9 @@ class GraphBuilder:
                         )
                     ).all()
                 )
-            peers_from_deleted_outbound = {tid for tid in old_target_ids if tid is not None}
+            peers_from_deleted_outbound = {
+                tid for tid in old_target_ids if tid is not None
+            }
             for batch in chunked(preserved_node_ids):
                 await session.execute(
                     delete(CodeEdge).where(CodeEdge.source_node_id.in_(batch))
@@ -312,7 +324,11 @@ class GraphBuilder:
                 node_by_id=node_by_id,
                 nodes_by_qualified_name=nodes_by_qn_full,
             )
-            edge_key = (source_node.id, extracted_edge.edge_type.value, canonical_target_name)
+            edge_key = (
+                source_node.id,
+                extracted_edge.edge_type.value,
+                canonical_target_name,
+            )
             if edge_key in seen_edges:
                 continue
             seen_edges.add(edge_key)
@@ -340,12 +356,16 @@ class GraphBuilder:
                     resolved_calls_count += 1
                 else:
                     unresolved_calls_count += 1
-                    unresolved_by_source_qn[extracted_edge.source].append(extracted_edge.target)
+                    unresolved_by_source_qn[extracted_edge.source].append(
+                        extracted_edge.target
+                    )
 
         session.add_all(new_edges)
         await session.flush()
 
-        affected_qualified_names = set(nodes_by_qualified_name.keys()) | replaced_or_removed_qns
+        affected_qualified_names = (
+            set(nodes_by_qualified_name.keys()) | replaced_or_removed_qns
+        )
         source_nodes_to_refresh_unresolved: set[UUID] = set()
         peers_from_reresolved: set[UUID] = set()
         if affected_qualified_names:
@@ -355,7 +375,9 @@ class GraphBuilder:
                         select(CodeEdge).where(
                             CodeEdge.repository_id == repository_id,
                             CodeEdge.target_node_id.is_(None),
-                            CodeEdge.target_qualified_name.in_(affected_qualified_names),
+                            CodeEdge.target_qualified_name.in_(
+                                affected_qualified_names
+                            ),
                         )
                     )
                 ).all()
@@ -401,7 +423,9 @@ class GraphBuilder:
                 )
             unresolved_by_source_id: dict[UUID, list[str]] = defaultdict(list)
             for edge in remaining_unresolved:
-                unresolved_by_source_id[edge.source_node_id].append(edge.target_qualified_name)
+                unresolved_by_source_id[edge.source_node_id].append(
+                    edge.target_qualified_name
+                )
             for source_id in source_nodes_to_refresh_unresolved:
                 source_node = node_by_id.get(source_id)
                 if source_node is None:
@@ -409,7 +433,9 @@ class GraphBuilder:
                 unresolved_targets_for_node = unresolved_by_source_id.get(source_id)
                 if unresolved_targets_for_node:
                     source_node.node_metadata = _set_metadata_list(
-                        source_node.node_metadata, "unresolved_calls", unresolved_targets_for_node
+                        source_node.node_metadata,
+                        "unresolved_calls",
+                        unresolved_targets_for_node,
                     )
                 else:
                     source_node.node_metadata = _without_metadata_key(
@@ -419,17 +445,13 @@ class GraphBuilder:
         # Scope the back-compat rebuild to touched nodes only: the previous
         # whole-repo SELECT + UPDATE loop was O(N) per file ingest and was
         # explicitly required to be removed by the refactor plan.
-        touched_ids: set[UUID] = {
-            node.id for node in nodes_by_qualified_name.values()
-        }
+        touched_ids: set[UUID] = {node.id for node in nodes_by_qualified_name.values()}
         touched_ids.update(preserved_node_ids)
         touched_ids.update(peers_from_deleted_outbound)
         touched_ids.update(peers_from_reresolved)
         touched_ids.update(source_nodes_to_refresh_unresolved)
         touched_ids.update(
-            edge.target_node_id
-            for edge in new_edges
-            if edge.target_node_id is not None
+            edge.target_node_id for edge in new_edges if edge.target_node_id is not None
         )
         touched_ids.discard(None)  # type: ignore[arg-type]
 
@@ -656,7 +678,9 @@ class GraphBuilder:
         touched_set = touched_ids if touched_ids is not None else None
         for edge in call_edges:
             source_node = node_by_id.get(edge.source_node_id)
-            target_node = node_by_id.get(edge.target_node_id) if edge.target_node_id else None
+            target_node = (
+                node_by_id.get(edge.target_node_id) if edge.target_node_id else None
+            )
             if source_node is None or target_node is None:
                 continue
             # When scoped, only rewrite the side that was reset. The untouched
@@ -726,12 +750,24 @@ def _canonical_target_name(
         if parent_node is not None:
             return f"{parent_node.qualified_name}.{raw_target.removeprefix('self.')}"
 
+    # `this.` (TS/JS) means "member of my class" — but only inside class
+    # members. A top-level function's `this` is caller-bound, so the rewrite
+    # is gated on the parent actually being a class.
+    if (
+        raw_target.startswith("this.")
+        and source_node.language in ("typescript", "javascript")
+        and source_node.parent_id is not None
+    ):
+        parent_node = node_by_id.get(source_node.parent_id)
+        if parent_node is not None and parent_node.node_type is CodeNodeType.CLASS:
+            return f"{parent_node.qualified_name}.{raw_target.removeprefix('this.')}"
+
     if source_node.language == "go":
         receiver_name = _metadata_str(source_node.node_metadata, "receiver_name")
         if receiver_name and raw_target.startswith(f"{receiver_name}."):
             parent_qualified_name, _, _ = source_node.qualified_name.rpartition(".")
             if parent_qualified_name:
-                return f"{parent_qualified_name}{raw_target[len(receiver_name):]}"
+                return f"{parent_qualified_name}{raw_target[len(receiver_name) :]}"
 
     if module_node is not None:
         import_candidates: list[str] = []
@@ -760,7 +796,10 @@ def _canonical_target_name(
             if "." in raw_target:
                 type_candidate = f"{package_qualified_name}.{raw_target}"
                 first_segment = raw_target.split(".", 1)[0]
-                if first_segment[:1].isupper() or type_candidate in nodes_by_qualified_name:
+                if (
+                    first_segment[:1].isupper()
+                    or type_candidate in nodes_by_qualified_name
+                ):
                     return type_candidate
 
     if "." not in raw_target and module_node is not None:
@@ -850,13 +889,13 @@ def _candidate_from_import(*, raw_target: str, import_target: str) -> str | None
         if raw_target == alias:
             return canonical
         if raw_target.startswith(f"{alias}."):
-            return f"{canonical}{raw_target[len(alias):]}"
+            return f"{canonical}{raw_target[len(alias) :]}"
         return None
     local_name = import_target.rsplit(".", 1)[-1]
     if raw_target == local_name:
         return import_target
     if raw_target.startswith(f"{local_name}."):
-        return f"{import_target}{raw_target[len(local_name):]}"
+        return f"{import_target}{raw_target[len(local_name) :]}"
     return None
 
 

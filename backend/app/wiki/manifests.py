@@ -930,6 +930,7 @@ async def extract_public_api(
             CodeNode.start_line,
             CodeNode.end_line,
             CodeNode.language,
+            CodeNode.node_metadata,
         )
         .where(CodeNode.repository_id == repository_id)
         .where(CodeNode.node_type.in_(_FUNCTION_NODE_TYPES))
@@ -939,7 +940,7 @@ async def extract_public_api(
     rows = (await session.execute(stmt)).all()
     out: list[PublicApiEntry] = []
     for row in rows:
-        if not _is_exported(row.qualified_name, row.language):
+        if not _is_exported(row.qualified_name, row.language, row.node_metadata):
             continue
         out.append(
             PublicApiEntry(
@@ -955,7 +956,11 @@ async def extract_public_api(
     return out
 
 
-def _is_exported(qualified_name: str, language: str) -> bool:
+def _is_exported(
+    qualified_name: str,
+    language: str,
+    metadata: dict | None = None,
+) -> bool:
     if not qualified_name:
         return False
     leaf = qualified_name.rsplit(".", 1)[-1]
@@ -966,6 +971,10 @@ def _is_exported(qualified_name: str, language: str) -> bool:
         return leaf[0].isupper()
     if language == "python":
         return not leaf.startswith("_")
+    if language in ("typescript", "javascript") and metadata and "exported" in metadata:
+        # Export is syntactic in TS/JS — the extractor stamps it. Rows written
+        # before the stamp existed fall through to the heuristic below.
+        return bool(metadata["exported"])
     # Default: treat anything not underscore-prefixed as exported.
     return not leaf.startswith("_")
 
@@ -1051,6 +1060,7 @@ async def extract_exported_types(
             CodeNode.end_line,
             CodeNode.language,
             CodeNode.doc_comment,
+            CodeNode.node_metadata,
         )
         .where(CodeNode.repository_id == repository_id)
         .where(CodeNode.node_type.in_(_TYPE_NODE_TYPES))
@@ -1061,7 +1071,7 @@ async def extract_exported_types(
 
     keepers: list[tuple[UUID, str, str, str, int | None, int | None, str | None]] = []
     for row in parent_rows:
-        if not _is_exported(row.qualified_name, row.language):
+        if not _is_exported(row.qualified_name, row.language, row.node_metadata):
             continue
         keepers.append(
             (
@@ -1091,6 +1101,7 @@ async def extract_exported_types(
             CodeNode.file_path,
             CodeNode.start_line,
             CodeNode.language,
+            CodeNode.node_metadata,
         )
         .where(CodeNode.repository_id == repository_id)
         .where(CodeNode.parent_id.in_(parent_ids))
@@ -1103,7 +1114,7 @@ async def extract_exported_types(
     for child in children_rows:
         if child.parent_id is None:
             continue
-        if not _is_exported(child.qualified_name, child.language):
+        if not _is_exported(child.qualified_name, child.language, child.node_metadata):
             continue
         if child.node_type in _FIELD_NODE_TYPES:
             field_list = fields_by_parent.get(child.parent_id)
@@ -1156,7 +1167,13 @@ _PY_ERROR_BASE_RE = re.compile(
 )
 
 
-def _is_error_type(node_type: str, name: str, signature: str | None, language: str) -> bool:
+def _is_error_type(
+    node_type: str,
+    name: str,
+    signature: str | None,
+    language: str,
+    metadata: dict | None = None,
+) -> bool:
     leaf = name.rsplit(".", 1)[-1]
     if language == "go":
         # Go convention: error types are structs whose name ends in `Error`.
@@ -1171,6 +1188,16 @@ def _is_error_type(node_type: str, name: str, signature: str | None, language: s
         if signature and _PY_ERROR_BASE_RE.search(signature):
             return True
         return False
+    if language in ("typescript", "javascript"):
+        if node_type != "class":
+            return False
+        if leaf.endswith(("Error", "Exception")) and leaf != "Error":
+            return True
+        bases = (metadata or {}).get("bases") or []
+        return any(
+            isinstance(base, str) and base.rsplit(".", 1)[-1].endswith("Error")
+            for base in bases
+        )
     return False
 
 
@@ -1197,6 +1224,7 @@ async def extract_error_types(
             CodeNode.language,
             CodeNode.signature,
             CodeNode.doc_comment,
+            CodeNode.node_metadata,
         )
         .where(CodeNode.repository_id == repository_id)
         .where(CodeNode.node_type.in_(("struct", "class")))
@@ -1206,9 +1234,11 @@ async def extract_error_types(
     rows = (await session.execute(stmt)).all()
     out: list[ErrorType] = []
     for row in rows:
-        if not _is_exported(row.qualified_name, row.language):
+        if not _is_exported(row.qualified_name, row.language, row.node_metadata):
             continue
-        if not _is_error_type(row.node_type, row.name, row.signature, row.language):
+        if not _is_error_type(
+            row.node_type, row.name, row.signature, row.language, row.node_metadata
+        ):
             continue
         out.append(
             ErrorType(

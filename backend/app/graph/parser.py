@@ -33,7 +33,11 @@ def missing_grammars() -> tuple[str, ...]:
 
     have = set(downloaded_languages())
     required = sorted(
-        definition.parser_name for definition in iter_language_definitions()
+        {
+            name
+            for definition in iter_language_definitions()
+            for name in definition.parser_names()
+        }
     )
     return tuple(name for name in required if name not in have)
 
@@ -70,7 +74,9 @@ class ParsedFile:
 
 class GraphParser:
     def __init__(self) -> None:
-        self._parsers: dict[GraphLanguage, object] = {}
+        # Keyed by grammar name, not language: one language can span two
+        # grammars (typescript/tsx) and the cache must not conflate them.
+        self._parsers: dict[str, object] = {}
 
     def parse_source(self, *, file_path: str | Path, source_text: str) -> ParsedFile:
         path = Path(file_path)
@@ -78,7 +84,8 @@ class GraphParser:
         if language is None:
             raise UnsupportedLanguageError(f"Unsupported graph language for path: {path}")
 
-        parser = self._get_parser(language)
+        parser_name = get_language_definition(language).parser_name_for(path)
+        parser = self._get_parser(parser_name)
         tree = parser.parse(source_text.encode("utf-8"))
         return ParsedFile(
             path=path,
@@ -87,10 +94,9 @@ class GraphParser:
             tree=tree,
         )
 
-    def _get_parser(self, language: GraphLanguage):
-        parser = self._parsers.get(language)
+    def _get_parser(self, parser_name: str):
+        parser = self._parsers.get(parser_name)
         if parser is None:
-            parser_name = get_language_definition(language).parser_name
             parser = get_parser(parser_name)  # type: ignore[arg-type]
-            self._parsers[language] = parser
+            self._parsers[parser_name] = parser
         return parser

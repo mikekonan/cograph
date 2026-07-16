@@ -561,3 +561,108 @@ async def test_build_repo_manifests_combines_filesystem_and_db(
     assert any(r.name == "go" for r in manifests.runtimes)
     assert any(c.label == "make build" for c in manifests.run_commands)
     assert any(e.qualified_name == "app.PublicFunc" for e in manifests.public_api)
+
+
+@pytest.mark.asyncio
+async def test_extract_public_api_typescript_respects_export_stamp(
+    db_session: AsyncSession,
+) -> None:
+    # The bug this pins: TS/JS export is syntactic, not name-based. A helper
+    # with no underscore but no `export` keyword must NOT land in public_api;
+    # rows written before the stamp existed keep the old heuristic.
+    repo = Repository(
+        host="example.com",
+        git_url="https://github.com/test/ts-exports-fixture",
+        name="ts-exports-fixture",
+        owner="test",
+        branch="main",
+        status="ready",
+        sync_schedule="manual",
+        last_commit="abc",
+    )
+    db_session.add(repo)
+    await db_session.flush()
+
+    nodes = [
+        ("src.svc.UserService", "typescript", {"exported": True}),
+        ("src.svc.internalHelper", "typescript", {"exported": False}),
+        ("lib.factory.make", "javascript", {"exported": True}),
+        ("lib.factory.localOnly", "javascript", {"exported": False}),
+        # Pre-stamp row: no `exported` key → old underscore heuristic.
+        ("src.old.LegacyFunc", "typescript", {}),
+    ]
+    for qn, lang, metadata in nodes:
+        db_session.add(
+            CodeNode(
+                repository_id=repo.id,
+                file_path="src/x.ts",
+                qualified_name=qn,
+                node_type=CodeNodeType.FUNCTION,
+                name=qn.rsplit(".", 1)[-1],
+                language=lang,
+                start_line=1,
+                end_line=10,
+                content="function stub() {}\n",
+                content_hash="a" * 64,
+                node_metadata=metadata,
+            )
+        )
+    await db_session.flush()
+
+    api = await extract_public_api(session=db_session, repository_id=repo.id)
+    qns = {entry.qualified_name for entry in api}
+    assert qns == {"src.svc.UserService", "lib.factory.make", "src.old.LegacyFunc"}
+
+
+@pytest.mark.asyncio
+async def test_extract_error_types_typescript(
+    db_session: AsyncSession,
+) -> None:
+    repo = Repository(
+        host="example.com",
+        git_url="https://github.com/test/ts-errors-fixture",
+        name="ts-errors-fixture",
+        owner="test",
+        branch="main",
+        status="ready",
+        sync_schedule="manual",
+        last_commit="abc",
+    )
+    db_session.add(repo)
+    await db_session.flush()
+
+    def _ts_class(qn: str, metadata: dict) -> CodeNode:
+        return CodeNode(
+            repository_id=repo.id,
+            file_path="src/errors.ts",
+            qualified_name=qn,
+            node_type=CodeNodeType.CLASS,
+            name=qn.rsplit(".", 1)[-1],
+            language="typescript",
+            start_line=1,
+            end_line=5,
+            content="class stub {}\n",
+            content_hash="b" * 64,
+            node_metadata=metadata,
+        )
+
+    db_session.add_all(
+        [
+            # Leaf-name match.
+            _ts_class("src.errors.NotFoundError", {"exported": True}),
+            # Bases-based detection (no `Error` in the name).
+            _ts_class(
+                "src.errors.DomainFailure",
+                {"exported": True, "bases": ["ApiError"]},
+            ),
+            # Not an error.
+            _ts_class("src.widgets.Widget", {"exported": True}),
+            # Error-named but unexported — export gate wins.
+            _ts_class("src.errors.hiddenError", {"exported": False}),
+        ]
+    )
+    await db_session.flush()
+
+    errors = await extract_error_types(session=db_session, repository_id=repo.id)
+    qns = {e.qualified_name for e in errors}
+    assert qns == {"src.errors.NotFoundError", "src.errors.DomainFailure"}
