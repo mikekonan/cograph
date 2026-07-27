@@ -30,7 +30,9 @@ const DEFAULT_MOCK_AUTH = {
 };
 
 const DEFAULT_MOCK_RUNTIME = {
-  publicRead: false,
+  // Mirrors the backend default (`auth.public_read = False`). The e2e run
+  // flips it on so the smoke specs can browse repos anonymously.
+  publicRead: import.meta.env.VITE_MOCK_PUBLIC_READ === "true",
 };
 
 function cloneSeedRepos(): Repository[] {

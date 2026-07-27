@@ -1,7 +1,12 @@
 import { expect, test } from "@playwright/test";
 
 test("search groups retrieval results by layer", async ({ page }) => {
+  // /search sits behind ProtectedAdminRoute, so the anonymous public-read
+  // session the other specs use gets bounced to /login first.
   await page.goto("/search?repo_id=00000000-0000-0000-0000-000000000001&q=e_repo_not_ready");
+  await page.getByLabel("Email").fill("admin@example.com");
+  await page.getByLabel("Password").fill("admin123");
+  await page.getByRole("main").getByRole("button", { name: "Log in" }).click();
 
   await expect(page.getByRole("heading", { name: "Search" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Code" })).toBeVisible();
