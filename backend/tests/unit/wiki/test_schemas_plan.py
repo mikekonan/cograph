@@ -1,10 +1,10 @@
 """Tolerance tests for `PageSpec.covers_questions` parsing.
 
 `ReaderQuestion` is a closed five-value contract. The planner LLM
-occasionally invents a sixth slug (observed in prod: `operational-concerns`
-on merchant-registry, which failed the whole repo's wiki stage after the
-two `plan_pages` retries). The `_drop_unknown_questions` validator must
-absorb that hallucination instead of rejecting the entire `PagePlan`.
+occasionally invents a sixth slug (observed: `operational-concerns`, which
+failed a whole repo's wiki stage after the two `plan_pages` retries). The
+`_drop_unknown_questions` validator must absorb that hallucination instead
+of rejecting the entire `PagePlan`.
 """
 
 from __future__ import annotations

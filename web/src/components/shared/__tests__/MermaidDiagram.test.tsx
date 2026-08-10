@@ -79,8 +79,8 @@ describe("sanitizeMermaidSvg", () => {
     // <parsererror> as a child when strict XML parsing fails. Before
     // this fix, only the root-level check fired, so the partial SVG
     // (plus the visible red parsererror block) got handed straight to
-    // dangerouslySetInnerHTML. Reproduces what every kyc-wiki page
-    // showed users: 26/27 mermaid diagrams rendering an XML error box.
+    // dangerouslySetInnerHTML. Reproduces what a whole wiki showed
+    // users: 26/27 mermaid diagrams rendering an XML error box.
     const broken = [
       '<svg xmlns="http://www.w3.org/2000/svg">',
       '<parsererror xmlns="http://www.w3.org/1999/xhtml">',

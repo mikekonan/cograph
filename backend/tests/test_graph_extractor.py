@@ -371,8 +371,8 @@ def test_graph_extractor_disambiguates_go_init_with_file_stem():
     """Two `func init()` in different files of the same Go package each
     get their own QN suffixed with the file stem, so they survive the
     `UNIQUE(repository_id, qualified_name)` constraint and the build-
-    variant collision guard. This is the goose-migrations pattern in
-    real repos (e.g. svc/lavanderia).
+    variant collision guard. This is the goose-migrations pattern, where
+    every migration file declares its own `init()`.
     """
     file_a_source = """package migrations
 
@@ -486,11 +486,11 @@ def test_graph_extractor_separates_go_module_from_same_package_function_in_sibli
     disjoint QN namespaces. Same-package cross-file module-vs-symbol
     collision was the third Go-collision class hit on svc/runner.
     """
-    callback_source = """package monetix
+    callback_source = """package acmepay
 
 type CallbackOperation struct{}
 """
-    responses_source = """package monetix
+    responses_source = """package acmepay
 
 func callback() string { return "ok" }
 """
@@ -498,18 +498,18 @@ func callback() string { return "ok" }
     extractor = GraphExtractor()
 
     parsed_callback = parser.parse_source(
-        file_path="domain/payments/monetix/callback.go",
+        file_path="domain/payments/acmepay/callback.go",
         source_text=callback_source,
     )
     parsed_responses = parser.parse_source(
-        file_path="domain/payments/monetix/responses.go",
+        file_path="domain/payments/acmepay/responses.go",
         source_text=responses_source,
     )
 
     cb_nodes = {n.qualified_name for n in extractor.extract(parsed_callback).nodes}
     rs_nodes = {n.qualified_name for n in extractor.extract(parsed_responses).nodes}
 
-    pkg = "domain.payments.monetix"
+    pkg = "domain.payments.acmepay"
     assert f"{pkg}.callback#module" in cb_nodes
     assert f"{pkg}.callback" in rs_nodes
     # The unsuffixed `<pkg>.callback` from the module node was the
