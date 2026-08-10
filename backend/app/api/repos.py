@@ -1264,12 +1264,25 @@ async def _mark_repository_error(
     repository_id: UUID,
     exc: Exception,
 ) -> None:
-    """Ensure the Repository row is marked ERROR after a failed enqueue."""
+    """Record an enqueue failure on the repository row.
+
+    Availability of indexed data and the outcome of the last sync are
+    separate concerns. A repo with a prior snapshot (last_commit not
+    NULL) snaps back to READY so MCP/REST keep serving the last good
+    commit; only a repo that has never indexed successfully flips to
+    ERROR. See the mirroring guards in
+    orchestrator._mark_enqueue_failed / processor._mark_failed_sync /
+    run_cancellation.fail_run_cascade.
+    """
     repo = await session.get(Repository, repository_id)
-    if repo is not None and repo.status is not RepositoryStatus.ERROR:
+    if repo is None:
+        return
+    if repo.last_commit is None:
         repo.status = RepositoryStatus.ERROR
-        repo.error_msg = str(exc)
-        await session.commit()
+    else:
+        repo.status = RepositoryStatus.READY
+    repo.error_msg = str(exc)
+    await session.commit()
 
 
 async def _build_repository_response(

@@ -180,6 +180,45 @@ async def test_running_run_past_threshold_is_failed(
 
 
 @pytest.mark.asyncio
+async def test_stale_sweep_snaps_back_to_ready_when_snapshot_exists(
+    app, db_session, settings, stale_threshold_minutes
+):
+    # A stale worker on a previously-indexed repo (last_commit set)
+    # must not leave the repo behind REPO_NOT_READY. `_seed_repo` sets
+    # status=INDEXING to mimic the state the pipeline itself puts the
+    # repo into during a running sync; after sweep we expect a snap-
+    # back to READY so MCP/REST keep serving the old snapshot. The
+    # failure is recorded on RepoSyncRun.status.
+    repository = await _seed_repo(db_session)
+    repository.last_commit = "cafef00d" * 5
+    await db_session.flush()
+    assert repository.status is RepositoryStatus.INDEXING
+
+    started = datetime.now(UTC) - timedelta(minutes=stale_threshold_minutes + 5)
+    run = await _seed_run(
+        db_session,
+        repository_id=repository.id,
+        status=RepoSyncRunStatus.RUNNING,
+        started_at=started,
+    )
+    await _seed_batch_and_job(db_session, run=run)
+    await db_session.commit()
+
+    result = await sweep_stale_repo_sync_runs(
+        session_manager=_session_manager(app),
+        settings=settings,
+        arq_pool=None,
+    )
+
+    assert result.runs_failed == 1
+    await db_session.refresh(run)
+    await db_session.refresh(repository)
+    assert run.status is RepoSyncRunStatus.ERROR
+    assert repository.status is RepositoryStatus.READY
+    assert repository.error_msg is not None
+
+
+@pytest.mark.asyncio
 async def test_queued_run_with_null_started_at_uses_created_at(
     app, db_session, settings, stale_threshold_minutes
 ):

@@ -104,6 +104,16 @@ describe("RepoCard", () => {
     renderRepoCard({ ...repo, status: "ready", sync_state: "queued" });
     expect(screen.getByText("queued")).toBeInTheDocument();
   });
+
+  it("warns about the last failed sync while still showing the served snapshot", () => {
+    renderRepoCard({ ...repo, status: "ready", error_msg: "fatal: Authentication failed" });
+
+    // The backend keeps a ready repo ready when a re-sync fails, so both the
+    // stats of the served snapshot and the failure have to stay visible.
+    expect(screen.getByText("last sync failed:")).toBeInTheDocument();
+    expect(screen.getByText(/Authentication failed/)).toBeInTheDocument();
+    expect(screen.getByText("12")).toBeInTheDocument();
+  });
 });
 
 function renderRepoCard(nextRepo: Repository = repo, config: AuthConfig = authConfig) {

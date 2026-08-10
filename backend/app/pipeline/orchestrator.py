@@ -446,7 +446,16 @@ class RepoSyncOrchestrator:
         assert sync_run is not None
 
         finished_at = datetime.now(UTC)
-        repository.status = RepositoryStatus.ERROR
+        # Availability of the indexed snapshot and the outcome of the
+        # last sync are separate concerns. `sync_run.status = ERROR`
+        # already records the failure for the UI/timeline. Repo row:
+        # never indexed → ERROR (nothing to serve); prior snapshot
+        # exists → snap back to READY so MCP/REST keep serving the
+        # last good commit instead of masking it behind REPO_NOT_READY.
+        if repository.last_commit is None:
+            repository.status = RepositoryStatus.ERROR
+        else:
+            repository.status = RepositoryStatus.READY
         repository.error_msg = str(exc)
         sync_run.status = RepoSyncRunStatus.ERROR
         sync_run.finished_at = finished_at

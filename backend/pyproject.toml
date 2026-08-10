@@ -48,7 +48,11 @@ dependencies = [
   "PyYAML>=6.0",
   "uvicorn[standard]>=0.30",
   "uvicorn-worker>=0.3",
-  "mcp[cli]>=1.13.1",
+  # ponytail: ceiling at <2 — mcp 2.0 renamed FastMCP to MCPServer and moved
+  # `mcp.server.fastmcp` to `mcp.server.mcpserver`, so an unpinned install
+  # breaks `backend/app/mcp/server.py` at import time. Lift the ceiling in the
+  # same commit that ports the server to MCPServer.
+  "mcp[cli]>=1.13.1,<2",
   "openai>=1.50",
   "pgvector>=0.3",
   "python-multipart>=0.0.12",

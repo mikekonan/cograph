@@ -120,10 +120,19 @@ async def fail_run_cascade(
     # Only flip the repository row on the ERROR path. A manual cancel
     # leaves the repo state alone — the operator usually just wants to
     # unblock the dedup, not advertise that the repo is in error.
+    # Sync-outcome and read-availability are separate concerns; snap
+    # the repo back to READY when a prior snapshot exists (last_commit
+    # not NULL) so MCP/REST keep serving the last good commit. Only a
+    # repo that has never indexed successfully flips to ERROR. See the
+    # mirroring guards in orchestrator._mark_enqueue_failed and
+    # processor._mark_failed_sync.
     if run_status is RepoSyncRunStatus.ERROR:
         repository = await session.get(Repository, run.repository_id)
         if repository is not None and repository.status in _ACTIVE_REPO_STATES:
-            repository.status = RepositoryStatus.ERROR
+            if repository.last_commit is None:
+                repository.status = RepositoryStatus.ERROR
+            else:
+                repository.status = RepositoryStatus.READY
             repository.error_msg = error_msg
             repository_updated = True
 

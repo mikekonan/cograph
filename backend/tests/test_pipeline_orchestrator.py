@@ -240,6 +240,60 @@ async def test_repo_sync_orchestrator_marks_run_failed_when_queue_is_unavailable
 
 
 @pytest.mark.asyncio
+async def test_enqueue_failure_preserves_ready_when_snapshot_exists(
+    db_session,
+    settings,
+    tmp_path,
+):
+    # A repository that was successfully indexed at least once
+    # (last_commit is not NULL) must stay READY when a subsequent sync
+    # fails to enqueue — MCP/REST readers keep serving the last good
+    # snapshot; the failure surfaces via RepoSyncRun.status only.
+    source_repo_path = tmp_path / "source"
+    source_repo = _init_source_repo(source_repo_path)
+    commit_sha = _commit_file(
+        source_repo,
+        source_repo_path,
+        "worker.py",
+        "def run() -> None:\n    pass\n",
+    )
+
+    repository = Repository(
+        host="example.com",
+        git_url=str(source_repo_path),
+        name="demo",
+        owner="acme",
+        branch="main",
+        status=RepositoryStatus.READY,
+        last_commit=commit_sha,
+    )
+    db_session.add(repository)
+    await db_session.commit()
+
+    orchestrator = RepoSyncOrchestrator(
+        job_queue=_RecordingQueue(fail=True),
+        checkout_adapter=GitCheckoutAdapter(checkouts_root=settings.git.checkouts_root),
+    )
+
+    with pytest.raises(JobEnqueueError):
+        await orchestrator.enqueue_repository_sync(
+            session=db_session,
+            repository_id=repository.id,
+        )
+
+    persisted_repo = await db_session.get(Repository, repository.id)
+    sync_run = await db_session.scalar(
+        select(RepoSyncRun).where(RepoSyncRun.repository_id == repository.id)
+    )
+    assert persisted_repo is not None
+    assert sync_run is not None
+    assert persisted_repo.status is RepositoryStatus.READY
+    assert persisted_repo.error_msg is not None
+    assert sync_run.status is RepoSyncRunStatus.ERROR
+    assert sync_run.error_code == "SERVICE_UNAVAILABLE"
+
+
+@pytest.mark.asyncio
 async def test_repo_sync_orchestrator_skips_unchanged_scheduled_commit(
     db_session,
     settings,

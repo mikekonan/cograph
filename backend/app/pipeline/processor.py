@@ -758,7 +758,12 @@ class RepoSyncProcessor:
         assert sync_run is not None
 
         finished_at = datetime.now(UTC)
-        repository.status = RepositoryStatus.ERROR
+        # Snap back to READY when a prior snapshot exists — see
+        # orchestrator._mark_enqueue_failed for the full rationale.
+        if repository.last_commit is None:
+            repository.status = RepositoryStatus.ERROR
+        else:
+            repository.status = RepositoryStatus.READY
         repository.error_msg = str(exc)
         sync_run.status = RepoSyncRunStatus.ERROR
         sync_run.finished_at = finished_at

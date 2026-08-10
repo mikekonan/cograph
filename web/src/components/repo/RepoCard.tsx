@@ -156,15 +156,20 @@ export function RepoCard({ repo }: RepoCardProps) {
         </div>
       )}
 
-      {isError && repo.error_msg && (
-        <div className="px-4 py-3.5">
+      {/* A ready repo can still carry error_msg: the backend keeps serving the
+          last good snapshot when a re-sync fails, so the failure is a warning
+          on top of the stats rather than the card's whole story. */}
+      {repo.error_msg && (
+        <div className={cn("px-4", isError ? "py-3.5" : "pb-3.5")}>
           <p
             className={cn(
               "rounded-[var(--radius-sm)] px-2.5 py-2 text-xs leading-[1.4]",
-              "border border-[color:var(--color-danger)]/40",
-              "bg-[color:var(--color-danger)]/10 text-[color:var(--color-danger)]",
+              isError
+                ? "border border-[color:var(--color-danger)]/40 bg-[color:var(--color-danger)]/10 text-[color:var(--color-danger)]"
+                : "border border-[color:var(--color-warning)]/40 bg-[color:var(--color-warning)]/10 text-[color:var(--color-warning)]",
             )}
           >
+            {!isError && <span className="font-medium">last sync failed: </span>}
             {repo.error_msg}
           </p>
         </div>
