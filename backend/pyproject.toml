@@ -85,7 +85,7 @@ dev = [
 # (~500 MB CPU-only). Skip this extra to deploy with rerank disabled or with
 # a remote provider (cohere / voyage).
 reranker-local = [
-  "sentence-transformers>=3.0",
+  "sentence-transformers>=5.7.0",
 ]
 
 [tool.setuptools.packages.find]
