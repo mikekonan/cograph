@@ -209,8 +209,8 @@ async def test_wiki_tree_resource_serves_compacted_wiki(app, db_session) -> None
     repo = Repository(
         host="github.com",
         owner="acme",
-        name="kms",
-        git_url="https://github.com/acme/kms.git",
+        name="keystore",
+        git_url="https://github.com/acme/keystore.git",
         branch="main",
         status=RepositoryStatus.READY,
         visibility=RepositoryVisibility.PUBLIC,
@@ -242,7 +242,7 @@ async def test_wiki_tree_resource_serves_compacted_wiki(app, db_session) -> None
     await db_session.commit()
 
     server = await _get_mcp_server(app)
-    result = await server.read_resource("cograph://repo/github.com/acme/kms/wiki")
+    result = await server.read_resource("cograph://repo/github.com/acme/keystore/wiki")
     payload = json.loads(_content_str(result))
 
     assert payload["total"] == 1
@@ -273,8 +273,8 @@ async def test_wiki_page_resource_is_not_served_over_mcp(app, db_session) -> Non
     repo = Repository(
         host="github.com",
         owner="acme",
-        name="kms",
-        git_url="https://github.com/acme/kms.git",
+        name="keystore",
+        git_url="https://github.com/acme/keystore.git",
         branch="main",
         status=RepositoryStatus.READY,
         visibility=RepositoryVisibility.PUBLIC,
@@ -299,7 +299,7 @@ async def test_wiki_page_resource_is_not_served_over_mcp(app, db_session) -> Non
 
     server = await _get_mcp_server(app)
     with pytest.raises(Exception):
-        await server.read_resource("cograph://repo/github.com/acme/kms/wiki/index")
+        await server.read_resource("cograph://repo/github.com/acme/keystore/wiki/index")
 
 
 @pytest.mark.asyncio
@@ -311,8 +311,8 @@ async def test_graph_resources_are_not_served_over_mcp(app, db_session) -> None:
     repo = Repository(
         host="github.com",
         owner="acme",
-        name="kms",
-        git_url="https://github.com/acme/kms.git",
+        name="keystore",
+        git_url="https://github.com/acme/keystore.git",
         branch="main",
         status=RepositoryStatus.READY,
         visibility=RepositoryVisibility.PUBLIC,
@@ -322,9 +322,9 @@ async def test_graph_resources_are_not_served_over_mcp(app, db_session) -> None:
 
     server = await _get_mcp_server(app)
     with pytest.raises(Exception):
-        await server.read_resource("cograph://repo/github.com/acme/kms/graph")
+        await server.read_resource("cograph://repo/github.com/acme/keystore/graph")
     with pytest.raises(Exception):
         await server.read_resource(
-            "cograph://repo/github.com/acme/kms/graph/node/"
+            "cograph://repo/github.com/acme/keystore/graph/node/"
             "00000000-0000-0000-0000-000000000000"
         )
