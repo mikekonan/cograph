@@ -1,9 +1,9 @@
 # Contributing
 
-The short version lives in [`CONTRIBUTING.md`](https://github.com/mikekonan/cograph/blob/main/CONTRIBUTING.md)
-in the repository root, which is what GitHub links from an issue or a pull
-request. This page is the longer version: the development loop, the gates, and the
-handful of invariants that are not obvious from reading the code.
+The short version lives in `CONTRIBUTING.md` in the repository root, which is what
+GitHub links from an issue or a pull request. This page is the longer version: the
+development loop, the gates, and the handful of invariants that are not obvious
+from reading the code.
 
 ## Development loop
 
@@ -184,8 +184,11 @@ ships stable.
 
 ## Security
 
-Do not open a public issue for a vulnerability. Follow the process in
-[`.github/SECURITY.md`](https://github.com/mikekonan/cograph/blob/main/.github/SECURITY.md).
+Do not open a public issue for a vulnerability. Report it privately through
+GitHub's security advisory form on the repository, as described in
+`.github/SECURITY.md`. Include affected version or commit, impact, and
+reproduction steps. Expect acknowledgement within 3 business days and an initial
+assessment within 10, with disclosure coordinated over a 30–90 day window.
 
 ## License
 
