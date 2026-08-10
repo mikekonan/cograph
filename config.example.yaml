@@ -1,0 +1,42 @@
+app_name: Cograph
+environment: development
+version: 0.1.0
+api_prefix: /api
+
+database:
+  url: postgresql+asyncpg://postgres:postgres@localhost:5432/cograph
+  echo: false
+
+redis:
+  url: redis://localhost:6379/0
+  allow_in_memory_rate_limit_fallback: false
+
+git:
+  checkouts_root: .cograph/checkouts
+
+auth:
+  jwt_secret: change-me-in-production
+  access_token_ttl_seconds: 900
+  refresh_token_ttl_seconds: 604800
+  registration_enabled: false
+  public_read: false
+  secure_cookies: false
+
+cors:
+  allowed_origins:
+    - http://localhost:5173
+    - http://localhost:3000
+
+embedding:
+  enabled: true
+  api_url: https://api.openai.com/v1
+  api_key: set-me
+  model: text-embedding-3-small
+  dimensions: 1536
+  batch_size: 256
+
+completion:
+  enabled: false
+  api_url: https://api.openai.com/v1
+  api_key: ""
+  model: gpt-5.4-mini

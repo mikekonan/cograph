@@ -1,0 +1,44 @@
+name: Feature request
+description: Suggest an enhancement or new capability.
+title: "feat: <short summary>"
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing a feature. Please **search existing issues**
+        first — many features may already be scoped or discussed.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: |
+        Describe the user-facing problem, not the solution you have in
+        mind. Concrete examples help.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How would the feature work? Endpoints, UI, CLI, MCP, …
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: At least one workaround or alternative approach you considered, and why you ruled it out.
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope notes
+      description: |
+        Anything we should know about the surfaces this would touch (web,
+        backend, MCP, deployment, documentation)?

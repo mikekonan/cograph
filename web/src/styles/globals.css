@@ -1,0 +1,364 @@
+/* Cograph — Global styles and shared design tokens. */
+
+@import "tailwindcss";
+@import "@fontsource-variable/inter/index.css";
+@import "@fontsource-variable/jetbrains-mono/index.css";
+
+@theme {
+  /* --- raw scales (internal — do not use in components) --- */
+  /* Ink: cool near-black neutral scale. No warm tint — pairs cleanly with
+     the violet accent. Dark mode sits at ink-800 / ink-900 for that
+     Linear/Vercel "midnight" feel; light mode stays at ink-50/100. */
+  --color-ink-50: #fafafa;
+  --color-ink-100: #f4f4f5;
+  --color-ink-150: #eaeaeb;
+  --color-ink-200: #e4e4e7;
+  --color-ink-300: #d4d4d8;
+  --color-ink-400: #a1a1aa;
+  --color-ink-500: #71717a;
+  --color-ink-600: #52525b;
+  --color-ink-700: #27272a;
+  --color-ink-750: #1d1d20;
+  --color-ink-800: #141518;
+  --color-ink-850: #0e0e11;
+  --color-ink-900: #0a0a0c;
+
+  /* Violet: primary accent. Deep electric purple. Only hue with saturation in
+     the palette — every other semantic slot (success/warning/danger/info) is
+     clearly separated. Lighter `-300` value used on dark bgs for contrast. */
+  --color-violet-50: #f5f3ff;
+  --color-violet-100: #ede9fe;
+  --color-violet-300: #a78bfa;
+  --color-violet-500: #7c3aed;
+  --color-violet-600: #6d28d9;
+  --color-violet-700: #5b21b6;
+
+  /* --- semantic tokens (light = default) --- */
+  --color-bg: var(--color-ink-50);
+  --color-bg-surface: #ffffff;
+  --color-bg-elevated: #ffffff;
+  --color-bg-subtle: var(--color-ink-100);
+  --color-bg-hover: var(--color-ink-150);
+  --color-bg-muted: var(--color-ink-100);
+  --color-bg-backdrop: rgba(10, 10, 12, 0.5);
+
+  --color-fg: #09090b;
+  --color-fg-muted: var(--color-ink-500);
+  --color-fg-subtle: var(--color-ink-400);
+  --color-fg-on-accent: #ffffff;
+
+  --color-border: var(--color-ink-200);
+  --color-border-strong: var(--color-ink-300);
+  --color-border-subtle: var(--color-ink-150);
+
+  --color-ring: var(--color-violet-500);
+
+  --color-accent: var(--color-violet-500);
+  --color-accent-hover: var(--color-violet-600);
+  --color-accent-pressed: var(--color-violet-700);
+  --color-accent-subtle: var(--color-violet-100);
+  --color-accent-fg: #ffffff;
+
+  --color-success: #5a7a4a;
+  --color-success-fg: #ffffff;
+  --color-warning: #b8802c;
+  --color-warning-fg: #ffffff;
+  --color-danger: #b04a3d;
+  --color-danger-fg: #ffffff;
+  --color-info: #4a6b8f;
+  --color-info-fg: #ffffff;
+
+  /* --- language colors (GitHub-style, fixed across themes) --- */
+  --color-lang-python: #3572a5;
+  --color-lang-javascript: #f1e05a;
+  --color-lang-typescript: #3178c6;
+  --color-lang-go: #00add8;
+  --color-lang-rust: #dea584;
+  --color-lang-java: #b07219;
+  --color-lang-c: #555555;
+  --color-lang-cpp: #f34b7d;
+  --color-lang-ruby: #701516;
+  --color-lang-php: #4f5d95;
+  --color-lang-csharp: #178600;
+  --color-lang-kotlin: #a97bff;
+  --color-lang-swift: #f05138;
+  --color-lang-scala: #c22d40;
+  --color-lang-shell: #89e051;
+  --color-lang-html: #e34c26;
+  --color-lang-css: #563d7c;
+
+  /* --- typography --- */
+  --font-sans: "Inter Variable", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", "Fira Code", ui-monospace,
+    SFMono-Regular, monospace;
+
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1.125rem;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base: 0.9375rem;
+  --text-base--line-height: 1.5rem;
+  --text-md: 1rem;
+  --text-md--line-height: 1.625rem;
+  --text-lg: 1.125rem;
+  --text-lg--line-height: 1.75rem;
+  --text-xl: 1.375rem;
+  --text-xl--line-height: 2rem;
+  --text-2xl: 1.75rem;
+  --text-2xl--line-height: 2.25rem;
+  --text-3xl: 2.25rem;
+  --text-3xl--line-height: 2.75rem;
+
+  --tracking-tight: -0.015em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.025em;
+  --tracking-eyebrow: 0.18em;
+
+  /* --- radii (softened — rounder surfaces, no boxy edges) --- */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
+  --radius-full: 9999px;
+
+  /* --- shadows (light) --- */
+  --shadow-sm: 0 1px 2px rgba(24, 24, 22, 0.04);
+  --shadow-md: 0 4px 8px -2px rgba(24, 24, 22, 0.06), 0 2px 4px -2px rgba(24, 24, 22, 0.04);
+  --shadow-lg: 0 10px 20px -4px rgba(24, 24, 22, 0.08), 0 4px 8px -4px rgba(24, 24, 22, 0.06);
+  --shadow-ring: 0 0 0 3px rgba(124, 58, 237, 0.28);
+
+  /* --- motion --- */
+  --ease-smooth: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-quick: 120ms;
+  --motion-base: 180ms;
+  --motion-slow: 260ms;
+
+  /* --- z-index layers --- */
+  --z-base: 0;
+  --z-sticky: 50;
+  --z-overlay: 60;
+  --z-modal: 70;
+  /* Dropdowns / popovers / tooltips MUST sit above modals — the user
+     opens them from inside a modal, so the popover always belongs on
+     top. Anything below `--z-modal` (e.g. an old `--z-dropdown: 40`)
+     leaves Radix Portal content trapped behind the dialog backdrop. */
+  --z-dropdown: 80;
+  --z-popover: 80;
+  --z-toast: 90;
+  --z-max: 100;
+}
+
+/* --- dark theme overrides (midnight ink + violet) --- */
+[data-theme="dark"] {
+  --color-bg: var(--color-ink-900); /* near-black page */
+  --color-bg-surface: var(--color-ink-800); /* card / panel — sits one step up */
+  --color-bg-elevated: var(--color-ink-750); /* popover / dialog */
+  --color-bg-subtle: var(--color-ink-850); /* code / inputs — DEEPER than bg for depth */
+  --color-bg-hover: var(--color-ink-750);
+  --color-bg-muted: var(--color-ink-800);
+  --color-bg-backdrop: rgba(0, 0, 0, 0.72);
+
+  --color-fg: #fafafa; /* off-white, not pure #fff */
+  --color-fg-muted: var(--color-ink-400);
+  --color-fg-subtle: var(--color-ink-500);
+
+  --color-border: var(--color-ink-700);
+  --color-border-strong: var(--color-ink-600);
+  --color-border-subtle: var(--color-ink-750);
+
+  /* Accent keeps white fg on dark bg — violet-500 is dark enough for #fff to pass AA */
+  --color-accent-hover: var(--color-violet-300);
+  --color-accent-subtle: rgba(124, 58, 237, 0.2);
+  --color-accent-fg: #ffffff;
+
+  /* Status hues shifted toward cooler, slightly desaturated for midnight bg */
+  --color-success: #4ade80;
+  --color-success-fg: #052e16;
+  --color-warning: #fbbf24;
+  --color-warning-fg: #1a1405;
+  --color-danger: #f87171;
+  --color-danger-fg: #450a0a;
+  --color-info: #60a5fa;
+  --color-info-fg: #0c1a2e;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 4px 12px -2px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 12px 28px -6px rgba(0, 0, 0, 0.65);
+  --shadow-ring: 0 0 0 3px rgba(124, 58, 237, 0.4);
+}
+
+/* --- base layer --- */
+@layer base {
+  *,
+  *::before,
+  *::after {
+    border-color: var(--color-border);
+  }
+
+  html {
+    color-scheme: light dark;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-bg);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    line-height: var(--text-base--line-height);
+    font-feature-settings: "cv11" 1, "ss01" 1;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  code,
+  kbd,
+  pre,
+  samp {
+    font-family: var(--font-mono);
+    font-feature-settings: "calt" 1, "liga" 1, "cv01" 1;
+  }
+
+  ::selection {
+    background-color: var(--color-accent-subtle);
+    color: var(--color-fg);
+  }
+
+  /* Always-visible focus ring on keyboard navigation. */
+  :focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  /* Thin scrollbars styled to theme. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border-strong) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: var(--color-border-strong);
+    border-radius: var(--radius-full);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+}
+
+/* --- shared animations --- */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@keyframes disclosure-down {
+  from {
+    height: 0;
+    opacity: 0;
+  }
+  to {
+    height: var(--radix-collapsible-content-height);
+    opacity: 1;
+  }
+}
+
+@keyframes disclosure-up {
+  from {
+    height: var(--radix-collapsible-content-height);
+    opacity: 1;
+  }
+  to {
+    height: 0;
+    opacity: 0;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes scale-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+/* --- reduced motion --- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+/* ============================================================================
+   PATCH — append this block to the END of web/src/styles/globals.css
+   ============================================================================
+   Adds the dark-mode Rust-icon tint used by LanguageTags.tsx. The component
+   stamps `class="dark-tint"` + a `--tint` CSS var on icons whose source SVG
+   is pure black; this rule activates the filter only under [data-theme="dark"].
+
+   Light theme: pure black reads fine, no filter.
+   Dark theme:  filter nudges ferris toward the brand orange (--color-lang-rust).
+   ========================================================================== */
+
+[data-theme="dark"] .dark-tint {
+  filter: var(--tint, none);
+}
