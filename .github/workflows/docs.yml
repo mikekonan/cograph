@@ -1,0 +1,109 @@
+name: Docs
+
+# Builds and publishes the documentation site (docs/ -> https://cograph.cc).
+#
+# Hosting is Cloudflare Pages, deployed with wrangler from here rather than by
+# Cloudflare's own git integration: this repository is private, and this way
+# Cloudflare never needs access to it. Pushes to main publish; pull requests get
+# a preview URL.
+#
+# The site is PUBLIC while the repository is not, so a deny-list gate runs
+# between the build and the deploy. It fails closed.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "README.md"
+      - "web/src/styles/globals.css" # the theme is generated from it
+      - ".github/workflows/docs.yml"
+  pull_request:
+    paths:
+      - "docs/**"
+      - "README.md"
+      - "web/src/styles/globals.css"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: write
+  pull-requests: write
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Full checkout, not just docs/: scripts/sync-tokens.mjs reads the
+      # application stylesheet to derive the site's palette.
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+
+      - name: Install
+        working-directory: docs
+        run: npm ci
+
+      # VitePress fails the build on any dead internal link, so this doubles as
+      # the link check.
+      - name: Build
+        working-directory: docs
+        run: npm run build
+
+      - name: Internal-identifier gate
+        env:
+          DENY_LIST: ${{ secrets.DOCS_DENY_LIST }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${DENY_LIST}" ]; then
+            echo "::error::DOCS_DENY_LIST secret is not set. This gate is the only"
+            echo "::error::thing standing between an internal identifier and a public"
+            echo "::error::website, so it fails closed rather than passing silently."
+            exit 1
+          fi
+
+          # The term list lives in a secret, never in the repository: a committed
+          # list of real internal names is itself the leak it exists to prevent.
+          # One term per line; blank lines and #-comments ignored.
+          status=0
+          while IFS= read -r term; do
+            case "$term" in ''|'#'*) continue ;; esac
+            if grep -rInF --exclude-dir=node_modules --exclude-dir=cache \
+                 -e "$term" docs README.md > /tmp/hits.txt 2>/dev/null; then
+              # Print only the file:line, never the matched line — the log is
+              # public on a public repo and would republish the term.
+              echo "::error::Denied term found (masked). Locations:"
+              cut -d: -f1,2 /tmp/hits.txt | sort -u | sed 's/^/::error::  /'
+              status=1
+            fi
+          done <<< "${DENY_LIST}"
+
+          if [ "$status" -ne 0 ]; then
+            echo "::error::Rewrite the text, do not partially mask it. Describe"
+            echo "::error::failures generically instead of naming internal systems."
+            exit 1
+          fi
+          echo "Internal-identifier gate passed."
+
+      - name: Publish to Cloudflare Pages
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: >-
+            pages deploy docs/.vitepress/dist
+            --project-name=cograph-docs
+            --branch=${{ github.head_ref || github.ref_name }}

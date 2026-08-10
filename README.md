@@ -3,289 +3,169 @@
 [![CI](https://github.com/mikekonan/cograph/actions/workflows/ci.yml/badge.svg)](https://github.com/mikekonan/cograph/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-Cograph turns a Git repository into a searchable, source-grounded knowledge
-base for humans and coding agents.
+Cograph turns a Git repository into a searchable, source-grounded knowledge base
+for humans and coding agents.
 
-It indexes code, extracts a structured code graph, builds retrieval indexes,
-and serves the result through a web UI, REST API, and MCP server. The goal is
-simple: make large repositories understandable without pasting raw files into a
-chat window or maintaining separate documentation that drifts from the code.
+It indexes code, extracts a structured code graph, builds retrieval indexes over
+code and documentation, generates a wiki from what it found, and serves all of it
+through a web UI, a REST API and an MCP server — self-hosted, on one PostgreSQL.
 
-## Why Cograph Exists
+**📖 Full documentation: [cograph.cc](https://cograph.cc)**
 
-Modern codebases are too large for a single prompt and too dynamic for static
-hand-written docs. Developers and agents need answers such as:
+## The problem
 
-- Where is this behavior implemented?
+Codebases are too large for a prompt and too fast-moving for hand-written docs.
+Both leave the same questions unanswered:
+
+- Where is this behaviour implemented?
 - What calls this function, and what does it depend on?
 - Which files explain this subsystem?
-- What changed between syncs?
-- What source evidence supports an answer?
+- What changed since I last looked?
+- What source evidence supports this answer?
 
-Cograph solves this by combining code structure, lexical search, vector search,
-repository documents, generated wiki pages, and citation-aware retrieval in one
-self-hosted system.
+Cograph answers those from the repository itself, with a citation on every claim,
+and re-derives them on every sync so they cannot silently go stale.
 
-## What You Get
+## What you get
 
-- **Generated repository wiki** - source-grounded pages for the major concepts,
-  APIs, flows, and modules in a repository.
-- **Hybrid retrieval** - combined vector, lexical, graph, summary, and derived
-  fact search with provenance.
-- **Interactive code graph** - browse modules, symbols, references, callers,
-  callees, and related nodes.
-- **MCP server** - expose repository context to coding agents through tools and
-  resources instead of ad hoc file dumps.
-- **Web UI** - repository catalog, search, wiki, docs, graph, jobs, and admin
-  surfaces.
-- **Self-hosted deployment** - Docker Compose for local evaluation and a Helm
-  chart for Kubernetes deployments.
-- **Private by default** - public anonymous browsing is opt-in; new
-  repositories start as admin-only unless explicitly published.
+- **Generated repository wiki** — source-grounded pages for the concepts, APIs
+  and flows in a repository. A citation only counts if the writing agent verified
+  it with a tool call; a claim that cannot be grounded is dropped, not hedged.
+- **Hybrid retrieval** — dense vector, full-text and fuzzy-symbol search run in
+  parallel and fuse by reciprocal rank, so exact identifiers and conceptual
+  questions both land.
+- **Code graph** — modules, symbols, callers, callees and imports from
+  tree-sitter, browsable in the UI and queryable over the API.
+- **MCP server** — 14 tools over the same indexes the UI uses, so agents ask for
+  bounded, cited context instead of being handed whole files.
+- **Self-hosted** — repository contents, embeddings, generated pages and provider
+  keys never leave your deployment. One PostgreSQL is the system of record.
+- **Private by default** — new repositories are not public, anonymous browsing is
+  opt-in, and OIDC/SCIM/group grants are there when a team arrives.
 
-## How It Works
+## Supported languages
 
-1. Cograph clones or updates a Git repository.
-2. tree-sitter parses supported source files and extracts code nodes.
-3. PostgreSQL stores repository metadata, graph edges, source files, embeddings,
-   generated documents, and sync telemetry.
-4. Retrieval combines code, repository text, graph neighborhoods, summaries, and
-   optional LLM-generated facts.
-5. The web app, REST API, and MCP server serve the indexed knowledge back to
-   developers and agents.
+Graph extraction — real symbols and call edges:
 
-## Architectural Approach
-
-Cograph is built around a few explicit design choices.
-
-### AST First, LLM Second
-
-The source tree is parsed into deterministic code structure before any LLM is
-asked to summarize it. Functions, classes, methods, modules, references, source
-ranges, and file metadata come from parsers and database queries, not from model
-guesses.
-
-LLMs are used for synthesis: writing wiki pages, summarizing indexed evidence,
-and producing higher-level explanations. They operate over retrieved context
-and must cite source-backed nodes or documents.
-
-### Source-Grounded By Default
-
-Generated pages and retrieval responses are designed to carry provenance. The
-system prefers an incomplete answer with citations over a fluent answer that
-cannot be traced back to code.
-
-This matters for coding agents: the useful unit is not only "the answer", but
-also the path back to the file, symbol, or document that supports the answer.
-
-### One Operational Database
-
-Cograph intentionally uses PostgreSQL as the system of record instead of adding
-a separate graph database.
-
-PostgreSQL stores:
-
-- repository and sync metadata;
-- source files and parsed code nodes;
-- code edges and references;
-- document chunks and generated wiki pages;
-- vector embeddings with pgvector;
-- lexical indexes with full-text search, pg_trgm, and structured filters.
-
-This keeps local deployments easier to operate while still supporting graph
-queries, vector retrieval, and transactional application state in one place.
-
-### Hybrid Retrieval, Not One Magic Index
-
-Large codebases need several retrieval signals. Cograph combines:
-
-- exact symbol and path lookup;
-- lexical search;
-- vector search;
-- graph neighborhoods;
-- AST summaries;
-- repository documents;
-- optional derived facts.
-
-The retrieval layer fuses these signals so exact code-shaped queries can stay
-precise while broader questions can still find conceptual context.
-
-### Durable Sync Pipeline
-
-Repository indexing is treated as a pipeline, not a request-time side effect.
-Clone/update, language scan, graph ingest, repository document indexing,
-embedding, summary generation, and wiki generation run as durable jobs with
-stored status and retry behavior.
-
-That makes long-running indexing visible in the UI and gives operators a clear
-place to inspect failures.
-
-### Agent-Native Interface
-
-Cograph exposes repository knowledge through both REST and MCP. The MCP server
-is not an afterthought: it uses the same indexed graph and retrieval contracts
-as the web UI, so coding agents can ask for structured context instead of
-scraping rendered pages or guessing file paths.
-
-### Self-Hosted Control Plane
-
-Credentials, repository contents, embeddings, generated pages, and access
-control live inside the operator's deployment. Runtime LLM providers are
-configured server-side through OpenAI-compatible APIs, so browser clients and
-agents do not need direct provider keys.
-
-## Supported Languages
-
-The current graph extraction baseline is:
-
-- Python
-- Go
-
-Other repository files can still contribute text context, but precise code
-graph extraction is currently focused on Python and Go.
-
-## Architecture
-
-| Area | Technology |
+| Language | Extensions |
 | --- | --- |
-| Backend | Python 3.12+, FastAPI, SQLAlchemy 2.0, Alembic |
-| Storage | PostgreSQL 16, pgvector, pg_trgm |
-| Queue | Redis, arq |
-| Code parsing | tree-sitter, tree-sitter-language-pack |
-| LLM runtime | OpenAI-compatible HTTP APIs |
-| Agent protocol | MCP Python SDK |
-| Frontend | React 19, Vite, TypeScript, Tailwind v4 |
-| UI data | TanStack Query, React Router, MSW |
-| Deployment | Docker Compose, Helm |
+| Python | `.py`, `.pyi` |
+| Go | `.go` |
+| TypeScript | `.ts`, `.tsx`, `.mts`, `.cts` |
+| JavaScript | `.js`, `.jsx`, `.mjs`, `.cjs` |
 
-## Repository Layout
+Every other file is indexed as text — searchable and readable by line range, and
+in-tree `.md`/`.mdx`/`.rst` is fully chunked, embedded and symbol-linked — but
+without symbols or call edges. See
+[the language matrix](https://cograph.cc/languages) for what each walker emits.
 
-```text
-cograph/
-|-- backend/             FastAPI app, graph engine, retrieval, worker, MCP
-|-- web/                 React frontend
-|-- helm/cograph/        Helm chart
-|-- scripts/             Utility scripts
-|-- docker-compose.yml   Full-stack local entrypoint
-|-- config.example.yaml  Example local configuration
-`-- README.md
-```
-
-## Quick Start
-
-Start the full stack:
+## Quick start
 
 ```bash
-export COGRAPH_EMBEDDING__API_KEY="<your-openai-compatible-api-key>"
+export COGRAPH_EMBEDDING__API_KEY="<openai-compatible-key>"
 docker compose up --build
 ```
 
-Open:
-
-- `http://localhost:8080/` - repository catalog
-- `http://localhost:8080/login` - admin login
-- `http://localhost:8080/design` - component catalog
-
-Create the first admin user:
+Then read the setup token and create the first admin:
 
 ```bash
-docker compose exec backend python -m backend.app.cli create-admin \
-  --email admin@example.com \
-  --password admin123
+docker compose exec backend cat /app/.cograph/bootstrap.token
+# open http://localhost:8080/setup and paste it
 ```
 
-For file-based local configuration:
+> **The step people miss:** the indexing pipeline reads its model configuration
+> from the **database**, not from environment variables. After signing in, go to
+> **Admin → LLM runtime**, add a provider secret and assign the `embedding` role.
+> Without it the stack boots fine and then fails at the embed step.
+
+Full walkthrough, including Kubernetes: **[cograph.cc/quickstart](https://cograph.cc/quickstart)**
+
+## Documentation
+
+| | |
+| --- | --- |
+| [Why Cograph](https://cograph.cc/overview) | What it solves, and how it differs from the alternatives |
+| [Architecture](https://cograph.cc/architecture) | Components, pipeline, and the four design choices |
+| [Quickstart](https://cograph.cc/quickstart) | Docker Compose, first admin, first index |
+| [Kubernetes](https://cograph.cc/install/kubernetes) | Helm chart, secrets, sizing, known gaps |
+| [Configuration](https://cograph.cc/configuration) | Every setting, and what lives in the database instead |
+| [Retrieval](https://cograph.cc/retrieval) | Layers, streams, fusion, rerank, routing |
+| [Generated wiki](https://cograph.cc/wiki) | What is generated, incrementality, cost levers |
+| [MCP server](https://cograph.cc/mcp) | Tool catalog, resources, connecting agents |
+| [Access control](https://cograph.cc/access-control) | Roles, OIDC, SCIM, tokens, visibility |
+| [Operations](https://cograph.cc/operations) | Sync, failures, cost accounting, upgrades |
+| [FAQ](https://cograph.cc/faq) | Honest answers, including current limitations |
+
+## Repository layout
+
+```text
+cograph/
+├── backend/             FastAPI app, graph engine, retrieval, worker, MCP server
+├── web/                 React frontend
+├── docs/                Documentation site (VitePress) → cograph.cc
+├── helm/cograph/        Helm chart
+├── eval/                MCP retrieval evaluation harness
+├── scripts/             Quality gates and utilities
+├── docker-compose.yml   Full-stack local entrypoint
+└── config.example.yaml  Example local configuration
+```
+
+## Development
 
 ```bash
-cp config.example.yaml config.yaml
+# backend
+cd backend && uv sync && uv run pytest tests
+
+# frontend against MSW mocks, no backend needed
+cd web && npm install && npm run msw:init && npm run dev
+
+# documentation site
+cd docs && npm install && npm run dev
 ```
 
-`config.yaml` is ignored by Git because it can contain local credentials.
+Gates, run before pushing:
 
-## MCP / Agent Clients
+```bash
+cd backend && uv run ruff check . && uv run pytest tests
+cd web && npm run typecheck && npm run lint && npm run test && npm run build
+cd docs && npm run build
+```
 
-Cograph ships an MCP installer that wires a local stdio proxy into
-Claude Desktop, Cursor, and Codex. Create a personal access token in the
-UI (Account → Tokens) with scopes `mcp` and `api:read`, then:
+See [CONTRIBUTING.md](CONTRIBUTING.md) and
+[cograph.cc/contributing](https://cograph.cc/contributing).
+
+## Connecting an agent
+
+Mint a personal access token in the UI (**Account → Tokens**) with the `mcp` and
+`api:read` scopes, then:
 
 ```bash
 npx -y cograph-connect setup
 ```
 
-The installer stores the URL/token outside client configs
-(`~/.config/cograph-connect/config.json`, `0600`), writes per-client
-config blocks, and installs a Codex skill at
-`~/.codex/skills/cograph-connect/` so an agent can pick the right tool
-(`cograph_retrieve`, `cograph_search_code`, `cograph_read_node`, …)
-without prompting. Source and documentation:
-<https://github.com/mikekonan/cograph-connect>.
+The installer wires a local stdio proxy into Claude Desktop, Cursor and Codex,
+keeping the URL and token outside the client configs. Source:
+[cograph-connect](https://github.com/mikekonan/cograph-connect). Any MCP client
+that speaks streamable HTTP can also point straight at `<your-host>/mcp` with a
+bearer header.
 
-## Frontend-Only Development
+## Project status
 
-The web UI can run against MSW mocks without the backend stack:
+Pre-1.0. The core surfaces are all present and it is being run in production, but
+APIs, migrations and UI details may still change. Pin your image tags.
 
-```bash
-cd web
-npm install
-npm run msw:init
-npm run dev
-```
-
-Open `http://localhost:5173`.
-
-## Backend Development
-
-```bash
-cd backend
-uv sync
-uv run alembic -c alembic.ini upgrade head
-uv run pytest tests
-```
-
-## Quality Checks
-
-Frontend:
-
-```bash
-cd web
-npm run typecheck
-npm run lint
-npm run test
-npm run build
-```
-
-Backend:
-
-```bash
-cd backend
-uv run ruff check .
-uv run pytest tests
-```
-
-## Project Status
-
-Cograph is pre-1.0. The core surfaces are present, but APIs, migrations, and UI
-details may change while the project is still stabilizing.
-
-The safest way to evaluate it today is with Docker Compose on a local machine
-or disposable environment.
+The [FAQ](https://cograph.cc/faq#is-it-production-ready) lists the current known
+limitations explicitly rather than hiding them.
 
 ## Security
 
-Cograph is designed to run in your own infrastructure. Repository contents,
-embeddings, generated pages, and runtime credentials stay under your deployment.
+Cograph runs in your own infrastructure. Repository contents, embeddings,
+generated pages and runtime credentials stay under your deployment.
 
-Do not commit local configuration files, API keys, database dumps, generated
-checkouts, or agent-local instruction files. The default `.gitignore` excludes
-the common local paths used by this project.
-
-## Contributing
-
-Issues and focused pull requests are welcome. For non-trivial changes, open an
-issue first so the behavior, API shape, and test coverage can be agreed on
-before implementation.
-
-Run the relevant quality checks before opening a pull request.
+Do not commit local configuration, API keys, database dumps, generated checkouts
+or agent-local instruction files — the default `.gitignore` excludes the common
+paths. To report a vulnerability, follow [.github/SECURITY.md](.github/SECURITY.md);
+please do not open a public issue.
 
 ## License
 
