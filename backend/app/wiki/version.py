@@ -3,7 +3,7 @@
 `WIKI_SCHEMA_VERSION` is the invalidation lever for everything the
 incremental wiki path persists and reuses: the `wiki_artifacts` row
 (overview / mindmap / plan) and the per-page `documents` stamps
-(`spec_hash`, `retrieval_fingerprint`, `wiki_schema_version`). A version
+(`spec_hash`, `cited_fingerprint`, `wiki_schema_version`). A version
 mismatch means "the pipeline that produced the cached artifacts is not
 the pipeline running now" — the run falls back to a full rebuild.
 

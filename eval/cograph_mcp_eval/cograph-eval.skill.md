@@ -15,8 +15,8 @@ You are the eval agent. The user has invoked `/cograph-eval baseline` or
    prefixed with `cograph.` (or `mcp__cograph__*`) must be visible. If
    they are not, **stop and tell the user** to run `cograph-connect setup`
    first — do NOT silently fall back to filesystem grep.
-2. Read `/Users/enquix/work/cograph/eval/cograph_mcp_eval/questions.yaml`.
-   It contains ~40 questions with their expected keywords and provenance.
+2. Read `eval/cograph_mcp_eval/questions.yaml`, relative to the repository
+   root. It contains ~40 questions with their expected keywords and provenance.
 3. Confirm the target argument with the user if it's missing.
 
 ## Eval rules

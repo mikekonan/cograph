@@ -1,8 +1,9 @@
 """Walk a repository checkout and tally bytes per language.
 
 Issue #66 — the Overview chart used to come from `source_files`, which only
-covers files the graph parsers understand (Python, Go). For mixed-language
-repos that produced misleading 100% numbers. This scanner walks the whole
+covers files the graph parsers understand (see `graph/languages.py` for the
+current set). For mixed-language repos that produced misleading 100%
+numbers, since a repo is rarely only those. This scanner walks the whole
 checkout once per sync and persists a `Dict[str, int]` keyed by canonical
 language name (lowercased GitHub Linguist names), so the API can surface the
 true composition.

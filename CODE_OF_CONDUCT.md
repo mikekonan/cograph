@@ -29,10 +29,19 @@ professional setting.
 ## Reporting
 
 If you experience or witness behavior that violates this code, report it
-to the maintainers via the contact in [`.github/SECURITY.md`](.github/SECURITY.md)
-(use the same channel for community-conduct reports). All complaints will
-be reviewed and investigated promptly and fairly. The maintainers are
-obligated to respect the privacy and security of the reporter.
+privately to the maintainer by direct message on GitHub
+([@mikekonan](https://github.com/mikekonan)). Do not open a public issue —
+conduct reports should not be discussed in the open.
+
+For severe cases, or if the report concerns the maintainer, GitHub's
+[report abuse](https://github.com/contact/report-abuse) form escalates outside
+this project.
+
+Note that `.github/SECURITY.md` is for **security vulnerabilities only**; its
+advisory form is not the right channel for a conduct report.
+
+All complaints will be reviewed and investigated promptly and fairly. The
+maintainers are obligated to respect the privacy and security of the reporter.
 
 ## Enforcement
 

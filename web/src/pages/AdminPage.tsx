@@ -63,9 +63,14 @@ function isTabId(value: string | null): value is TabId {
 
 /**
  * AdminPage — the unified `/admin` config surface.
- * One `<main>` shell with tabs for secrets, LLM runtime, users, identity
- * providers, SCIM, and git hosts. Tabs are URL-driven via `?tab=…` so admins
- * can deep-link and the back button works.
+ * One `<main>` shell whose tabs are enumerated in `TABS` above — the list
+ * there is the source of truth, so don't restate it here and let it rot.
+ * Tabs are URL-driven via `?tab=…` so admins can deep-link and the back
+ * button works.
+ *
+ * Note there is no `secrets` tab: provider secrets are managed inline on the
+ * LLM runtime tab, and `/admin/secrets` redirects there. The
+ * `/api/admin/secrets` endpoints exist and are used by that tab.
  */
 export default function AdminPage() {
   const [searchParams, setSearchParams] = useSearchParams();

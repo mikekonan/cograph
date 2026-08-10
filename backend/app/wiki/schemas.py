@@ -22,9 +22,11 @@ class ReaderQuestion(StrEnum):
 
     The planner gets this list and must map each question onto one or
     more pages via `PageSpec.covers_questions`. The writer reads the same
-    list per page and is told to either answer it from grounded context
-    or surface the gap under "Open questions" — boilerplate isn't an
-    option because every section is now reader-question-driven.
+    list per page and must either answer it from grounded context or drop
+    it — boilerplate isn't an option because every section is now
+    reader-question-driven. There is deliberately no "Open questions"
+    section: the T4 coverage gate (`coverage_gate.py`) forbids it, and an
+    ungroundable question is omitted with the page marked `partial`.
     """
 
     HOW_TO_RUN = "how-to-run"
@@ -434,8 +436,8 @@ class PageKind(StrEnum):
     """Type of wiki page; drives section contracts in the writer prompt.
 
     Each kind ships a contract (required / optional / forbidden sections
-    + diagram requirement) defined in `page_kind_contracts.py`. The
-    planner picks a kind per page from a per-repo-kind catalog
+    + diagram requirement) compiled inline in `prompts.py`. The planner
+    picks a kind per page from a per-repo-kind catalog
     (`page_catalogs.py`); the writer is forbidden from emitting
     forbidden sections regardless of inference.
     """

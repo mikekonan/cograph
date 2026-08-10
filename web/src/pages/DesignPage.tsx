@@ -61,8 +61,11 @@ const statuses: RepoStatus[] = [
   "error",
 ];
 
+// Every language that ships an icon, so the catalog can show the full set.
+// This is deliberately wider than the four languages graph extraction supports
+// — icons also label the whole-checkout language statistics on Overview.
 const languageGroups: Language[][] = [
-  ["python", "go", "rust", "typescript", "javascript"],
+  ["python", "go", "typescript", "javascript", "rust"],
   ["java", "csharp", "kotlin", "swift", "scala"],
   ["ruby", "php", "c", "cpp", "shell"],
   ["html", "css"],

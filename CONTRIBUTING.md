@@ -3,6 +3,10 @@
 Thanks for your interest in Cograph. This guide is the short, actionable
 version for contributing to the public repository.
 
+The longer version — development loop, the invariants worth knowing before you
+change them, and how to add a language, an MCP tool or a config setting — is at
+[cograph.cc/contributing](https://cograph.cc/contributing).
+
 ## Code of Conduct
 
 Participation in this project is governed by the
@@ -33,8 +37,12 @@ docker compose up --build
 # Web UI at http://localhost:8080
 ```
 
-For frontend-only development with mocks, see the quick-start section in
-the root `README.md`.
+Note that Compose brings up the software but does not configure the LLM runtime.
+Follow [cograph.cc/quickstart](https://cograph.cc/quickstart) to create the first
+admin and assign the `embedding` role, or nothing will index.
+
+For frontend-only development with mocks, and for the documentation site, see the
+Development section of the root `README.md`.
 
 ## Code style
 
@@ -42,8 +50,7 @@ the root `README.md`.
   with `@theme` tokens (no raw scales in components). Run `npm run typecheck
   && npm run lint && npm run test && npm run build` before pushing.
 - **Backend (`backend/`)**: Python 3.12, Ruff for lint+format, FastAPI +
-  SQLAlchemy 2.0 (async), `pytest`. Run `ruff check backend/ && pytest
-  backend/tests` before pushing.
+  SQLAlchemy 2.0 (async), `pytest`. Run the gate in step 5 below before pushing.
 - API payloads stay `snake_case` end-to-end — do not auto-convert to
   camelCase in the client.
 - Design tokens are semantic only (`bg-[color:var(--color-bg-surface)]`) —
@@ -59,11 +66,14 @@ the root `README.md`.
 3. **Keep PRs small and focused.** One concern per PR. Refactors that touch
    many files should be a separate PR from behavior changes.
 4. **Keep public docs accurate.** If your change affects setup, user-facing
-   behavior, public API shape, or deployment, update `README.md` or inline
-   comments in the same PR.
+   behavior, public API shape, deployment, or cost, update the relevant page
+   under `docs/` in the same PR. Note that `docs/` is published publicly at
+   cograph.cc — never put internal hostnames, service names, or pasted
+   production logs there.
 5. **Run the gates** before pushing:
    - `cd web && npm run typecheck && npm run lint && npm run test && npm run build`
    - `cd backend && ruff check . && pytest tests`
+   - `cd docs && npm run build` (if you touched `docs/`)
 6. **Commit messages**: imperative mood, conventional prefix (`feat:`,
    `fix:`, `docs:`, `chore:`, `refactor:`), one-line header under 72 chars,
    then a bullet body explaining *what* and *why* at a high level.

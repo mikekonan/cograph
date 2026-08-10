@@ -82,7 +82,8 @@ def spec_hash(spec: PageSpec) -> str:
       a reworded purpose doesn't change the page's substance. The residual
       staleness window (reworded purpose, identical contract + evidence,
       clean quality) serves still-accurate content and is closed by the
-      cheap edit pass; OWNER "Rebuild wiki" is the escape hatch.
+      cheap edit pass. There is no in-app rebuild override; the only
+      non-incremental path is `cograph wiki run` on the CLI.
 
     Planner-only telemetry (`salience_tier`, `facet_tags`) stays excluded
     for the same reuse-stability reason.

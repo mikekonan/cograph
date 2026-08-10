@@ -16,11 +16,19 @@ CLAUDE.md
 agents/claude.md
 .claude/
 
-# Internal project planning/docs
-/docs/
+# Internal project planning notes.
+# NOTE: `/docs/` used to be ignored here as a scratch area for internal
+# planning. It is now the published documentation site (docs/ -> cograph.cc)
+# and must be tracked — do not re-add it.
 PLAN.md
 web/README.md
 backend/integration_tests/README.md
+
+# Generated: docs/scripts/sync-tokens.mjs derives this from the app's
+# design tokens on every docs build, so it is never committed.
+docs/.vitepress/theme/tokens.generated.css
+docs/.vitepress/cache/
+docs/.vitepress/dist/
 
 # Claude Code — per-user preferences, worktrees, and local permissions
 .claude/*.local.*
@@ -40,6 +48,10 @@ backend/integration_tests/README.md
 
 # Entire — per-user session tracker, never checked in
 .entire/
+
+# Node — repo-wide, so every workspace (web/, docs/, …) is covered rather
+# than relying on a per-directory .gitignore that a new one would not have.
+node_modules/
 
 # TS incremental build cache
 *.tsbuildinfo
@@ -81,3 +93,9 @@ backend/config.yaml
 /FE_TOGGLE_REPORT.md
 /*_BRINGUP_REPORT.md
 .coverage
+# Wiki / MCP payload dumps captured from a running instance for debugging.
+# These mirror the content of whatever repository was indexed, so they must
+# never reach a commit — the repository being indexed is not necessarily public.
+/*_wiki_full.md
+/*_wiki_compact.md
+/*_mcp_served.md
