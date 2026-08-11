@@ -133,7 +133,10 @@ export default withMermaid(
         },
         {
           text: "Reference",
-          items: [{ text: "Modes and lifecycles", link: "/modes" }],
+          items: [
+            { text: "Modes and lifecycles", link: "/modes" },
+            { text: "REST reference", link: "/api-reference" },
+          ],
         },
         {
           text: "Contribute",
