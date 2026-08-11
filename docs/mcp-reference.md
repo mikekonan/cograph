@@ -17,11 +17,11 @@ Rules that span two parameters cannot live in a per-parameter table, so they app
 
 ## Orientation
 
-Called first, to find out what exists and where to look. Cheap: none of these returns file contents.
+Called first, to find out what exists and where to look. Cheap — these return names, structure and scores rather than ranked search results. `cograph_repository_readme` is the one that returns a document body, because knowing what a repository is for is the point of orienting.
 
 ### `cograph_repositories`
 
-List repositories readable by the authenticated MCP user. Returns compound slugs (host/owner/name) and graph/wiki resource URIs.
+List repositories readable by the authenticated MCP user. Returns compound slugs (host/owner/name) and the wiki resource URI. There is no graph resource URI — use cograph_search_code / cograph_read_node / cograph_related for the graph.
 
 Use when: target repo is unknown — start here to enumerate, then feed the slug into the other tools.
 
@@ -117,8 +117,8 @@ Do NOT use for symbol-exact lookups (use cograph_search_code) or to read a known
 | `include_graph` | boolean | no | `false` | — |
 | `include_scores` | boolean | no | `false` | — |
 
-- `since` must be earlier than or equal to `until`.
-- `stores`, when given, overrides `mode` rather than narrowing it.
+- `since` must be earlier than or equal to **both** `until` and `as_of`.
+- A non-empty `stores` replaces the layer set `mode` would have selected. An empty list is accepted and ignored — `mode` still decides — so omit `stores` rather than passing `[]` to mean “nothing”.
 
 ### `cograph_search_code`
 
@@ -155,7 +155,7 @@ Exact content for something already identified by a search or an outline.
 
 ### `cograph_read_node`
 
-Read one code node fully (body + AST citation). Returns the snippet with `content_truncated` so the agent knows whether to widen snippet_chars.
+Read one code node's body with its AST citation. The body is a whitespace-collapsed excerpt of at most snippet_chars (default 600, max 4000), and `content_truncated` says whether anything was cut — if a node is larger than the maximum, read its line range with cograph_read_file_range instead.
 
 Use when: you have a known node_id (typically from cograph_search_code or cograph_retrieve) and need the actual code, not a list of hits.
 
@@ -185,13 +185,14 @@ Do NOT use to dump whole files (the range is capped at 1000 lines) or to search 
 | `start_line` | integer | yes | — | ≥ 1 |
 | `end_line` | integer | yes | — | ≥ 1 |
 
-- `end_line - start_line + 1` must not exceed 1000, so the cap is on the span rather than on either endpoint. An `end_line` past the end of the file is clamped instead of rejected, and the response says so via `content_truncated`.
+- `end_line` must be greater than or equal to `start_line`, and `end_line - start_line + 1` must not exceed 1000 — the cap is on the span, not on either endpoint.
+- An `end_line` past the end of the file is clamped rather than rejected, and the response reports it via `content_truncated`.
 
 ### `cograph_wiki_page`
 
-Read ONE generated-wiki page in full — or a single named section of it — on demand.
+Read ONE generated-wiki page — or a single named section of it — on demand. The body is cut at a line boundary after 12000 characters with structure preserved; `content_truncated` says whether that happened, and the fix is to re-read one `section` rather than to retry the page.
 
-Use when: the summarized wiki (the cograph_wiki_tree resource) is too terse for a topic and you need a page's full prose, diagrams, or code samples verbatim. `page` is a wiki slug from that summary's tree; pass `section` (a heading from that page's `sections` list) to pull just that section and save tokens.
+Use when: the summarized wiki (the cograph_wiki_tree resource) is too terse for a topic and you need a page's prose, diagrams, or code samples verbatim. `page` is a wiki slug from that summary's tree; pass `section` (a heading from that page's `sections` list) to pull just that section and save tokens.
 
 Do NOT use as your first wiki read — start from the summarized wiki resource and pull full pages only for the few that warrant depth. Do NOT use to search code (use cograph_retrieve / cograph_search_code).
 

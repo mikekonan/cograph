@@ -20,13 +20,15 @@ from backend.app.mcp.services import (
 )
 
 _WIKI_PAGE_DESCRIPTION = (
-    "Read ONE generated-wiki page in full — or a single named section of it — "
-    "on demand.\n"
+    "Read ONE generated-wiki page — or a single named section of it — on "
+    "demand. The body is cut at a line boundary after 12000 characters with "
+    "structure preserved; `content_truncated` says whether that happened, and "
+    "the fix is to re-read one `section` rather than to retry the page.\n"
     "Use when: the summarized wiki (the cograph_wiki_tree resource) is too "
-    "terse for a topic and you need a page's full prose, diagrams, or code "
-    "samples verbatim. `page` is a wiki slug from that summary's tree; pass "
-    "`section` (a heading from that page's `sections` list) to pull just that "
-    "section and save tokens.\n"
+    "terse for a topic and you need a page's prose, diagrams, or code samples "
+    "verbatim. `page` is a wiki slug from that summary's tree; pass `section` "
+    "(a heading from that page's `sections` list) to pull just that section and "
+    "save tokens.\n"
     "Do NOT use as your first wiki read — start from the summarized wiki "
     "resource and pull full pages only for the few that warrant depth. Do NOT "
     "use to search code (use cograph_retrieve / cograph_search_code)."

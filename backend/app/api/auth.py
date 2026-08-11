@@ -368,6 +368,12 @@ async def bootstrap_admin(
 
 @router.post("/register")
 async def register_disabled() -> None:
+    """Always 403 — self-service registration is not exposed over the API.
+
+    The route exists so a client gets a definite answer rather than a 404 it has
+    to interpret. Accounts are created by an admin, by SCIM, or by OIDC
+    auto-provisioning.
+    """
     raise ApiError(
         403,
         "FORBIDDEN",

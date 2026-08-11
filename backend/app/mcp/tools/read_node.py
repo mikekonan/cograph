@@ -17,9 +17,11 @@ from backend.app.rag.snippet import (
 )
 
 _READ_NODE_DESCRIPTION = (
-    "Read one code node fully (body + AST citation). Returns the snippet "
-    "with `content_truncated` so the agent knows whether to widen "
-    "snippet_chars.\n"
+    "Read one code node's body with its AST citation. The body is a "
+    "whitespace-collapsed excerpt of at most snippet_chars (default 600, max "
+    "4000), and `content_truncated` says whether anything was cut — if a node "
+    "is larger than the maximum, read its line range with "
+    "cograph_read_file_range instead.\n"
     "Use when: you have a known node_id (typically from cograph_search_code "
     "or cograph_retrieve) and need the actual code, not a list of hits.\n"
     "Do NOT use to search by name (use cograph_search_code) or to explore "

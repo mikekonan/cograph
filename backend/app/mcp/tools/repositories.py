@@ -21,7 +21,9 @@ def register(server: FastMCP, services: MCPServices) -> None:
         name="cograph_repositories",
         description=(
             "List repositories readable by the authenticated MCP user. Returns "
-            "compound slugs (host/owner/name) and graph/wiki resource URIs.\n"
+            "compound slugs (host/owner/name) and the wiki resource URI. There "
+            "is no graph resource URI — use cograph_search_code / "
+            "cograph_read_node / cograph_related for the graph.\n"
             "Use when: target repo is unknown — start here to enumerate, then "
             "feed the slug into the other tools.\n"
             "Do NOT use to read a repo's docs (use cograph_repository_readme) "

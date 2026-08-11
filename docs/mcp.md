@@ -158,8 +158,17 @@ response.
 | `cograph_collection_search` | Hybrid search inside one collection |
 
 `mode` maps to layers: `code` → code + signatures + summaries, `wiki` →
-repository documents, `mixed` → the broad set. An explicit `stores` list overrides
-`mode`.
+repository documents, `mixed` → the broad set. A **non-empty** `stores` list
+replaces that selection; an empty list is accepted and ignored, so omit `stores`
+rather than passing `[]`.
+
+::: warning Reads are excerpt-bounded, not whole-file
+No tool returns an arbitrarily large body. `cograph_read_node` collapses
+whitespace and cuts at `snippet_chars` (600 by default, 4000 maximum), and
+`cograph_wiki_page` cuts a page at 12 000 characters. Both report
+`content_truncated`. To read a node larger than the maximum, take its line range
+with `cograph_read_file_range` — up to 1000 lines, unmodified.
+:::
 
 ::: warning `mode: "wiki"` does not search the generated wiki
 It searches the repository's **checked-in** markdown. The generated wiki is reached
@@ -171,9 +180,9 @@ confusion, and the built-in playbook warns agents about it explicitly.
 
 | Tool | Purpose |
 | --- | --- |
-| `cograph_read_node` | One code node in full, with its AST citation |
+| `cograph_read_node` | One code node's body with its AST citation, excerpt-bounded |
 | `cograph_read_file_range` | A 1-indexed line range of a source file, ≤ 1000 lines |
-| `cograph_wiki_page` | One generated wiki page, or one named section, verbatim |
+| `cograph_wiki_page` | One generated wiki page, or one named section — verbatim, cut at 12 000 characters |
 | `cograph_collection_document` | One full collection document plus parsed metadata, untruncated |
 | `cograph_read_chunk` | The full content of one collection chunk |
 

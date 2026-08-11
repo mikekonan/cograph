@@ -20,12 +20,11 @@ should not need a Python environment with the backend installed. CI regenerates
 both files in the backend job (which already has the dependencies) and fails if
 either differs, so an API change and its documentation land in the same commit.
 
-Deliberately not emitted: full request/response field tables for REST. That would
-be a 20,000-line page nobody reads, and the model names are the searchable handle
-— `CreateRepositoryRequest` is enough to find the schema in the code. The goal is
-"an engineer knows the operation exists, how to call it, and what it returns", not
-a second copy of the type definitions. MCP tools are different and do get full
-parameter tables: an agent has to construct the call from the signature alone.
+Request models get field tables; response models get named only. The asymmetry is
+about what a reader has to know in advance: a request has to be constructed, and
+naming `CreateRepositoryRequest` only helps someone who can grep the source — which
+a reader of a public site built from a private repository cannot. A response is read
+as it arrives, so its 182 models would be bulk nobody navigates.
 """
 
 from __future__ import annotations
@@ -33,6 +32,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import importlib
+import json
 import os
 import re
 import sys
@@ -133,8 +133,10 @@ METHOD_ORDER = ["get", "post", "put", "patch", "delete"]
 TOOL_GROUPS: list[tuple[str, str, list[str]]] = [
     (
         "Orientation",
-        "Called first, to find out what exists and where to look. Cheap: none of "
-        "these returns file contents.",
+        "Called first, to find out what exists and where to look. Cheap — these "
+        "return names, structure and scores rather than ranked search results. "
+        "`cograph_repository_readme` is the one that returns a document body, "
+        "because knowing what a repository is for is the point of orienting.",
         [
             "cograph_repositories",
             "cograph_collections",
@@ -185,14 +187,17 @@ CROSS_FIELD_RULES: dict[str, list[str]] = {
         "`INVALID_REQUEST` error.",
     ],
     "cograph_retrieve": [
-        "`since` must be earlier than or equal to `until`.",
-        "`stores`, when given, overrides `mode` rather than narrowing it.",
+        "`since` must be earlier than or equal to **both** `until` and `as_of`.",
+        "A non-empty `stores` replaces the layer set `mode` would have selected. An "
+        "empty list is accepted and ignored — `mode` still decides — so omit "
+        "`stores` rather than passing `[]` to mean “nothing”.",
     ],
     "cograph_read_file_range": [
-        "`end_line - start_line + 1` must not exceed 1000, so the cap is on the "
-        "span rather than on either endpoint. An `end_line` past the end of the "
-        "file is clamped instead of rejected, and the response says so via "
-        "`content_truncated`.",
+        "`end_line` must be greater than or equal to `start_line`, and "
+        "`end_line - start_line + 1` must not exceed 1000 — the cap is on the span, "
+        "not on either endpoint.",
+        "An `end_line` past the end of the file is clamped rather than rejected, and "
+        "the response reports it via `content_truncated`.",
     ],
 }
 
@@ -233,6 +238,13 @@ def schema_name(node: dict | None) -> str | None:
     return node.get("type")
 
 
+def json_body_model(op: dict) -> str | None:
+    """The name of the operation's JSON request model, if it declares one."""
+    spec = ((op.get("requestBody") or {}).get("content") or {}).get("application/json")
+    ref = (spec or {}).get("schema", {}).get("$ref")
+    return ref.rsplit("/", 1)[-1] if ref else None
+
+
 def body_model(op: dict) -> str:
     content = (op.get("requestBody") or {}).get("content") or {}
     for media, spec in content.items():
@@ -241,15 +253,25 @@ def body_model(op: dict) -> str:
         if media.startswith("multipart/"):
             return "form data"
         name = schema_name(spec.get("schema"))
-        if name:
-            return f"`{name}`" if media == "application/json" else f"`{name}` ({media})"
+        if not name:
+            continue
+        if media != "application/json":
+            return f"`{name}` ({media})"
+        # Link to the field table below. VitePress derives the anchor from the
+        # heading text, so this stays valid as long as both are the model name.
+        return f"[`{name}`](#{name.lower()})"
     return "—"
 
 
 def response_model(op: dict) -> str:
+    """The declared success response: its status, and its model when it has one.
+
+    3xx counts as success. The OIDC routes only ever return a 302 redirect, and
+    scanning for 2xx alone reported them as having no response at all.
+    """
     responses = op.get("responses") or {}
     for status in sorted(responses):
-        if not status.startswith("2"):
+        if status[:1] not in {"2", "3"}:
             continue
         content = (responses[status] or {}).get("content") or {}
         for spec in content.values():
@@ -338,11 +360,17 @@ def render_api(schema: dict) -> str:
         "`Authorization`, `X-CSRF-Token` and `Idempotency-Key` headers are omitted "
         "because they are cross-cutting rather than per-operation.",
         "",
-        "A `—` in the request column on a `POST`, `PUT` or `PATCH` means the handler "
-        "reads the raw request body itself instead of declaring a model, so the "
-        "schema has nothing to report. The upload, OIDC-callback and webhook routes "
-        "work that way; each one's accepted shape is described on the page for its "
-        "feature.",
+        "A `—` in the request column means the schema declares no body. Usually "
+        "that is because there is none — `POST /api/repos/{…}/reindex` needs no "
+        "payload. On the upload, OIDC-callback and webhook routes it means "
+        "something different: the handler reads the raw body itself instead of "
+        "declaring a model, so the schema cannot describe a shape that does exist. "
+        "Each of those is documented on the page for its feature.",
+        "",
+        "The response column is the status the schema **declares**, which is not "
+        "always the only one a caller sees: an endpoint that rejects every request "
+        "still declares a success status, and the purpose column says so where that "
+        "happens. Error shapes are on [REST API](/api).",
         ":::",
         "",
     ]
@@ -366,7 +394,79 @@ def render_api(schema: dict) -> str:
             )
         lines.append("")
 
+    lines += render_request_bodies(schema)
     return "\n".join(lines)
+
+
+def render_request_bodies(schema: dict) -> list[str]:
+    """Field tables for every JSON request model, and the models they nest.
+
+    Naming a model is only useful to someone who can grep the source for it. This
+    site's readers cannot: the repository is private and the schema is not served
+    in production, so without these tables a reader can see that an operation
+    exists but not what to send it. Responses are deliberately left out — reading
+    one needs no prior knowledge of its shape.
+    """
+    schemas: dict = schema.get("components", {}).get("schemas", {})
+
+    wanted: list[str] = []
+    for ops in schema["paths"].values():
+        for op in ops.values():
+            if isinstance(op, dict) and (name := json_body_model(op)):
+                if name not in wanted:
+                    wanted.append(name)
+
+    # Pull in nested object models, but not enums — those are values, rendered
+    # inline by `json_type`, and the closed sets already have their own page.
+    def nested_objects(name: str) -> list[str]:
+        found = []
+        for node in (schemas.get(name) or {}).get("properties", {}).values():
+            for ref in re.findall(r'"#/components/schemas/([^"]+)"', json.dumps(node)):
+                target = schemas.get(ref) or {}
+                if target.get("properties") and ref not in found:
+                    found.append(ref)
+        return found
+
+    for name in list(wanted):
+        for child in nested_objects(name):
+            if child not in wanted:
+                wanted.append(child)
+
+    out = [
+        "## Request bodies",
+        "",
+        "The fields of every JSON request model above, so a call can be "
+        "constructed from this page alone. Enum-valued fields show their members; "
+        "[Modes and lifecycles](/modes) explains what each member means.",
+        "",
+    ]
+    for name in sorted(wanted):
+        model = schemas.get(name) or {}
+        props = model.get("properties") or {}
+        required = set(model.get("required") or [])
+        out += [f"### {name}", ""]
+        if not props:
+            out += ["Takes no fields.", ""]
+            continue
+        out += [
+            "| Field | Type | Required | Default |",
+            "| --- | --- | --- | --- |",
+        ]
+        for field, node in props.items():
+            default = node.get("default")
+            shown = (
+                "—"
+                if default is None
+                else f"`{str(default).lower() if isinstance(default, bool) else default}`"
+            )
+            out.append(
+                f"| `{field}` | {json_type(node, schemas)} "
+                f"| {'yes' if field in required else 'no'} | {shown} |"
+            )
+        if model.get("additionalProperties") is False:
+            out += ["", "Rejects unknown fields."]
+        out.append("")
+    return out
 
 
 def load_tools() -> list[tuple[Any, dict[str, dict]]]:
