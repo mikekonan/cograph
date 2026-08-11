@@ -174,6 +174,28 @@ VALIDATOR_NOTES: dict[tuple[str, str], str] = {
     ("cograph_retrieve", "top_k"): "silently clamped to 25",
 }
 
+# Rules that span more than one parameter, which a per-parameter table cannot
+# express at all. Without these a reader concludes from `cograph_outline` that
+# both arguments are optional and either may be omitted — which is rejected.
+# Keyed by tool name and validated against the live tool list, like the notes above.
+CROSS_FIELD_RULES: dict[str, list[str]] = {
+    "cograph_outline": [
+        "Pass **exactly one** of `repository` or `collection_id`. Both optional in "
+        "the schema, but omitting both — or supplying both — is an "
+        "`INVALID_REQUEST` error.",
+    ],
+    "cograph_retrieve": [
+        "`since` must be earlier than or equal to `until`.",
+        "`stores`, when given, overrides `mode` rather than narrowing it.",
+    ],
+    "cograph_read_file_range": [
+        "`end_line - start_line + 1` must not exceed 1000, so the cap is on the "
+        "span rather than on either endpoint. An `end_line` past the end of the "
+        "file is clamped instead of rejected, and the response says so via "
+        "`content_truncated`.",
+    ],
+}
+
 
 def load_schema() -> dict:
     """Import the app and return its OpenAPI document.
@@ -453,6 +475,12 @@ def render_mcp(tools: list[tuple[Any, dict[str, dict]]]) -> str:
                 f"VALIDATOR_NOTES references {tool_name}.{param}, which no longer "
                 "exists. Delete the note or point it at the new name."
             )
+    live = {t.name for t, _ in tools}
+    if missing := sorted(set(CROSS_FIELD_RULES) - live):
+        raise SystemExit(
+            f"CROSS_FIELD_RULES references tools that are not registered: {missing}. "
+            "Delete the entry or point it at the new name."
+        )
 
     by_name = {tool.name: (tool, model_props) for tool, model_props in tools}
     grouped = {name for _, _, names in TOOL_GROUPS for name in names}
@@ -480,6 +508,11 @@ def render_mcp(tools: list[tuple[Any, dict[str, dict]]]) -> str:
         "the argument model the server validates against: exceeding one is a "
         "validation error, not a silent truncation — with the single exception noted "
         "on `cograph_retrieve`.",
+        "",
+        "Rules that span two parameters cannot live in a per-parameter table, so "
+        "they appear as bullets under it. Read those before calling a tool whose "
+        "arguments are all optional: `cograph_outline` has two, and requires "
+        "exactly one.",
         ":::",
         "",
     ]
@@ -527,6 +560,11 @@ def render_mcp(tools: list[tuple[Any, dict[str, dict]]]) -> str:
                     f"| {bounds(model_props.get(param) or {}, name, param)} |"
                 )
             lines.append("")
+
+            for rule in CROSS_FIELD_RULES.get(name, []):
+                lines += [f"- {rule}"]
+            if name in CROSS_FIELD_RULES:
+                lines.append("")
 
     return "\n".join(lines)
 
