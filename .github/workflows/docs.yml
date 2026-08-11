@@ -61,41 +61,101 @@ jobs:
         working-directory: docs
         run: npm run build
 
+      # The gate below is a backstop, not proof of confidentiality: a deny-list
+      # can only find strings someone thought to list. The primary control is
+      # not writing internal identifiers into docs/ in the first place.
       - name: Internal-identifier gate
         env:
           DENY_LIST: ${{ secrets.DOCS_DENY_LIST }}
         run: |
           set -euo pipefail
 
-          if [ -z "${DENY_LIST}" ]; then
-            echo "::error::DOCS_DENY_LIST secret is not set. This gate is the only"
-            echo "::error::thing standing between an internal identifier and a public"
-            echo "::error::website, so it fails closed rather than passing silently."
+          if [ -z "${DENY_LIST:-}" ]; then
+            echo "::error::DOCS_DENY_LIST secret is not set. The gate fails closed"
+            echo "::error::rather than passing silently on an unset secret."
             exit 1
           fi
 
           # The term list lives in a secret, never in the repository: a committed
           # list of real internal names is itself the leak it exists to prevent.
-          # One term per line; blank lines and #-comments ignored.
-          status=0
-          while IFS= read -r term; do
-            case "$term" in ''|'#'*) continue ;; esac
-            if grep -rInF --exclude-dir=node_modules --exclude-dir=cache \
-                 -e "$term" docs README.md > /tmp/hits.txt 2>/dev/null; then
-              # Print only the file:line, never the matched line — the log is
-              # public on a public repo and would republish the term.
-              echo "::error::Denied term found (masked). Locations:"
-              cut -d: -f1,2 /tmp/hits.txt | sort -u | sed 's/^/::error::  /'
-              status=1
-            fi
-          done <<< "${DENY_LIST}"
+          # One term per line; blank lines and #-comments ignored. Normalise CRLF
+          # so a secret pasted from Windows does not carry \r into the pattern
+          # and silently match nothing.
+          printf '%s\n' "${DENY_LIST}" | tr -d '\r' > /tmp/deny.txt
 
-          if [ "$status" -ne 0 ]; then
+          # Scan the two surfaces separately so the log states exactly what was
+          # audited: the sources, and the artifact that actually gets published.
+          # $1 label, $2 space-separated grep excludes (deliberately unquoted on
+          # use), then the paths.
+          #
+          # The excludes must differ per surface: `--exclude-dir=dist` makes grep
+          # skip that directory even when it is named directly as the target, so
+          # sharing one exclude set would turn the artifact scan into a silent
+          # no-op. Found by seeding a term into the built artifact and watching
+          # the gate pass.
+          scan() {
+            local label="$1"; shift
+            local excludes="$1"; shift
+            local status=0
+            while IFS= read -r term; do
+              case "$term" in ''|'#'*) continue ;; esac
+              set +e
+              # shellcheck disable=SC2086 # word splitting of $excludes is intended
+              grep -rInFi --binary-files=without-match $excludes \
+                -e "$term" "$@" > /tmp/hits.txt
+              local rc=$?
+              set -e
+              # grep: 0 = match, 1 = no match, >1 = a real error (unreadable
+              # path, bad option). Treating >1 as "clean" is exactly how a gate
+              # like this passes by accident.
+              if [ "$rc" -gt 1 ]; then
+                echo "::error::grep failed with status $rc while scanning $label."
+                return 1
+              fi
+              if [ "$rc" -eq 0 ]; then
+                # Print only file:line, never the matched text — this log is
+                # public, and echoing the term would republish it.
+                echo "::error::Denied term found in $label (term masked). Locations:"
+                cut -d: -f1,2 /tmp/hits.txt | sort -u | sed 's/^/::error::  /'
+                status=1
+              fi
+            done < /tmp/deny.txt
+            return $status
+          }
+
+          rc=0
+          # node_modules and the vitepress cache are third-party bytes, not
+          # authored content — a dependency's TLD table or icon set hits short
+          # terms and would fail the job for nothing.
+          scan "sources" \
+            "--exclude-dir=node_modules --exclude-dir=cache --exclude-dir=dist" \
+            docs README.md || rc=1
+          scan "published artifact" "" docs/.vitepress/dist || rc=1
+
+          if [ "$rc" -ne 0 ]; then
             echo "::error::Rewrite the text, do not partially mask it. Describe"
             echo "::error::failures generically instead of naming internal systems."
             exit 1
           fi
-          echo "Internal-identifier gate passed."
+
+          # Prove the gate can actually fail. Without this, a broken matcher and
+          # a clean tree look identical in the log.
+          sentinel_dir=$(mktemp -d)
+          head -n 1 /tmp/deny.txt > /tmp/sentinel-term.txt
+          cp -R docs/.vitepress/dist "$sentinel_dir/dist"
+          cat /tmp/sentinel-term.txt >> "$sentinel_dir/dist/index.html"
+          set +e
+          grep -rqIFi -f /tmp/sentinel-term.txt "$sentinel_dir/dist"
+          sentinel_rc=$?
+          set -e
+          rm -rf "$sentinel_dir"
+          if [ "$sentinel_rc" -ne 0 ]; then
+            echo "::error::Self-test failed: a seeded denied term was NOT detected."
+            echo "::error::The matcher is broken; treat this run as unverified."
+            exit 1
+          fi
+
+          echo "Internal-identifier gate passed (matcher self-test OK)."
 
       - name: Publish to Cloudflare Pages
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
