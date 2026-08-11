@@ -134,23 +134,28 @@ several layers. Reduce `top_k` before reducing `snippet_chars`.
 Fourteen tools. CI asserts this exact set through the packaged stack, so the list
 here is enforced rather than aspirational.
 
+This section is the map — which tool to reach for, and why. For the exact
+signature of each one, see **[the MCP tool reference](/mcp-reference)**: types,
+defaults, enum values and bounds, generated from the server's own `list_tools()`
+response.
+
 ### Orientation
 
-| Tool | Purpose | Key parameters |
-| --- | --- | --- |
-| `cograph_repositories` | List repositories the token's user can read | `search`, `status`, `limit` ≤ 100 |
-| `cograph_collections` | List readable markdown collections | `search`, `limit` ≤ 100 |
-| `cograph_route` | Decide **where** to look — top repositories and collections with a score and a one-line rationale | `query`, `top_k` 1–10 (default 3) |
-| `cograph_outline` | Token-cheap structural overview: top directories and wiki titles, or document titles and heading sketches | exactly one of `repository` **or** `collection_id` |
-| `cograph_repository_readme` | The README (or the wiki Overview as fallback) in one call | `slug` |
+| Tool | Purpose |
+| --- | --- |
+| `cograph_repositories` | List repositories the token's user can read |
+| `cograph_collections` | List readable markdown collections |
+| `cograph_route` | Decide **where** to look — top repositories and collections with a score and a one-line rationale |
+| `cograph_outline` | Token-cheap structural overview: top directories and wiki titles, or document titles and heading sketches |
+| `cograph_repository_readme` | The README (or the wiki Overview as fallback) in one call |
 
 ### Search
 
-| Tool | Purpose | Key parameters |
-| --- | --- | --- |
-| `cograph_retrieve` | Hybrid search over code, AST summaries and repository docs of **one** repository | `query`, `repository` **(required)**, `mode` (`code`/`wiki`/`mixed`), `stores`, `top_k` ≤ 25, `snippet_chars`, `as_of`/`since`/`until`, `include_chunks`, `include_graph`, `include_scores` |
-| `cograph_search_code` | Lexical and fuzzy-symbol lookup over code nodes. Names and line ranges, **no bodies** | `repository`, `query`, `top_k` 1–100 |
-| `cograph_collection_search` | Hybrid search inside one collection | `collection_id`, `query`, `top_k`, `snippet_chars` |
+| Tool | Purpose |
+| --- | --- |
+| `cograph_retrieve` | Hybrid search over code, AST summaries and repository docs of **one** repository |
+| `cograph_search_code` | Lexical and fuzzy-symbol lookup over code nodes. Names and line ranges, **no bodies** |
+| `cograph_collection_search` | Hybrid search inside one collection |
 
 `mode` maps to layers: `code` → code + signatures + summaries, `wiki` →
 repository documents, `mixed` → the broad set. An explicit `stores` list overrides
@@ -164,19 +169,19 @@ confusion, and the built-in playbook warns agents about it explicitly.
 
 ### Read
 
-| Tool | Purpose | Key parameters |
-| --- | --- | --- |
-| `cograph_read_node` | One code node in full, with its AST citation | `repository`, `node_id`, `with_graph`, `with_summary`, `with_linked_docs`, `snippet_chars` |
-| `cograph_read_file_range` | A 1-indexed line range of a source file, ≤ 1000 lines | `repository`, `path`, `start_line`, `end_line` |
-| `cograph_wiki_page` | One generated wiki page, or one named section, verbatim | `repository`, `page`, `section` |
-| `cograph_collection_document` | One full collection document plus parsed metadata, untruncated | `collection_id`, `document_id` |
-| `cograph_read_chunk` | The full content of one collection chunk | `collection_id`, `chunk_id` |
+| Tool | Purpose |
+| --- | --- |
+| `cograph_read_node` | One code node in full, with its AST citation |
+| `cograph_read_file_range` | A 1-indexed line range of a source file, ≤ 1000 lines |
+| `cograph_wiki_page` | One generated wiki page, or one named section, verbatim |
+| `cograph_collection_document` | One full collection document plus parsed metadata, untruncated |
+| `cograph_read_chunk` | The full content of one collection chunk |
 
 ### Traverse
 
-| Tool | Purpose | Key parameters |
-| --- | --- | --- |
-| `cograph_related` | Caller/callee graph around a node | `repository`, `node_id`, `depth` 1–2, `direction` (`callers`/`callees`/`both`) |
+| Tool | Purpose |
+| --- | --- |
+| `cograph_related` | Caller/callee graph around a node |
 
 Depth is capped at 2 deliberately — depth 3 on a well-connected node returns more
 tokens than any answer needs.
@@ -187,11 +192,15 @@ surface itself, not only in prose here.
 
 ## Resources
 
-| URI | What |
-| --- | --- |
-| `cograph://repo/{host}/{owner}/{name}/wiki` | The repository's wiki, **summarised**: page tree plus a lead paragraph, section headings and covered questions per page. ~2–3k tokens for a whole wiki. |
-| `cograph://briefing` | The operator-written briefing, re-fetchable after context compaction. |
-| `cograph://my-context` | "Where am I" — the repositories and collections this token can read, with wiki page counts. |
+| Name | URI | What |
+| --- | --- | --- |
+| `cograph_wiki_tree` | `cograph://repo/{host}/{owner}/{name}/wiki` | The repository's wiki, **summarised**: page tree plus a lead paragraph, section headings and covered questions per page. ~2–3k tokens for a whole wiki. |
+| `cograph_briefing` | `cograph://briefing` | The operator-written briefing, re-fetchable after context compaction. |
+| `cograph_my_context` | `cograph://my-context` | "Where am I" — the repositories and collections this token can read, with wiki page counts. |
+
+The name column matters because the tool descriptions refer to resources by name
+— `cograph_wiki_page` tells the agent to start from "the `cograph_wiki_tree`
+resource", which is the first row above.
 
 Two resources were deliberately **removed**: a whole-repository graph snapshot
 (up to 1000 nodes, 40–60k tokens) and a per-node graph resource that duplicated
