@@ -153,6 +153,7 @@ Ten sync error codes exist. Here they are with what to actually do.
 | Go repository fails during parse | `go_build_constraint_unsupported` / `go_build_variant_conflict` | Build tags outside the supported GOOS/GOARCH/cgo matrix, or two variants in genuine conflict. See [languages](/languages#go-build-constraints). |
 | Parse fails with a conflict | `parse_db_conflict` | Two symbols collided on a qualified name. Usually a duplicate-definition edge case worth reporting. |
 | Graph step fails | `graph_ingest_failed` | Generic ingest failure; the job's message has the detail. |
+| Summaries step fails | `summary_provider_failed` | The completion provider failed while generating AST summaries. Same causes as the embedding provider failure. |
 | Wiki step fails | `wiki_provider_failed` | The completion provider failed, or the planner could not produce a valid plan. |
 | Repository shows a warning strip but still serves | — | Latest sync failed; a previous snapshot exists so reads continue on the last good commit. Fix the underlying error and re-sync. |
 | Reindex "does nothing" | — | An orphaned run is deduplicating it. Wait for the sweep (≤ 30 minutes worst case) or force-cancel the run. |
@@ -210,10 +211,23 @@ job drains every child table, and read paths hide the row while it happens.
 PostgreSQL is the only stateful component that matters. Everything Cograph knows
 lives there — graph, embeddings, generated pages, users, tokens, audit rows.
 
-- **PostgreSQL**: back up normally. Restoring it restores the whole system.
+- **PostgreSQL**: back up normally. Restoring it restores the index, the graph,
+  generated pages, users, tokens and audit rows.
 - **Redis**: transient. Losing it loses in-flight jobs; re-trigger the syncs.
-- **Checkout volume**: a cache. Losing it means the next sync re-clones, and the
-  first run after that is a full re-index rather than an incremental one.
+- **Checkout volume**: mostly a cache — **except for zip-sourced repositories.**
+
+::: danger Zip archives are not reproducible from anywhere else
+An uploaded archive is stored on the checkout volume as
+`<checkouts_root>/<repo_id>.zip`, and every reindex re-extracts it from there. If
+you lose the volume, a zip-sourced repository cannot be reindexed at all — the
+next run fails with a missing-archive error and the only recovery is re-uploading
+the original file.
+
+Back the volume up if you use zip sources, or accept that they must be
+re-uploaded after volume loss. For git-sourced repositories the volume genuinely
+is a cache: the next sync re-clones, and only the first run after that is a full
+re-index instead of an incremental one.
+:::
 
 Keep the encryption secrets with the same care as the database dump: without
 `AUTH__LLM_ENCRYPTION_SECRET` and `AUTH__OIDC_ENCRYPTION_SECRET` (or the JWT

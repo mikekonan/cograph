@@ -29,8 +29,8 @@ features:
     linkText: How generation works
   - title: Hybrid retrieval
     details: >-
-      Vector, lexical and fuzzy-symbol search run in parallel and fuse with
-      reciprocal rank fusion — so an exact identifier finds the symbol, and
+      Vector, lexical and fuzzy-symbol search all run for every query and fuse
+      with reciprocal rank fusion — so an exact identifier finds the symbol, and
       “how does billing retry a failed charge” finds the explanation.
     link: /retrieval
     linkText: Retrieval internals
@@ -51,7 +51,7 @@ features:
     details: >-
       Graph, embeddings, full-text indexes and application state live in a single
       PostgreSQL with pgvector and pg_trgm. No graph database, no vector service,
-      no data leaving your deployment.
+      no third party holding your index.
     link: /architecture
     linkText: Architecture
   - title: Private by default
@@ -80,8 +80,11 @@ wiki page gives it to them.
   production is *doing*. There are no live metrics, traces or logs.
 - **Not an agent runtime.** There is no shell, no internet access and no
   external search behind a query. Every answer comes from the index.
-- **Not a hosted service.** You run it. Repository contents, embeddings,
-  generated pages and provider keys stay inside your deployment.
+- **Not a hosted service.** You run it. The index — repository contents,
+  embeddings, generated pages — and your provider keys stay in your database.
+  What does leave, unless your model endpoint is also self-hosted, is the code
+  and prose sent to it for embedding and generation. See
+  [what crosses the boundary](/overview#what-leaves-your-deployment).
 - **Not finished.** Cograph is pre-1.0: APIs, migrations and UI details still
   move. The [FAQ](/faq) is explicit about the current rough edges.
 

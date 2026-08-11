@@ -84,13 +84,32 @@ relationships.
 ### Instead of a hosted code-intelligence service
 
 Cograph is self-hosted, and the boundary is drawn deliberately: repository
-contents, the extracted graph, embeddings, generated pages and access control
-all live in your database. The only thing that leaves is the text you send to
-whichever OpenAI-compatible endpoint you configure — which can be your own.
+contents, the extracted graph, embeddings, generated pages and access control all
+live in your database.
 
 LLM credentials are configured server-side, so browsers and agents never hold a
 provider key. An agent authenticates to Cograph with a scoped personal access
 token and Cograph talks to the model on its behalf.
+
+#### What leaves your deployment
+
+Be precise about this, because "self-hosted" is often read as "nothing leaves".
+Cograph needs a model endpoint, and text is sent to it:
+
+| Leaves | When | Contents |
+| --- | --- | --- |
+| Code chunks | Indexing (`embed`) | The body of each code node, up to 4096 characters |
+| Document chunks | Indexing (`embed_repo_docs`, collection embed) | Heading path plus chunk text, up to 4096 characters |
+| Retrieved context + prompts | Summary and wiki generation | Selected code, document chunks and graph context |
+| The query | Every search | The query string, to be embedded |
+
+Never sent: the whole repository, your database, credentials, user records, or
+access-control state. Only the specific text a step needs.
+
+If that is still too much, point the `embedding` and `completion_writer` roles at
+an endpoint inside your own network — anything OpenAI-compatible works, and then
+nothing leaves at all. Assigning only the `embedding` role keeps generation from
+happening in the first place.
 
 ### Instead of adding a graph database
 

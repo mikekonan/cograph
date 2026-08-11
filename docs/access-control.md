@@ -7,9 +7,16 @@ is off, and self-registration is disabled.
 
 Three: `owner`, `admin`, `user`.
 
-`owner` and `admin` are currently **equivalent** in every access check; the
+`owner` and `admin` are equivalent in nearly every access check, and the
 distinction exists for future separation of duties. Treat both as full
-administrators today.
+administrators.
+
+::: warning One known exception
+The global collection-jobs listing checks for `admin` specifically, so an `owner`
+is scoped there like a normal user — they see only public and owned collections'
+jobs. This is an inconsistency in the code rather than an intended rule; do not
+build on either behaviour.
+:::
 
 What a plain `user` can reach:
 
@@ -64,10 +71,25 @@ at one of two levels:
 | Level | Allows |
 | --- | --- |
 | `read` | Visible and queryable — UI, REST, MCP |
-| `write` | Additionally: run jobs — reindex, upload, delete |
+| `write` | Additionally: run costly jobs — reindex, upload, re-embed, retry |
 
 There is no third value. The absence of a grant row is "no access". Administering
 grants is a role-level power and sits outside this ladder.
+
+::: warning `write` does not include deletion
+Deletion is gated by **role**, not by grant:
+
+| Action | Required |
+| --- | --- |
+| Read a repository or collection | `read` grant, or public, or admin |
+| Reindex, upload, re-embed, retry a job | `write` grant, or owner, or admin |
+| Delete a repository | admin role |
+| Delete a whole collection | collection owner, or admin role |
+| Delete a document inside a collection | collection owner, or admin role |
+| Administer groups and grants | admin role |
+
+A group with `write` on a repository cannot delete it.
+:::
 
 Group membership can be maintained by hand, synced from OIDC claims, or
 provisioned over SCIM.

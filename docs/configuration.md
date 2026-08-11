@@ -178,10 +178,14 @@ Use `json` wherever logs are shipped to a collector.
 | `connect_timeout_seconds` | `EMBEDDING__CONNECT_TIMEOUT_SECONDS` | `10.0` |
 
 ::: info Where these still matter
-The indexing pipeline takes its embedding provider from the database. But
-`batch_size` and `dimensions` are still read from here, and the **query-time**
-embedding path — the one that vectorises an incoming search — uses this group
-including the API key. Configure both.
+Both the indexing pipeline **and** the query path take their embedding provider —
+including the API key — from the database. What is still read from this group is
+`batch_size`, `dimensions` and the two timeouts.
+
+So `COGRAPH_EMBEDDING__API_KEY` is not a second credential you need to keep
+working: it is consumed by the CLI paths and remains for legacy compatibility.
+Setting it does no harm; setting it *instead of* the database assignment does not
+work.
 :::
 
 The timeouts exist because a stalled endpoint without a client timeout hangs the
@@ -295,12 +299,20 @@ Four roles, at most one row each. A code path whose role is unassigned raises
 `LLM_ROLE_UNCONFIGURED` (HTTP 503) — there is deliberately no default, so a
 misconfiguration is loud instead of quietly expensive or quietly wrong.
 
-| Role | Used by | Constraints |
-| --- | --- | --- |
-| `embedding` | Code and document embedding, query embedding | `embedding_dim` must be `1536` |
-| `completion_writer` | Wiki page writing, code summaries | — |
-| `completion_fast` | Cheap structured calls | — |
-| `completion_reasoning` | Calls that benefit from extra reasoning | `reasoning_effort` allowed only here |
+| Role | Status | Used by | Constraints |
+| --- | --- | --- | --- |
+| `embedding` | **Required** | Code and document embedding, query embedding | `embedding_dim` must be `1536` |
+| `completion_writer` | Active | Wiki page writing, code summaries | — |
+| `completion_fast` | **Reserved** | Nothing yet | — |
+| `completion_reasoning` | **Reserved** | Nothing yet | `reasoning_effort` allowed only here |
+
+::: warning Two roles are reserved, not features
+The runtime resolves only `embedding` and `completion_writer`. `completion_fast`
+and `completion_reasoning` can be assigned in the admin UI and are validated and
+stored, but **no code path consumes them today** — the four-role resolver exists
+and has no production caller. Assigning them changes nothing; leaving them empty
+costs nothing.
+:::
 
 Provider credentials are stored separately as encrypted **secrets** (a name, a
 base URL, an API key) and referenced by the role assignment, so several roles can

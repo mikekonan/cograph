@@ -31,15 +31,17 @@ and re-derives them on every sync so they cannot silently go stale.
 - **Generated repository wiki** — source-grounded pages for the concepts, APIs
   and flows in a repository. A citation only counts if the writing agent verified
   it with a tool call; a claim that cannot be grounded is dropped, not hedged.
-- **Hybrid retrieval** — dense vector, full-text and fuzzy-symbol search run in
-  parallel and fuse by reciprocal rank, so exact identifiers and conceptual
-  questions both land.
+- **Hybrid retrieval** — dense vector, full-text and fuzzy-symbol search all run
+  for every query and fuse by reciprocal rank, so exact identifiers and
+  conceptual questions both land.
 - **Code graph** — modules, symbols, callers, callees and imports from
   tree-sitter, browsable in the UI and queryable over the API.
 - **MCP server** — 14 tools over the same indexes the UI uses, so agents ask for
   bounded, cited context instead of being handed whole files.
-- **Self-hosted** — repository contents, embeddings, generated pages and provider
-  keys never leave your deployment. One PostgreSQL is the system of record.
+- **Self-hosted** — the index and your provider keys live in your own PostgreSQL,
+  which is the single system of record. The text sent to your configured model
+  endpoint is the only thing that crosses the boundary, and that endpoint can be
+  your own — see [what leaves your deployment](https://cograph.cc/overview#what-leaves-your-deployment).
 - **Private by default** — new repositories are not public, anonymous browsing is
   opt-in, and OIDC/SCIM/group grants are there when a team arrives.
 
@@ -54,10 +56,17 @@ Graph extraction — real symbols and call edges:
 | TypeScript | `.ts`, `.tsx`, `.mts`, `.cts` |
 | JavaScript | `.js`, `.jsx`, `.mjs`, `.cjs` |
 
-Every other file is indexed as text — searchable and readable by line range, and
-in-tree `.md`/`.mdx`/`.rst` is fully chunked, embedded and symbol-linked — but
-without symbols or call edges. See
-[the language matrix](https://cograph.cc/languages) for what each walker emits.
+Those four are the only languages with symbols, call edges, code search and
+line-range reads.
+
+Separately, documentation is ingested regardless of the repository's language:
+`.md` / `.mdx` / `.rst` anywhere, plus a defined set of workflow, example, test
+and root-config files, are chunked, embedded and symbol-linked.
+
+**A file in any other language is not indexed at all** — it contributes to the
+language-composition chart and nothing else. See
+[the language matrix](https://cograph.cc/languages) for the exact rules and the
+per-language extraction detail.
 
 ## Quick start
 

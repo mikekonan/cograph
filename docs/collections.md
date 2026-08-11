@@ -31,27 +31,39 @@ The repository's own documentation, indexed where it already lives.
 ### Discovery
 
 The `index_repo_docs` pipeline step walks the checkout and classifies every file
-it finds. Only three extensions are chunked as prose:
+it finds. **Everything it classifies is chunked and embedded** — the kind is
+metadata, not a filter, so a matched `Dockerfile` or workflow YAML becomes
+searchable prose exactly like a README does.
 
-```
-.md   .mdx   .rst
-```
+Five kinds, and what matches each:
 
-Other files are classified but not chunked — the classification is what gives a
-document its **kind**:
+Rules are evaluated in this order; the first match wins.
 
 | Kind | Matched by |
 | --- | --- |
-| `Repo Doc` | any `.md` / `.mdx` / `.rst` |
-| `Example` | a path under `example`, `examples`, `sample`, `samples` with one of ~11 source extensions (`.go`, `.py`, `.ts`, `.tsx`, `.js`, `.json`, `.toml`, `.yaml`, `.yml`, `.md`, `.mdx`, `.rst`) |
-| `Test` | a path under `test` / `tests` with a test-ish extension |
-| `Config` | `.cfg`, `.conf`, `.env`, `.ini`, `.json`, `.toml`, `.yaml`, `.yml`, plus a set of root files: `Dockerfile`, `docker-compose.y*ml`, `compose.y*ml`, `go.mod`, `go.work`, `Makefile`, `package.json`, `package-lock.json`, `pyproject.toml` |
-| `Workflow` | `.yml` / `.yaml` under a deploy-ish directory (`.devcontainer`, `deploy`, `deployment`, `helm`, `k8s`, `ops`) |
+| `Repo Doc` | any `.md`, `.mdx` or `.rst`, anywhere |
+| `Workflow` | `.yml` / `.yaml` directly under `.github/workflows/` |
+| `Example` | a path containing `example`, `examples`, `sample` or `samples`, with one of `.go`, `.py`, `.ts`, `.tsx`, `.js`, `.json`, `.toml`, `.yaml`, `.yml`, `.md`, `.mdx`, `.rst` |
+| `Test` | a path containing `test` or `tests`, and either a doc extension, or a test-ish extension with a name starting `test_` or ending `_test.go` |
+| `Config` | a known root config file — `Dockerfile`, `Makefile`, `docker-compose.y*ml`, `compose.y*ml`, `go.mod`, `go.work`, `package.json`, `package-lock.json`, `pyproject.toml`; or any `.env*`; or `.cfg`/`.conf`/`.ini`/`.json`/`.toml`/`.yaml`/`.yml` under a **top-level** `deploy`, `deployment`, `helm`, `k8s`, `ops` or `.devcontainer` directory |
 
-Excluded outright: hidden directories except `.devcontainer` and `.github`, and
-an ignore list covering `node_modules`, `dist`, `build`, `venv`, `.venv`,
-`__pycache__`, `.cograph`, and the usual tool caches (`.mypy_cache`,
-`.pytest_cache`, `.ruff_cache`, `.tox`, `.idea`, `.vscode`, `.cache`).
+Anything matching no rule is not ingested.
+
+**Directory exclusions** are applied first, to every parent segment: any
+dot-directory except `.devcontainer` and `.github`, plus `node_modules`, `dist`,
+`build`, `venv`, `.venv`, `__pycache__`, `.cograph`, `.cache`, `.tox`, `.idea`,
+`.vscode`, `.mypy_cache`, `.pytest_cache` and `.ruff_cache`.
+
+::: warning Non-prose files go through the prose chunker
+A matched `Dockerfile`, `package-lock.json` or example source file is split by the
+same heading-and-word-window chunker as a README. There is no
+language-aware handling, and an oversized section is reassembled by joining words
+with single spaces — so original indentation and blank lines are not preserved in
+the stored chunk. That is fine for retrieval, but do not treat a retrieved
+`Config` chunk as a verbatim quote of the file. Use
+`cograph_read_file_range` for that, and note it only works for the four graph
+languages.
+:::
 
 ### Chunking — word window with overlap
 
@@ -246,11 +258,27 @@ Embedding and link resolution are asynchronous. Three job kinds, four statuses:
 | --- | --- |
 | `queued` → `running` → `success` \| `error` |
 
-Monitor at `/docs/jobs` (admin only). As with the main pipeline, jobs do not
-auto-retry, so a worker killed mid-job would leave a row stuck at `running` — a
-sweep clears stale ones. Failed jobs can be retried individually, and a whole
-collection can be re-embedded, which is what you do after changing the embedding
-model.
+Monitor at `/docs/jobs`. The UI tab is admin-gated, but the **endpoint behind it
+is not**: any authenticated user can list jobs, scoped to public and owned
+collections. Retrying, by contrast, requires collection ownership or the admin
+role, because it costs money.
+
+As with the main pipeline, jobs do not auto-retry. Two failure modes to know
+about:
+
+- A worker killed mid-job leaves a row at `running`; a sweep clears stale ones.
+- If enqueueing fails after the row is created, the job stays `queued`
+  indefinitely — the sweep only looks at old `running` rows. A job sitting at
+  `queued` with no progress needs a manual retry.
+
+::: warning `upload` jobs cannot be retried
+Retry creates a new job row for any kind, but only `embed` and `resolve_links`
+are actually enqueued. Retrying a failed `upload` therefore produces a row that
+stays `queued` forever. Re-upload the batch instead.
+:::
+
+Re-embedding a whole collection is a separate action, and is what you do after
+changing the embedding model.
 
 ### Inspecting what retrieval actually sees
 
