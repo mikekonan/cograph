@@ -6,9 +6,10 @@
   "description": "Documentation site for Cograph — published to https://cograph.cc",
   "scripts": {
     "sync-tokens": "node scripts/sync-tokens.mjs",
+    "lint-diagrams": "node scripts/lint-diagrams.mjs",
     "predev": "npm run sync-tokens",
     "dev": "vitepress dev",
-    "prebuild": "npm run sync-tokens",
+    "prebuild": "npm run sync-tokens && npm run lint-diagrams",
     "build": "vitepress build",
     "preview": "vitepress preview"
   },

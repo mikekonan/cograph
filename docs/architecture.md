@@ -55,14 +55,14 @@ drives both the worker and the jobs UI, so what you see in `/jobs` is what runs.
 flowchart TD
   clone["1 · clone<br/><small>fetch or update the checkout</small>"]
   parse["2 · parse<br/><small>tree-sitter → symbols</small>"]
-  graph["3 · extract_graph<br/><small>resolve calls, imports, inheritance</small>"]
+  extract["3 · extract_graph<br/><small>resolve calls, imports, inheritance</small>"]
   embed["4 · embed<br/><small>vectors for code nodes</small>"]
   idocs["5 · index_repo_docs<br/><small>discover + chunk in-tree markdown</small>"]
   edocs["6 · embed_repo_docs<br/><small>vectors for doc chunks</small>"]
   sums["7 · generate_summaries<br/><small>AST summaries via LLM</small>"]
   wiki["8 · generate_wiki<br/><small>plan + write cited pages</small>"]
 
-  clone --> parse --> graph --> embed --> idocs --> edocs --> sums --> wiki
+  clone --> parse --> extract --> embed --> idocs --> edocs --> sums --> wiki
 
   clone -.->|"no new commits"| skip["run marked skipped"]
 ```
