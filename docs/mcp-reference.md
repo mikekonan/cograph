@@ -11,6 +11,8 @@ See [MCP server](/mcp) for connecting a client, the response envelope, the token
 
 ::: info Where the bounds come from
 The schema an agent receives is derived from the handler signature, so it carries types and defaults but **no** bounds. The bounds column comes from the argument model the server validates against: exceeding one is a validation error, not a silent truncation — with the single exception noted on `cograph_retrieve`.
+
+Rules that span two parameters cannot live in a per-parameter table, so they appear as bullets under it. Read those before calling a tool whose arguments are all optional: `cograph_outline` has two, and requires exactly one.
 :::
 
 ## Orientation
@@ -70,6 +72,8 @@ Do NOT use to read content (use cograph_repository_readme / cograph_collection_d
 | `repository` | string | no | — | — |
 | `collection_id` | uuid | no | — | — |
 
+- Pass **exactly one** of `repository` or `collection_id`. Both optional in the schema, but omitting both — or supplying both — is an `INVALID_REQUEST` error.
+
 ### `cograph_repository_readme`
 
 Fetch the canonical README/Overview document for a repository in one call.
@@ -112,6 +116,9 @@ Do NOT use for symbol-exact lookups (use cograph_search_code) or to read a known
 | `include_chunks` | boolean | no | `true` | — |
 | `include_graph` | boolean | no | `false` | — |
 | `include_scores` | boolean | no | `false` | — |
+
+- `since` must be earlier than or equal to `until`.
+- `stores`, when given, overrides `mode` rather than narrowing it.
 
 ### `cograph_search_code`
 
@@ -177,6 +184,8 @@ Do NOT use to dump whole files (the range is capped at 1000 lines) or to search 
 | `path` | string | yes | — | — |
 | `start_line` | integer | yes | — | ≥ 1 |
 | `end_line` | integer | yes | — | ≥ 1 |
+
+- `end_line - start_line + 1` must not exceed 1000, so the cap is on the span rather than on either endpoint. An `end_line` past the end of the file is clamped instead of rejected, and the response says so via `content_truncated`.
 
 ### `cograph_wiki_page`
 
