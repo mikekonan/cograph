@@ -1,51 +1,28 @@
-// Catch mermaid diagrams that fail to parse — at build time, not in the reader's
-// browser.
+// Validate every mermaid diagram at build time, with mermaid's own parser.
 //
 // Diagrams render client-side, so `vitepress build` never looks inside a
 // ```mermaid fence. A node id that collides with a mermaid grammar keyword
-// (`graph["…"]` is the one that shipped) parses fine as markdown and then throws
-// "Parse error … got 'GRAPH'" on the page. That class of bug has to be caught
-// here.
+// (`graph["…"]` is the one that shipped) is valid markdown and then throws
+// "Parse error … got 'GRAPH'" on the page. The build was green; only readers saw
+// it.
 //
-// This is a lint, not a parser: mermaid's own `parse()` needs a DOM, and pulling
-// in a headless browser to check a handful of diagrams is not worth it. The
-// keyword collision is the failure mode that actually bites, so that is what is
-// checked, plus a few cheap structural mistakes.
+// So this calls `mermaid.parse()` — the same version the site bundles, under a
+// jsdom shim — rather than pattern-matching for mistakes we thought of. That
+// means it tracks the real grammar across mermaid upgrades and covers every
+// diagram type, not just flowcharts.
+//
+// What it still cannot catch: renderer and layout failures that only happen in a
+// real browser. `mermaid.parse` validates grammar, not rendering. A post-build
+// browser pass over the pages carrying diagrams would close that gap.
 //
 // Run via `npm run lint-diagrams` (wired into prebuild).
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { JSDOM } from "jsdom";
 
 const DOCS = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-
-// Tokens mermaid's flowchart grammar claims for itself. A node id equal to any
-// of these is a parse error. Taken from the grammar's terminal list — the same
-// list the runtime error message enumerates.
-const RESERVED = new Set([
-  "graph",
-  "flowchart",
-  "subgraph",
-  "end",
-  "style",
-  "linkstyle",
-  "classdef",
-  "class",
-  "click",
-  "direction",
-  "default",
-  "call",
-  "href",
-  "link",
-  "interpolate",
-  // direction tokens are also reserved as bare words
-  "tb",
-  "td",
-  "bt",
-  "rl",
-  "lr",
-]);
 
 /** Markdown files, recursively, skipping build output and dependencies. */
 function markdownFiles(dir) {
@@ -61,7 +38,13 @@ function markdownFiles(dir) {
   return out;
 }
 
-/** Every ```mermaid fence in a file, with the line its content starts on. */
+/**
+ * Every ```mermaid fence in a file, with the line its content starts on.
+ *
+ * Matches the fence forms the site's own markdown-it rule routes to the diagram
+ * component (see .vitepress/config.ts), so the two cannot disagree about what
+ * counts as a diagram.
+ */
 function mermaidBlocks(text) {
   const lines = text.split("\n");
   const blocks = [];
@@ -71,80 +54,79 @@ function mermaidBlocks(text) {
     if (start === -1 && (fence === "```mermaid" || fence === "```mmd")) {
       start = i + 1;
     } else if (start !== -1 && fence === "```") {
-      blocks.push({ startLine: start + 1, lines: lines.slice(start, i) });
+      blocks.push({ startLine: start + 1, body: lines.slice(start, i).join("\n") });
       start = -1;
     }
   }
+  if (start !== -1) {
+    blocks.push({ startLine: start + 1, body: null }); // unterminated fence
+  }
   return blocks;
 }
+
+// Mermaid needs a DOM even to parse. Define rather than assign: `navigator` is
+// getter-only on modern Node globals.
+const dom = new JSDOM("<!doctype html><body></body>", { pretendToBeVisual: true });
+for (const key of [
+  "window",
+  "document",
+  "Element",
+  "SVGElement",
+  "HTMLElement",
+  "DOMParser",
+  "XMLSerializer",
+  "getComputedStyle",
+  "requestAnimationFrame",
+  "MutationObserver",
+]) {
+  Object.defineProperty(globalThis, key, {
+    value: dom.window[key] ?? dom.window,
+    configurable: true,
+    writable: true,
+  });
+}
+
+const mermaid = (await import("mermaid")).default;
+mermaid.initialize({ startOnLoad: false, securityLevel: "antiscript" });
 
 const problems = [];
 
 for (const file of markdownFiles(DOCS)) {
   const rel = relative(DOCS, file);
-  const blocks = mermaidBlocks(readFileSync(file, "utf8"));
-
-  for (const block of blocks) {
-    const body = block.lines.join("\n");
-    const header = block.lines.find((l) => l.trim())?.trim() ?? "";
-
-    if (!/^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|erDiagram|journey|gantt|pie|mindmap|timeline|quadrantChart|gitGraph|C4Context|sankey|xychart|block)/.test(header)) {
-      problems.push(`${rel}:${block.startLine}  first line is not a diagram type: "${header}"`);
+  for (const block of mermaidBlocks(readFileSync(file, "utf8"))) {
+    if (block.body === null) {
+      problems.push(`${rel}:${block.startLine}  unterminated \`\`\`mermaid fence`);
+      continue;
     }
-
-    block.lines.forEach((line, idx) => {
-      const lineNo = block.startLine + idx;
-      const trimmed = line.trim();
-
-      // A declaration: `id["label"]`, `id(…)`, `id{…}`, `id[(…)]`, `id((…))`.
-      const decl = trimmed.match(/^([A-Za-z_][\w-]*)\s*[[({]/);
-      if (decl && RESERVED.has(decl[1].toLowerCase())) {
-        problems.push(
-          `${rel}:${lineNo}  node id "${decl[1]}" is a mermaid reserved keyword — rename it`,
-        );
+    if (!block.body.trim()) {
+      problems.push(`${rel}:${block.startLine}  empty diagram block`);
+      continue;
+    }
+    try {
+      await mermaid.parse(block.body);
+    } catch (err) {
+      const message = String(err?.message ?? err).split("\n")[0].slice(0, 200);
+      let hint = "";
+      // The failure mode that shipped: mermaid reports the offending token in
+      // upper case, which is not obviously "your node id is a keyword".
+      if (/got '[A-Z_]+'/.test(String(err?.message ?? ""))) {
+        const token = String(err.message).match(/got '([A-Z_]+)'/)?.[1];
+        hint =
+          `\n      hint: '${token?.toLowerCase()}' looks like a mermaid reserved ` +
+          "keyword used as a node id — rename the node.";
       }
-
-      // An edge chain: any bare id on either side of an arrow.
-      for (const m of trimmed.matchAll(/(?:^|\s)([A-Za-z_][\w-]*)\s*(?:-{2,3}>|-\.->|={2,3}>|-{2,3}|~~~)/g)) {
-        if (RESERVED.has(m[1].toLowerCase())) {
-          problems.push(
-            `${rel}:${lineNo}  node id "${m[1]}" is a mermaid reserved keyword — rename it`,
-          );
-        }
-      }
-      for (const m of trimmed.matchAll(/(?:-{2,3}>|-\.->|={2,3}>|\|)\s*([A-Za-z_][\w-]*)\s*(?:$|\s)/g)) {
-        if (RESERVED.has(m[1].toLowerCase())) {
-          problems.push(
-            `${rel}:${lineNo}  node id "${m[1]}" is a mermaid reserved keyword — rename it`,
-          );
-        }
-      }
-    });
-
-    // Unbalanced brackets across the block are the other silent killer.
-    for (const [open, close] of [
-      ["[", "]"],
-      ["(", ")"],
-      ["{", "}"],
-    ]) {
-      const o = (body.match(new RegExp(`\\${open}`, "g")) ?? []).length;
-      const c = (body.match(new RegExp(`\\${close}`, "g")) ?? []).length;
-      if (o !== c) {
-        problems.push(
-          `${rel}:${block.startLine}  unbalanced ${open}${close} in diagram (${o} vs ${c})`,
-        );
-      }
+      problems.push(`${rel}:${block.startLine}  ${message}${hint}`);
     }
   }
 }
 
 if (problems.length) {
   console.error("Diagram lint failed:\n");
-  for (const p of [...new Set(problems)]) console.error(`  ${p}`);
+  for (const p of problems) console.error(`  ${p}`);
   console.error(
     "\nMermaid renders in the browser, so these would only fail for readers.\n",
   );
   process.exit(1);
 }
 
-console.log("lint-diagrams: all mermaid blocks look parseable.");
+console.log("lint-diagrams: every mermaid block parses.");
