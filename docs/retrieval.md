@@ -15,8 +15,8 @@ Developers type three very different kinds of query:
 
 No single index is good at all three. Dense vectors miss exact identifiers;
 full-text search with English stemming mangles them; symbol lookup cannot answer
-a conceptual question. Cograph runs the three approaches in parallel and fuses
-their rankings.
+a conceptual question. Cograph runs all three approaches for every query and
+fuses their rankings.
 
 ## Layers, stores, streams
 
@@ -40,7 +40,8 @@ The first three layers map to the `code` store, `repo_doc` maps to `repo_docs`.
 The collections store is reached through the collection-search path rather than
 through general retrieval.
 
-**Streams** are the retrieval methods, and all of them run concurrently:
+**Streams** are the retrieval methods. All of them contribute to one fused
+result:
 
 ```mermaid
 flowchart TD
@@ -63,6 +64,17 @@ flowchart TD
 | **vector** | `pgvector` cosine kNN, score `1 - distance` | Always |
 | **lexical** | PostgreSQL `ts_rank_cd` full-text | Only when the query has text |
 | **symbol** | `pg_trgm` similarity on `qualified_name`, threshold `0.3` | `code` store only |
+
+::: warning Streams execute sequentially, not in parallel
+The three streams are logically a fan-out, but the implementation awaits them one
+after another, and the stores in turn. A query against the `code` store issues
+three sequential round trips, not three concurrent ones.
+
+That matters for latency planning: query time is roughly the **sum** of the
+streams, not the slowest one. It also means `candidate_cap` and the number of
+stores multiply into wall-clock time. Nothing about correctness depends on the
+ordering, so this is a performance characteristic rather than a contract.
+:::
 
 A stream that errors logs a warning and contributes an empty list. Partial
 results beat no results — but a cancelled request still propagates.

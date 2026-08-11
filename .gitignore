@@ -24,9 +24,10 @@ PLAN.md
 web/README.md
 backend/integration_tests/README.md
 
-# Generated: docs/scripts/sync-tokens.mjs derives this from the app's
-# design tokens on every docs build, so it is never committed.
+# Generated: docs/scripts/sync-tokens.mjs derives these from the app's
+# design tokens on every docs build, so they are never committed.
 docs/.vitepress/theme/tokens.generated.css
+docs/.vitepress/theme/mermaid-palette.json
 docs/.vitepress/cache/
 docs/.vitepress/dist/
 

@@ -53,7 +53,7 @@ on DNS-rebinding protection for the MCP transport.
 
 ## Response envelope
 
-Every search-style tool returns the same top-level shape:
+`cograph_retrieve` and `cograph_search_code` return this shape:
 
 ```jsonc
 {
@@ -103,6 +103,13 @@ Each result:
 ::: warning `vector_score` and `bm25_score` are not populated
 The result metadata declares them, but only `rerank_score` is ever filled in. Use
 `candidate_from` and the fused ordering to reason about why a hit surfaced.
+:::
+
+::: info `cograph_collection_search` has its own shape
+It is not this envelope. Collection results carry the collection's metadata and
+flat per-result fields, with no `mode` and no nested `provenance` object — cite
+them as `collection/<id>#<heading>`. Treat each tool's response as its own
+contract rather than assuming one universal schema.
 :::
 
 ## Token-budget contract

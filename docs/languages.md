@@ -1,8 +1,30 @@
 # Supported languages
 
-Cograph treats a repository at two levels. **Graph extraction** produces real
-symbols and call edges, and exists for four languages. **Text indexing** applies
-to everything else — files still contribute retrieval context, but no symbols.
+A file can be picked up by four *independent* mechanisms, and they cover
+different sets. Read this table before assuming a language is "supported" —
+"supported" means different things depending on what you want to do.
+
+| Mechanism | Coverage | Gives you |
+| --- | --- | --- |
+| **Graph extraction** | Python, Go, TypeScript, JavaScript — **only** | Symbols, call/import/inheritance edges, code search, `cograph_read_node`, graph browsing |
+| **Source-range reads** | The same four languages | `cograph_read_file_range`, and the file bodies retrieval quotes from |
+| **Repository documents** | `.md` / `.mdx` / `.rst` anywhere, plus a specific set of workflow, example, test and root-config files | Chunked, embedded, searchable prose; symbol links back to code |
+| **Language statistics** | Many languages (the whole checkout is scanned) | The composition chart on the repository Overview |
+
+::: danger A file in an unlisted language is not indexed at all
+This is the most important limitation on this page. Source discovery skips any
+file whose extension is not one of the four graph languages, so a `.rs`, `.java`,
+`.rb` or `.php` file:
+
+- has **no** symbols and appears nowhere in the graph,
+- is **not** searchable — it is never chunked or embedded,
+- and returns `NOT_FOUND` from `cograph_read_file_range`, because that tool reads
+  the source-file table rather than the checkout.
+
+The only traces such a file leaves are its bytes in the language-statistics
+chart, and its contents *if* it happens to match the repository-document rules
+below (for example a root `Dockerfile` or `pyproject.toml`).
+:::
 
 ## Graph extraction
 
@@ -123,25 +145,48 @@ of an indexable extension (`a.ts` → `a.txt`) is downgraded to a delete so stal
 symbols do not linger, and churn confined to a pruned directory short-circuits
 without touching the database at all.
 
-## Everything else: text-only
+## What happens to everything else
 
-Files in other languages are not ignored — they are simply not parsed into
-symbols. They can still:
+Three separate outcomes, depending on the file.
 
-- contribute to the repository's language statistics chart,
-- be read by line range through the API and MCP,
-- and, if they are `.md` / `.mdx` / `.rst`, be indexed as
-  [repository documents](/collections) with full chunking, embedding and
-  symbol linking.
+### It becomes a repository document
 
-What they cannot do is appear in the code graph, be found by symbol search, or
-have callers and callees.
+Prose and a specific set of non-source files are ingested by the
+`index_repo_docs` step, chunked, embedded and searchable — this is the one way a
+non-graph language reaches retrieval. The rules, in full:
+
+| Included | Condition |
+| --- | --- |
+| `.md`, `.mdx`, `.rst` | anywhere in the tree |
+| `.yml`, `.yaml` | under `.github/workflows/` |
+| `.go`, `.py`, `.ts`, `.tsx`, `.js`, `.json`, `.toml`, `.yaml`, `.yml`, `.md`, `.mdx`, `.rst` | under `example`, `examples`, `sample`, `samples` |
+| test files | under `test` / `tests`, named `test_*` or `*_test.go`, or with a doc extension |
+| root config | `Dockerfile`, `Makefile`, `docker-compose.y*ml`, `compose.y*ml`, `go.mod`, `go.work`, `package.json`, `package-lock.json`, `pyproject.toml` |
+
+So a root `Dockerfile` **is** retrievable prose, and a `.rs` file under
+`examples/` is **not** — `.rs` is not in the example-extension set.
+
+Every matched file is chunked and embedded the same way, whatever its kind. See
+[Document RAG](/collections#repository-documents) for the chunker and the
+exclusion list.
+
+### It counts toward language statistics
+
+A separate whole-checkout scan tallies bytes per language for the composition
+chart on the repository Overview. This scan is deliberately much wider than the
+four parsers, which is why the chart can show languages you cannot search.
 
 ::: info Seventeen icons, four parsers
-The UI ships language icons for seventeen ecosystems, used to label file and
-language statistics. That is a display concern — it is not a claim of
-seventeen-language graph support.
+The UI ships language icons for seventeen ecosystems, used to label those
+statistics. That is a display concern, not a claim of seventeen-language
+support.
 :::
+
+### It is ignored
+
+Anything else is skipped at discovery and leaves no trace in the index. There is
+no partial mode, no "text fallback", and no plan to grep the checkout at query
+time.
 
 ## Adding a language
 

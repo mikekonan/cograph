@@ -53,12 +53,20 @@ and which LLM roles you assign. See [Operations](/operations#cost).
 
 ## Which languages get real symbols?
 
-Python, Go, TypeScript and JavaScript. Everything else is indexed as text — still
-searchable, still readable by line range, and in-tree markdown is fully indexed —
-but with no symbols, no call edges and no graph browsing.
+Python, Go, TypeScript and JavaScript — and only those four also get code search
+and line-range reads.
 
-Details, including the per-language differences, in
-[Supported languages](/languages).
+A file in any other language is **not indexed at all**: no symbols, not
+searchable, and `cograph_read_file_range` returns `NOT_FOUND` for it. Its only
+trace is the language-composition chart.
+
+Documentation is the exception and is ingested regardless of language: `.md` /
+`.mdx` / `.rst` anywhere, plus a defined set of workflow, example, test and
+root-config files. So a Rust service's README and its root `Dockerfile` are
+searchable even though its `.rs` files are not.
+
+[Supported languages](/languages) has the exact rules and the per-language
+extraction matrix.
 
 ## Why is my repository not indexed?
 

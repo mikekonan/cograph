@@ -20,12 +20,12 @@
 // gitignored — it is a build artefact, never edited by hand.
 
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, resolve as resolve_path } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const SOURCE = resolve(here, "../../web/src/styles/globals.css");
-const OUTPUT = resolve(here, "../.vitepress/theme/tokens.generated.css");
+const SOURCE = resolve_path(here, "../../web/src/styles/globals.css");
+const OUTPUT = resolve_path(here, "../.vitepress/theme/tokens.generated.css");
 
 /**
  * Return the body of the brace-delimited block introduced by `opener`.
@@ -108,3 +108,74 @@ const total =
   (light.match(/^\s*--[\w-]+\s*:/gm) ?? []).length +
   (dark.match(/^\s*--[\w-]+\s*:/gm) ?? []).length;
 console.log(`sync-tokens: wrote ${total} design tokens to ${OUTPUT}`);
+
+// --- mermaid palette -------------------------------------------------------
+//
+// Mermaid resolves colours through khroma and derives shades from them, so it
+// cannot be handed `var(--color-bg)` — it needs literal values. Rather than
+// keeping a second hand-copied set of hex codes in the Vue component (which
+// would silently drift the first time the app's palette moves), resolve the
+// tokens here and emit them as JSON.
+
+/** Parse a token block into a flat `name -> raw value` map. */
+function tokenMap(block) {
+  const map = new Map();
+  // Strip comments first so a `--foo` mentioned in prose is not picked up.
+  const clean = block.replace(/\/\*[\s\S]*?\*\//g, "");
+  for (const m of clean.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)) {
+    map.set(m[1], m[2].trim());
+  }
+  return map;
+}
+
+/** Resolve `var(--a)` chains down to a literal. */
+function resolve(name, map, seen = new Set()) {
+  if (seen.has(name)) {
+    throw new Error(`sync-tokens: circular token reference at ${name}`);
+  }
+  seen.add(name);
+  const raw = map.get(name);
+  if (raw === undefined) {
+    throw new Error(
+      `sync-tokens: token ${name} is required by the mermaid palette but is not ` +
+        `defined in ${SOURCE}. Update MERMAID_TOKENS or the app stylesheet.`,
+    );
+  }
+  const ref = raw.match(/^var\(\s*(--[\w-]+)\s*\)$/);
+  return ref ? resolve(ref[1], map, seen) : raw;
+}
+
+// Which app token backs each mermaid theme variable. This mapping is the only
+// hand-written part, and it is semantic rather than literal.
+const MERMAID_TOKENS = {
+  background: "--color-bg-surface",
+  primaryColor: "--color-bg-elevated",
+  primaryTextColor: "--color-fg",
+  primaryBorderColor: "--color-accent",
+  lineColor: "--color-ink-500",
+  secondaryColor: "--color-bg-subtle",
+  tertiaryColor: "--color-bg-hover",
+  clusterBkg: "--color-bg-elevated",
+  clusterBorder: "--color-border",
+  edgeLabelBackground: "--color-bg-surface",
+};
+
+const lightMap = tokenMap(light);
+// Dark mode only redefines a subset, so it inherits from light.
+const darkMap = new Map([...lightMap, ...tokenMap(dark)]);
+
+function palette(map) {
+  const out = { fontSize: "13px" };
+  for (const [mermaidVar, token] of Object.entries(MERMAID_TOKENS)) {
+    out[mermaidVar] = resolve(token, map);
+  }
+  return out;
+}
+
+const PALETTE_OUTPUT = resolve_path(here, "../.vitepress/theme/mermaid-palette.json");
+writeFileSync(
+  PALETTE_OUTPUT,
+  `${JSON.stringify({ light: palette(lightMap), dark: palette(darkMap) }, null, 2)}\n`,
+  "utf8",
+);
+console.log(`sync-tokens: wrote the mermaid palette to ${PALETTE_OUTPUT}`);

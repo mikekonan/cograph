@@ -91,8 +91,8 @@ summaries. Without it, those two pipeline steps are recorded as *skipped* — th
 repository still indexes and is still searchable, you just get no generated
 prose.
 
-`completion_fast` and `completion_reasoning` are optional; see
-[Configuration](/configuration#llm-roles) for what each is used for.
+Leave `completion_fast` and `completion_reasoning` alone — they are reserved and
+nothing consumes them yet. See [Configuration](/configuration#llm-roles).
 
 Use **Test** on the row to verify credentials before indexing anything.
 

@@ -103,13 +103,15 @@ single node.
 
 ### Hybrid retrieval, not one magic index
 
-Three retrieval streams run in parallel over up to three stores and their
-rankings are fused. Exact symbol lookup stays precise while conceptual questions
-still reach the right prose. A stream that fails degrades to empty rather than
-failing the query.
+Three retrieval streams — dense vector, full-text and fuzzy symbol — run over up
+to three stores and their rankings are fused with reciprocal rank fusion. Exact
+symbol lookup stays precise while conceptual questions still reach the right
+prose. A stream that fails degrades to empty rather than failing the query.
 
-*The cost:* more moving parts than a single vector index, and several tuning
-knobs that interact. [Retrieval](/retrieval) documents them.
+*The cost:* more moving parts than a single vector index, several tuning knobs
+that interact, and — because the streams currently execute sequentially rather
+than concurrently — a query latency that is the sum of its streams.
+[Retrieval](/retrieval) documents all of it.
 
 ### Durable jobs with per-step deadlines
 

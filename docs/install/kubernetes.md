@@ -106,10 +106,14 @@ helm upgrade --install cograph ./helm/cograph \
 
 ### 1 · The checkout volume needs ReadWriteMany
 
-The backend and the worker both mount the same claim — the backend serves file
-ranges out of the checkout, the worker writes it. In the default split-deployment
-topology that means genuine `ReadWriteMany`, which many storage classes do not
-offer.
+The backend and the worker both mount the same claim, because the backend
+**writes** to it and the worker **reads** what it wrote: an uploaded zip archive
+is streamed to `<checkouts_root>/<repo_id>.zip` by the API request, and the
+worker extracts it during the sync. Git clones are written by the worker and read
+back on later syncs.
+
+In the default split-deployment topology that means genuine `ReadWriteMany`, which
+many storage classes do not offer.
 
 If your cluster only has `ReadWriteOnce`, use the sidecar:
 
@@ -123,6 +127,10 @@ backend:
 The worker then runs as a second container inside the backend pod, sharing its
 volume mount. `worker.replicaCount` is ignored in this mode, and the backend must
 stay at one replica.
+
+Note that the volume is not purely disposable: zip-sourced repositories keep
+their only copy of the uploaded archive there. See
+[backup](/operations#backup-and-restore).
 
 ### 2 · The worker's memory limit is too low for wiki generation
 

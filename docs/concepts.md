@@ -120,8 +120,8 @@ and a provider in the admin UI, and stored in the database:
 | --- | --- |
 | `embedding` | Embedding code, docs and queries. **Mandatory.** |
 | `completion_writer` | Wiki page writing and summaries |
-| `completion_fast` | Cheap structured calls |
-| `completion_reasoning` | Calls that benefit from a reasoning budget |
+| `completion_fast` | Reserved — no consumer yet |
+| `completion_reasoning` | Reserved — no consumer yet |
 
 There is no static fallback: a code path whose role is unassigned fails with
 `LLM_ROLE_UNCONFIGURED` rather than silently using a default. Embeddings must be
