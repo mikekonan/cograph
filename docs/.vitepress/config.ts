@@ -135,6 +135,7 @@ export default withMermaid(
           text: "Reference",
           items: [
             { text: "Modes and lifecycles", link: "/modes" },
+            { text: "MCP tool reference", link: "/mcp-reference" },
             { text: "REST reference", link: "/api-reference" },
           ],
         },
