@@ -113,7 +113,7 @@ export default withMermaid(
           items: [
             { text: "Retrieval", link: "/retrieval" },
             { text: "Generated wiki", link: "/wiki" },
-            { text: "Docs & collections", link: "/collections" },
+            { text: "Document RAG", link: "/collections" },
           ],
         },
         {

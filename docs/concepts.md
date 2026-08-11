@@ -72,7 +72,7 @@ files are re-parsed, and everything else is left alone.
 Retrieval does not operate on whole files. Text is split into **chunks**, each
 embedded and independently searchable, and each remembering where it came from.
 Two different chunkers exist on purpose — see
-[Docs & collections](/collections).
+[Document RAG](/collections).
 
 ## Repository document
 
