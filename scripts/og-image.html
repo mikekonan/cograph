@@ -1,0 +1,147 @@
+<!doctype html>
+<!--
+  Source of docs/public/og-image.png — the 1200×630 card crawlers render for
+  https://cograph.cc. It lives as HTML rather than as a generator script because
+  the only thing that makes the card look like the product is using the product's
+  own fonts, and no rasteriser on this machine can do that; a browser can.
+
+  Regenerate after changing it:
+
+      cd docs && npm ci                    # once, for the font packages below
+      python3 -m http.server 8123          # from the repository root
+
+  then screenshot http://localhost:8123/scripts/og-image.html at exactly
+  1200×630 and save it over docs/public/og-image.png. Serve it rather than
+  opening the file directly — headless browsers block `file:` navigation, and the
+  font stylesheets below are relative paths that need a server anyway.
+
+  Colours are literal copies of the dark-theme tokens in
+  web/src/styles/globals.css (--color-ink-900, --color-fg, --color-ink-400,
+  --color-violet-500). A static image cannot resolve custom properties, so if
+  those tokens change this file has to be updated by hand.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Cograph — og:image</title>
+    <link rel="stylesheet" href="../docs/node_modules/@fontsource-variable/inter/index.css" />
+    <link
+      rel="stylesheet"
+      href="../docs/node_modules/@fontsource-variable/jetbrains-mono/index.css"
+    />
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 1200px;
+        height: 630px;
+        overflow: hidden;
+      }
+
+      body {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 30px;
+        padding: 0 88px;
+        background: #0a0a0c;
+        color: #fafafa;
+        font-family: "Inter Variable", Inter, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      /* The accent bloom, bottom-right, same idea as the app's hero surfaces. */
+      .bloom {
+        position: absolute;
+        right: -180px;
+        bottom: -260px;
+        width: 780px;
+        height: 780px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(124, 58, 237, 0.42) 0%, rgba(124, 58, 237, 0) 68%);
+      }
+
+      .lockup {
+        display: inline-flex;
+        align-items: baseline;
+        font-family: "JetBrains Mono Variable", "JetBrains Mono", monospace;
+        font-size: 92px;
+        font-weight: 500;
+        line-height: 1;
+        letter-spacing: -0.01em;
+      }
+
+      .lockup svg {
+        width: 0.87em;
+        height: 0.87em;
+        margin: 0 0.02em;
+        transform: translateY(0.1em);
+      }
+
+      h1 {
+        max-width: 700px;
+        font-size: 46px;
+        font-weight: 600;
+        line-height: 1.18;
+        letter-spacing: -0.02em;
+      }
+
+      p {
+        max-width: 660px;
+        font-size: 27px;
+        font-weight: 400;
+        line-height: 1.4;
+        color: #a1a1aa;
+      }
+
+      footer {
+        position: absolute;
+        left: 88px;
+        bottom: 56px;
+        font-family: "JetBrains Mono Variable", "JetBrains Mono", monospace;
+        font-size: 21px;
+        color: #71717a;
+      }
+
+      footer b {
+        font-weight: 500;
+        color: #a78bfa;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="bloom"></div>
+
+    <!-- The brand lockup, geometry identical to CographMark in
+         web/src/components/layout/TopBar.tsx. -->
+    <div class="lockup">
+      c<svg viewBox="0 0 32 32">
+        <circle
+          cx="16"
+          cy="16"
+          r="13"
+          fill="none"
+          stroke="#7c3aed"
+          stroke-width="2.2"
+          stroke-dasharray="20.23 7"
+          stroke-dashoffset="-3.5"
+          stroke-linecap="round"
+        />
+        <circle cx="16" cy="3" r="3.2" fill="#7c3aed" />
+        <circle cx="4.74" cy="22.5" r="3.2" fill="#7c3aed" />
+        <circle cx="27.26" cy="22.5" r="3.2" fill="#7c3aed" /></svg
+      >graph
+    </div>
+
+    <h1>Code knowledge for humans and agents</h1>
+    <p>A cited wiki, hybrid search and a code graph, generated from your repositories and served over MCP.</p>
+
+    <footer><b>cograph.cc</b> &nbsp;·&nbsp; self-hosted &nbsp;·&nbsp; Apache-2.0</footer>
+  </body>
+</html>

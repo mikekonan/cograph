@@ -61,7 +61,8 @@ export default withMermaid(
       ["meta", { property: "og:title", content: "Cograph — code knowledge for humans and agents" }],
       ["meta", { property: "og:description", content: DESCRIPTION }],
       // PNG, not SVG: the crawlers that consume og:image do not rasterise SVG.
-      // Regenerate with `python3 scripts/make-og-image.py`.
+      // Its source is scripts/og-image.html, which carries the regeneration
+      // recipe in a comment at the top.
       ["meta", { property: "og:image", content: `${SITE}/og-image.png` }],
       ["meta", { property: "og:image:width", content: "1200" }],
       ["meta", { property: "og:image:height", content: "630" }],
@@ -77,8 +78,12 @@ export default withMermaid(
     },
 
     themeConfig: {
-      logo: "/favicon.svg",
-      siteTitle: "Cograph",
+      // The header brand is the application's own lockup — a monospace `c`, the
+      // orbital mark as the `o`, then `graph` — which is neither an image logo
+      // nor plain text. Both stock slots are switched off and
+      // theme/CographLogo.vue is injected via theme/Layout.vue instead.
+      logo: undefined,
+      siteTitle: false,
 
       // No GitHub link or edit link: the repository is private, so both would
       // 404 for every visitor. Add them in the same change that makes it public.

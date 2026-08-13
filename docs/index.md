@@ -30,8 +30,8 @@ features:
     linkText: Retrieval internals
   - title: Real code graph
     details: >-
-      tree-sitter parses four languages into symbols and call edges. No model
-      guessing at structure.
+      tree-sitter parses four languages into symbols and call edges — Go is the
+      proven one. Structure never comes from a model guessing.
     link: /languages
     linkText: What is extracted
   - title: Built for coding agents

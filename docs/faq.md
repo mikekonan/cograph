@@ -56,6 +56,14 @@ and which LLM roles you assign. See [Operations](/operations#cost).
 Python, Go, TypeScript and JavaScript — and only those four also get code search
 and line-range reads.
 
+::: warning Implemented is not the same as proven
+Only **Go** extraction has been validated against real-world repositories. Python
+and TypeScript/JavaScript are covered by unit tests and nothing beyond them, so
+index one representative repository and check the graph page before trusting the
+output. [Supported languages](/languages#only-go-is-proven-in-practice) has the
+per-language test counts.
+:::
+
 A file in any other language is **not indexed at all**: no symbols, not
 searchable, and `cograph_read_file_range` returns `NOT_FOUND` for it. Its only
 trace is the language-composition chart.
