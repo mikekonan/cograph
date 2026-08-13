@@ -26,6 +26,38 @@ chart, and its contents *if* it happens to match the repository-document rules
 below (for example a root `Dockerfile` or `pyproject.toml`).
 :::
 
+## Only Go is proven in practice
+
+All four languages are implemented, and everything on this page describes code
+that exists and runs. They are **not** equally proven, and the difference is
+large enough to plan around.
+
+| Language | Automated extractor tests | Test fixture | Validated on real repositories |
+| --- | :---: | --- | :---: |
+| **Go** | 8, plus 3 for build-failure states | a real multi-package module — `go.mod` and 8 files across 4 packages | **yes** |
+| TypeScript / JavaScript | 15 | a synthetic app, 5 source files | no |
+| Python | 1 | source inlined in the test | no |
+
+Go is the language the pipeline was built against and the only one whose output
+has been checked against real-world repositories. It is also the only one with
+dedicated machinery beyond the walker: build-constraint variant resolution across
+`GOOS`, `GOARCH` and `CGO`, with its own error codes.
+
+The other three are covered by unit tests and nothing more. The tests pass, but a
+passing unit test says the walker handles the shapes someone thought to write down
+— not that it handles a large real codebase. Expect to find gaps in Python and
+TypeScript extraction, and note that the automated coverage does not track how
+much of each language is used in the wild: Python has the most mature walker by
+age and the least test coverage of the three.
+
+::: tip What to do with this
+Indexing a Go repository is the well-trodden path. For Python or TypeScript,
+index one representative repository first and read the graph page before trusting
+the output — check that the symbols you expect are present and that call edges
+land where you expect. If something is missing, it is a gap in the walker rather
+than a configuration mistake.
+:::
+
 ## Graph extraction
 
 | Language | Extensions | tree-sitter grammar |

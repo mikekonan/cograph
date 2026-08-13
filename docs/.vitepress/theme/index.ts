@@ -16,9 +16,11 @@ import "./tokens.generated.css";
 import "./cograph.css";
 
 import CographMermaid from "./CographMermaid.vue";
+import Layout from "./Layout.vue";
 
 export default {
   extends: DefaultTheme,
+  Layout,
   enhanceApp({ app }) {
     // ```mermaid fences are rewritten to <CographMermaid> by the fence rule in
     // ../config.ts. We render diagrams ourselves so they follow the app's
