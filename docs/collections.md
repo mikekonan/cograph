@@ -318,7 +318,7 @@ visibility:
 
 ::: warning `private` and `admin_only` behave identically
 Neither appears in the public read funnel, and both fall through to
-owner-or-grant. One of the two values carries no distinct behaviour today.
+owner-or-grant. The two values behave identically today, so do not rely on the distinction.
 
 Note also that collections **leak existence**: an unreadable collection returns
 `403` while a missing one returns `404`. Repositories return `404` for both.

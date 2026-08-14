@@ -137,8 +137,12 @@ you can see whether a hit arrived via vector, lexical or symbol matching.
 **Over REST.** Mint a token at **Account → Tokens** with the `api:read` scope,
 then:
 
+`/api/retrieve` takes a repository **UUID**, not the three-part slug the MCP
+tools use. Find it in the address bar of the repository page, or call
+`GET /api/repos` and read `id`.
+
 ```bash
-curl -sS http://localhost:8000/api/retrieve \
+curl -sS http://localhost:8080/api/retrieve \
   -H "Authorization: Bearer $COGRAPH_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{
@@ -179,9 +183,12 @@ complete reference, including the groups the example omits.
 ## Tearing down
 
 ```bash
-docker compose down        # stop, keep data
-docker compose down -v     # stop and delete volumes — full reset
+docker compose down
+docker compose down -v
 ```
+
+The first stops the stack and keeps your data. The second also deletes the
+volumes — database, Redis and checkouts — for a full reset.
 
 A full reset means the next start mints a fresh bootstrap token, so you begin
 again at step 2.

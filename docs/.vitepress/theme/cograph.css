@@ -111,7 +111,10 @@
   --vp-code-block-divider-color: var(--color-border-subtle);
   --vp-code-line-highlight-color: var(--color-accent-subtle);
   --vp-code-line-number-color: var(--color-fg-subtle);
-  --vp-code-lang-color: var(--color-fg-subtle);
+  /* Not --color-fg-subtle: on the code surface that measures 2.33:1 in light
+     and 3.77:1 in dark, both below the 4.5:1 AA floor. --color-fg-muted does
+     not fix it either (4.40:1 light). These two clear it: 7.03:1 and 7.52:1. */
+  --vp-code-lang-color: var(--color-ink-600);
   --vp-code-link-color: var(--color-accent);
   --vp-code-link-hover-color: var(--color-accent-hover);
 
@@ -190,21 +193,6 @@
   --vp-shadow-4: var(--shadow-lg);
   --vp-shadow-5: var(--shadow-lg);
 
-  /* --- home hero ---
-     The one place the site allows itself a gradient: violet-500 -> violet-300,
-     both already in the palette, so it stays on-brand when the accent moves. */
-  --vp-home-hero-name-color: transparent;
-  --vp-home-hero-name-background: linear-gradient(
-    100deg,
-    var(--color-violet-500),
-    var(--color-violet-300)
-  );
-  --vp-home-hero-image-background-image: linear-gradient(
-    -45deg,
-    color-mix(in srgb, var(--color-violet-500) 55%, transparent),
-    color-mix(in srgb, var(--color-violet-300) 40%, transparent)
-  );
-  --vp-home-hero-image-filter: blur(56px);
 
   /* Anchor marker matches the app's muted foreground rather than VitePress's
      default hash colour. */
@@ -226,6 +214,7 @@
   --vp-code-link-color: var(--color-violet-300);
   --vp-code-link-hover-color: var(--color-violet-300);
   --vp-badge-tip-text: var(--color-violet-300);
+  --vp-code-lang-color: var(--color-fg-muted);
 }
 
 /* --- base treatment lifted from the app's `@layer base` ---
@@ -309,8 +298,11 @@ samp {
   font-size: 0.875em;
 }
 
-.vp-doc .vp-table-wrapper,
-.vp-doc div:has(> table) {
+/* The wrapper is emitted by `wrapTables` in ../config.ts. Do not add a
+   `div:has(> table)` fallback: VitePress puts tables directly in the markdown
+   container, so that selector matches the container holding every table *and*
+   all the prose, and one wide table scrolls the entire page body sideways. */
+.vp-doc .vp-table-wrapper {
   overflow-x: auto;
 }
 
