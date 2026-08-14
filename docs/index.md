@@ -2,7 +2,9 @@
 layout: home
 
 hero:
-  name: Cograph
+  # No `name`: the brand lockup is rendered by the `home-hero-info-before` slot in
+  # .vitepress/theme/Layout.vue, because the mark sits inside the wordmark as a
+  # glyph and cannot be expressed as frontmatter text.
   text: Code knowledge for humans and agents
   tagline: >-
     A cited wiki, hybrid search and a code graph, generated from your
