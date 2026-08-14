@@ -78,7 +78,7 @@ answer about code.
 - **Not finished.** Pre-1.0 — APIs, migrations and UI still move. The [FAQ](/faq)
   names the rough edges.
 
-## Five minutes to a working index
+## About ten minutes to start indexing
 
 ```bash
 docker compose up --build

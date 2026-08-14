@@ -7,7 +7,9 @@ editLink: false
 
 Every endpoint the backend exposes: **138 operations** across **106 paths**, generated from the application's own OpenAPI schema so it cannot drift from the code.
 
-See [REST API](/api) for authentication, error shapes, and how the interactive schema is exposed. Request and response columns name the model — search the backend for that name to see its fields.
+See [REST API](/api) for authentication, error shapes, a worked request and response, and how the interactive schema is exposed.
+
+Request bodies are documented in full at the bottom of this page. The response column names a model rather than listing its fields: a response is read as it arrives, and the 182 response models would be bulk nobody navigates. Where a response shape matters before you call — the retrieval envelope in particular — it is shown on the page for that feature.
 
 ::: info Reading the tables
 A `*` marks a required parameter. Path parameters are omitted from the parameters column because they are visible in the path, and the `Authorization`, `X-CSRF-Token` and `Idempotency-Key` headers are omitted because they are cross-cutting rather than per-operation.
@@ -99,18 +101,18 @@ Read the generated page tree and individual pages; repair stale citations.
 | `GET /api/repos/{host}/{owner}/{name}/wiki/{slug}` | Get Wiki Page | — | — | `200` `WikiPageResponse` |
 | `POST /api/repos/{host}/{owner}/{name}/wiki/{slug}/repair-citations` | Repair Wiki Page Citations | — | — | `200` `WikiCitationRepairResponse` |
 
-## Repository docs
+## Repository docs (rendered)
 
-The repository's own in-tree markdown, rendered.
+The repository's own in-tree markdown, rendered as pages.
 
 | Operation | Purpose | Parameters | Request | Response |
 | --- | --- | --- | --- | --- |
 | `GET /api/repos/{host}/{owner}/{name}/docs` | Return nested doc tree for a repo | — | — | `200` `DocTreeResponse` |
 | `GET /api/repos/{host}/{owner}/{name}/docs/{slug}` | Return a single doc page by slug | — | — | `200` `DocPageResponse` |
 
-## Repository documents
+## Repository documents (indexed rows)
 
-The indexed document rows behind the docs tree.
+The document rows behind the rendered tree above — one per indexed file.
 
 | Operation | Purpose | Parameters | Request | Response |
 | --- | --- | --- | --- | --- |

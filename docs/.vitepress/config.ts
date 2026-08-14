@@ -17,6 +17,22 @@ import type MarkdownIt from "markdown-it";
 // mermaid plugin's peer range. Revisit when 2.x ships stable.
 
 /**
+ * Wrap every table in its own scroll container.
+ *
+ * VitePress emits a bare `<table tabindex="0">` as a direct child of the markdown
+ * container, so a selector like `div:has(> table)` — which this theme used to rely
+ * on — matches that container instead: it holds every table *and all the prose*,
+ * so one wide table turned the whole content column into a horizontal scroll pane
+ * and headings slid off-screen alongside it. Measured on `/api-reference`, where
+ * the widest table is 1228px in a 688px column.
+ */
+function wrapTables(md: MarkdownIt) {
+  md.renderer.rules.table_open = () =>
+    '<div class="vp-table-wrapper"><table tabindex="0">';
+  md.renderer.rules.table_close = () => "</table></div>";
+}
+
+/**
  * Route ```mermaid fences to our own renderer.
  *
  * `withMermaid` wraps whatever `markdown.config` it is given, installing its
@@ -70,7 +86,10 @@ export default withMermaid(
     ],
 
     markdown: {
-      config: useCographMermaid,
+      config: (md) => {
+        useCographMermaid(md);
+        wrapTables(md);
+      },
       // The exact pair the application highlights with (web/src/lib/shiki.ts),
       // so a snippet on the site and the same snippet in the product match.
       theme: { light: "vitesse-light", dark: "github-dark-dimmed" },
@@ -100,9 +119,12 @@ export default withMermaid(
           text: "Introduction",
           items: [
             { text: "Why Cograph", link: "/overview" },
+            // Second, not fourth: the page opens with a danger block stating that
+            // a file in an unlisted language is not indexed at all. That is a
+            // qualify-the-lead question, not background reading.
+            { text: "Supported languages", link: "/languages" },
             { text: "Concepts", link: "/concepts" },
             { text: "Architecture", link: "/architecture" },
-            { text: "Supported languages", link: "/languages" },
           ],
         },
         {
@@ -160,7 +182,11 @@ export default withMermaid(
       },
 
       footer: {
-        message: "Apache-2.0 licensed. Pre-1.0 — APIs and migrations may change.",
+        // The version is stated because operations.md tells readers to pin an
+        // image tag and the FAQ warns that APIs move between releases. Bump it
+        // with backend/pyproject.toml and web/package.json.
+        message:
+          "Documents Cograph 0.1.0 · Apache-2.0 · pre-1.0, so APIs and migrations may change.",
         copyright: "© 2026 Cograph contributors",
       },
 

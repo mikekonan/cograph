@@ -8,8 +8,6 @@ Every set below is closed — enforced by an enum, and usually by a database
 constraint as well. If you see a value that is not here, it is a bug or this page
 is out of date.
 
-[[toc]]
-
 ## Repositories
 
 ### Source

@@ -73,11 +73,15 @@ TAG_GROUPS: list[tuple[str, str, str]] = [
         "Generated wiki",
         "Read the generated page tree and individual pages; repair stale citations.",
     ),
-    ("docs", "Repository docs", "The repository's own in-tree markdown, rendered."),
+    (
+        "docs",
+        "Repository docs (rendered)",
+        "The repository's own in-tree markdown, rendered as pages.",
+    ),
     (
         "repo-documents",
-        "Repository documents",
-        "The indexed document rows behind the docs tree.",
+        "Repository documents (indexed rows)",
+        "The document rows behind the rendered tree above — one per indexed file.",
     ),
     (
         "retrieval",
@@ -350,9 +354,14 @@ def render_api(schema: dict) -> str:
         f"**{len(paths)} paths**, generated from the application's own OpenAPI "
         "schema so it cannot drift from the code.",
         "",
-        "See [REST API](/api) for authentication, error shapes, and how the "
-        "interactive schema is exposed. Request and response columns name the "
-        "model — search the backend for that name to see its fields.",
+        "See [REST API](/api) for authentication, error shapes, a worked request "
+        "and response, and how the interactive schema is exposed.",
+        "",
+        "Request bodies are documented in full at the bottom of this page. The "
+        "response column names a model rather than listing its fields: a response "
+        "is read as it arrives, and the 182 response models would be bulk nobody "
+        "navigates. Where a response shape matters before you call — the retrieval "
+        "envelope in particular — it is shown on the page for that feature.",
         "",
         "::: info Reading the tables",
         "A `*` marks a required parameter. Path parameters are omitted from the "

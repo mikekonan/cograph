@@ -123,12 +123,26 @@ the upgrade notes, and expect to adapt if you build against the REST API.
 
 Current limitations documented rather than hidden:
 
+- Only **Go** extraction is validated against real repositories; see
+  [Supported languages](/languages#only-go-is-proven-in-practice).
 - The audit log has no read endpoint or UI — SQL only.
 - Only two of five configured rerank providers are implemented.
 - The Helm chart does not expose several settings; extra secret keys are the
   workaround.
 - The code graph page is a tree browser, not a graph canvas.
 - Graph traversal labels every edge `calls` regardless of the underlying kind.
+- Token scopes are all-or-nothing over the MCP surface — there is no per-tool
+  allow-list.
+- `private` and `admin_only` collection visibility behave identically, and an
+  unreadable collection returns `403` where a missing one returns `404`, so
+  existence leaks. Repositories return `404` for both.
+- Retrying a failed collection `upload` job produces a row that stays `queued`
+  forever; re-upload instead.
+- An `owner` is scoped like a plain user in the global collection-jobs listing.
+- `vector_score` and `bm25_score` are declared in retrieval results but never
+  populated; only `rerank_score` is.
+
+Each of these is explained where it bites, on the page for that feature.
 
 ## Can I customise the generated wiki?
 

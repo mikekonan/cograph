@@ -14,8 +14,7 @@ administrators.
 ::: warning One known exception
 The global collection-jobs listing checks for `admin` specifically, so an `owner`
 is scoped there like a normal user — they see only public and owned collections'
-jobs. This is an inconsistency in the code rather than an intended rule; do not
-build on either behaviour.
+jobs. Do not build on either behaviour.
 :::
 
 What a plain `user` can reach:
