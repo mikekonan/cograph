@@ -130,11 +130,16 @@ jobs:
           }
 
           rc=0
-          # node_modules and the vitepress cache are third-party bytes, not
-          # authored content — a dependency's TLD table or icon set hits short
-          # terms and would fail the job for nothing.
+          # node_modules, the vitepress cache and the lockfile are third-party
+          # bytes, not authored content — a dependency's TLD table or icon set
+          # hits short terms and would fail the job for nothing. The lockfile is
+          # the least obvious of the three and the worst offender: base64
+          # integrity hashes and package names like `rollup-win32-x64-msvc` match
+          # three-letter service names, so without this the gate fails on every
+          # run for reasons no author can act on.
           scan "sources" \
-            "--exclude-dir=node_modules --exclude-dir=cache --exclude-dir=dist" \
+            "--exclude-dir=node_modules --exclude-dir=cache --exclude-dir=dist
+             --exclude=package-lock.json" \
             docs README.md || rc=1
           scan "published artifact" "" docs/.vitepress/dist || rc=1
 
