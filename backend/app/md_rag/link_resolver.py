@@ -5,6 +5,7 @@ or normalized path within the same collection.
 """
 from __future__ import annotations
 
+import re
 from typing import Awaitable, Callable
 from uuid import UUID
 
@@ -12,6 +13,22 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.md_collection import MdDocument, MdLink
+
+# ``<source>:<space>:<page-id>`` optionally followed by a ``#sec-NNN`` section
+# suffix — the source_key shape wiki importers use.
+_SOURCE_KEY_PAGE_RE = re.compile(r"^[a-z0-9_-]+:[^:]+:(\d+)(?:#|$)")
+# ``/pages/<page-id>`` inside an absolute wiki URL.
+_URL_PAGE_RE = re.compile(r"/pages/(\d+)")
+
+
+def _page_id_from_source_key(source_key: str) -> str | None:
+    m = _SOURCE_KEY_PAGE_RE.match(source_key)
+    return m.group(1) if m else None
+
+
+def _page_id_from_url(href: str) -> str | None:
+    m = _URL_PAGE_RE.search(href)
+    return m.group(1) if m else None
 
 
 class MdLinkResolver:
@@ -57,6 +74,12 @@ class MdLinkResolver:
             lookup[basename] = doc.id
             if basename.endswith(".md"):
                 lookup[basename[:-3]] = doc.id
+            # Wiki-imported documents carry the upstream page id in their
+            # source_key, while their bodies link to each other by absolute
+            # wiki URL. Index the page id so _resolve_href can bridge the two.
+            page_id = _page_id_from_source_key(doc.source_key)
+            if page_id is not None:
+                lookup.setdefault(f"page:{page_id}", doc.id)
 
         resolved = 0
         for idx, link in enumerate(unresolved):
@@ -101,5 +124,10 @@ class MdLinkResolver:
             without_ext = basename[:-3]
             if without_ext in lookup:
                 return lookup[without_ext]
+
+        # Absolute wiki URL: match on the page id embedded in the path.
+        page_id = _page_id_from_url(href)
+        if page_id is not None:
+            return lookup.get(f"page:{page_id}")
 
         return None
