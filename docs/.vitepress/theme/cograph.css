@@ -344,6 +344,88 @@ samp {
   padding-top: 0;
 }
 
+/* The two blocks that close the landing page. They exist because the stock
+   documentation treatment — an `##`, a bulleted list, a lone code block, four
+   lines of prose — reads as a README pasted under a designed page. Each gets a
+   shape of its own instead: the disclaimers as a quiet two-column grid, the
+   command centred as the page's last word. */
+.home-negatives {
+  margin-top: 4rem;
+  padding: 1.75rem 2rem 2rem;
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-subtle);
+}
+
+.home-negatives h2 {
+  margin: 0 0 1.25rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-fg-muted);
+}
+
+.home-negatives ul {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem 2rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* `.vp-doc li + li` sets an 8px top margin, which outranked a plain
+   `.home-negatives li` reset and pushed the second cell of the first row 8px
+   below the first — visible as a row that does not line up. Three classes
+   deep beats it without `!important`. */
+.VPHome .vp-doc .home-negatives li {
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.55;
+  color: var(--color-fg-muted);
+}
+
+.home-negatives li strong {
+  display: block;
+  margin-bottom: 0.125rem;
+  color: var(--color-fg);
+  font-weight: 600;
+}
+
+.home-start {
+  margin: 4rem 0 0;
+  text-align: center;
+}
+
+.home-start h2 {
+  margin-bottom: 1.5rem;
+}
+
+/* A one-line command reads as the page's call to action, not as a listing:
+   shrink the block to its content rather than letting it span the column. */
+.home-start div[class*="language-"] {
+  display: inline-block;
+  min-width: min(24rem, 100%);
+  text-align: left;
+}
+
+.home-start p {
+  max-width: 34rem;
+  margin-inline: auto;
+  color: var(--color-fg-muted);
+}
+
+@media (max-width: 640px) {
+  .home-negatives {
+    padding: 1.5rem 1.25rem;
+  }
+
+  .home-negatives ul {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* --- mermaid ---
    Diagrams are rendered by mermaid with the app's own theme variables (see
    .vitepress/config.ts). Centre them and let wide graphs scroll rather than

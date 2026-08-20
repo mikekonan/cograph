@@ -56,25 +56,28 @@ features:
     linkText: Access control
 ---
 
+<div class="home-negatives">
+
 ## What it is not
 
-- **Not an observability tool.** What the code *says*, not what production is
-  *doing*.
-- **Not an agent runtime.** No shell, no internet, no external search — every
-  answer comes from the index.
-- **Not a hosted service.** You run it. The index and your provider keys stay in
-  your database; [what leaves](/overview#what-leaves-your-deployment) is only what
-  your model endpoint is sent.
-- **Not finished.** Pre-1.0 — APIs, migrations and UI still move. The [FAQ](/faq)
-  names the rough edges.
+- **Not an observability tool.** What the code says, not what production is
+  doing.
+- **Not an agent runtime.** No shell, no internet, no external search.
+- **Not a hosted service.** You run it, and the index and the provider keys stay
+  in your database.
+- **Not finished.** Pre-1.0. The [FAQ](/faq) names the rough edges.
 
-## About ten minutes to start indexing
+</div>
+
+<div class="home-start">
+
+## Start indexing in about ten minutes
 
 ```bash
 docker compose up --build
 ```
 
-Open `http://localhost:8080/setup`, create the first admin, point the `embedding`
-role at any OpenAI-compatible endpoint, add a repository. The
-[quickstart](/quickstart) covers the step that is easy to miss: the pipeline reads
-its model configuration from the database, not from environment variables.
+Then `localhost:8080/setup` — first admin, an `embedding` endpoint, one
+repository. The [quickstart](/quickstart) has the step that is easy to miss.
+
+</div>
