@@ -40,6 +40,12 @@ jobs:
     name: Build and publish
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      # A step `if` may not read `secrets` — GitHub rejects the whole workflow
+      # file with "Unrecognized named-value: 'secrets'", which shows up as a run
+      # that failed before any job started. Job-level `env` may read secrets, and
+      # `if` may read `env`, so the test is hoisted here.
+      HOSTING_CONFIGURED: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
     steps:
       # Full checkout, not just docs/: scripts/sync-tokens.mjs reads the
       # application stylesheet to derive the site's palette.
@@ -163,11 +169,10 @@ jobs:
       # failing inside wrangler on an empty token — which reads as "the docs are
       # broken" when it means "nobody has created the Pages project yet".
       - name: Publish to Cloudflare Pages
-        id: publish
         if: >-
           (github.event_name != 'pull_request'
            || github.event.pull_request.head.repo.full_name == github.repository)
-          && secrets.CLOUDFLARE_API_TOKEN != ''
+          && env.HOSTING_CONFIGURED == 'true'
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -178,7 +183,7 @@ jobs:
             --branch=${{ github.head_ref || github.ref_name }}
 
       - name: Hosting not configured
-        if: steps.publish.outcome == 'skipped'
+        if: env.HOSTING_CONFIGURED != 'true'
         run: |
           echo "::notice::Built and audited, but not published: no"
           echo "::notice::CLOUDFLARE_API_TOKEN. Create the Pages project"
