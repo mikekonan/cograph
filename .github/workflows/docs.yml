@@ -157,8 +157,17 @@ jobs:
 
           echo "Internal-identifier gate passed (matcher self-test OK)."
 
+      # Two conditions. The first keeps a fork's pull request from reaching the
+      # deployment credentials. The second lets the build and the gate above run
+      # and report honestly before hosting is configured, instead of every run
+      # failing inside wrangler on an empty token — which reads as "the docs are
+      # broken" when it means "nobody has created the Pages project yet".
       - name: Publish to Cloudflare Pages
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        id: publish
+        if: >-
+          (github.event_name != 'pull_request'
+           || github.event.pull_request.head.repo.full_name == github.repository)
+          && secrets.CLOUDFLARE_API_TOKEN != ''
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -167,3 +176,11 @@ jobs:
             pages deploy docs/.vitepress/dist
             --project-name=cograph-docs
             --branch=${{ github.head_ref || github.ref_name }}
+
+      - name: Hosting not configured
+        if: steps.publish.outcome == 'skipped'
+        run: |
+          echo "::notice::Built and audited, but not published: no"
+          echo "::notice::CLOUDFLARE_API_TOKEN. Create the Pages project"
+          echo "::notice::(cograph-docs) and add CLOUDFLARE_API_TOKEN and"
+          echo "::notice::CLOUDFLARE_ACCOUNT_ID to publish."
