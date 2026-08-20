@@ -28,6 +28,13 @@ backend/integration_tests/README.md
 # design tokens on every docs build, so they are never committed.
 docs/.vitepress/theme/tokens.generated.css
 docs/.vitepress/theme/mermaid-palette.json
+
+# Generated: docs/scripts/gen-llms.mjs mirrors every page as plain markdown for
+# agents on each build (/llms.txt, /llms-full.txt, /<page>.md).
+docs/public/llms.txt
+docs/public/llms-full.txt
+docs/public/*.md
+docs/public/install/
 docs/.vitepress/cache/
 docs/.vitepress/dist/
 

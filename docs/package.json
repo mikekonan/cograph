@@ -7,9 +7,10 @@
   "scripts": {
     "sync-tokens": "node scripts/sync-tokens.mjs",
     "lint-diagrams": "node scripts/lint-diagrams.mjs",
-    "predev": "npm run sync-tokens",
+    "gen-llms": "node scripts/gen-llms.mjs",
+    "predev": "npm run sync-tokens && npm run gen-llms",
     "dev": "vitepress dev",
-    "prebuild": "npm run sync-tokens && npm run lint-diagrams",
+    "prebuild": "npm run sync-tokens && npm run lint-diagrams && npm run gen-llms",
     "build": "vitepress build",
     "preview": "vitepress preview"
   },

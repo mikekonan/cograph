@@ -1,3 +1,11 @@
+---
+# The first prose on this page is the answer to its first question, which
+# makes a poor summary; state one deliberately instead. It becomes both the
+# page's meta description and its line in /llms.txt.
+description: Honest answers about requirements, cost, language support and
+  what Cograph does not do, including the current limitations.
+---
+
 # FAQ
 
 ## Does it require OpenAI?
