@@ -55,29 +55,3 @@ features:
     link: /access-control
     linkText: Access control
 ---
-
-<div class="home-negatives">
-
-## What it is not
-
-- **Not an observability tool.** What the code says, not what production is
-  doing.
-- **Not an agent runtime.** No shell, no internet, no external search.
-- **Not a hosted service.** You run it, and the index and the provider keys stay
-  in your database.
-- **Not finished.** Pre-1.0. The [FAQ](/faq) names the rough edges.
-
-</div>
-
-<div class="home-start">
-
-## Start indexing in about ten minutes
-
-```bash
-docker compose up --build
-```
-
-Then `localhost:8080/setup` — first admin, an `embedding` endpoint, one
-repository. The [quickstart](/quickstart) has the step that is easy to miss.
-
-</div>
