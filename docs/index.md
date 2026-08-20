@@ -56,16 +56,6 @@ features:
     linkText: Access control
 ---
 
-## What it is
-
-Cograph indexes a Git repository, extracts a code graph, builds retrieval indexes
-over code and documentation, generates a wiki from what it found, and serves all of
-it through a web UI, a REST API and an MCP server.
-
-It exists because large codebases are too big for a prompt and too fast-moving for
-hand-written docs. Both problems have one shape: someone needs a specific, cited
-answer about code.
-
 ## What it is not
 
 - **Not an observability tool.** What the code *says*, not what production is

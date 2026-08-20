@@ -327,6 +327,23 @@ samp {
   border-top-color: var(--color-border-subtle);
 }
 
+/* --- home layout ---
+   VitePress gives the markdown below the feature cards its documentation
+   treatment: a section rule above every `##`, and the full container width. With
+   no sidebar to narrow it that measures 1152px at 16px — about 144 characters a
+   line, twice the readable maximum — and the rules read as though the landing
+   page ended and a README began. Constrain the prose to the same measure every
+   other page uses and centre it under the hero, then drop the rules. */
+.VPHome .vp-doc {
+  max-width: 43rem;
+  margin-inline: auto;
+}
+
+.VPHome .vp-doc h2 {
+  border-top: none;
+  padding-top: 0;
+}
+
 /* --- mermaid ---
    Diagrams are rendered by mermaid with the app's own theme variables (see
    .vitepress/config.ts). Centre them and let wide graphs scroll rather than
