@@ -149,7 +149,6 @@ export default withMermaid(
             { text: "MCP server", link: "/mcp" },
             { text: "REST API", link: "/api" },
             { text: "Access control", link: "/access-control" },
-            { text: "Docs for agents", link: "/llms" },
           ],
         },
         {
