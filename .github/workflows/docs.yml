@@ -49,7 +49,7 @@ jobs:
     steps:
       # Full checkout, not just docs/: scripts/sync-tokens.mjs reads the
       # application stylesheet to derive the site's palette.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
