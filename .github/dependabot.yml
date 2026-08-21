@@ -1,5 +1,19 @@
 version: 2
 
+# One pull request per dependency put every ecosystem on its
+# open-pull-requests-limit at once (5+5+5+3+3 = 21), and a saturated limit
+# freezes version updates until the queue drains — so the routine bumps
+# blocked each other rather than landing.
+#
+# The groups below collapse the routine half into one pull request per
+# ecosystem. Majors are deliberately left out of every group: those are the
+# ones that need someone to read a changelog, and grouping them means one
+# breaking bump holds a dozen harmless ones hostage.
+#
+# Security updates stay ungrouped on purpose. They are not subject to the
+# limit above, and one pull request per advisory is the fastest thing to
+# review and merge when it matters.
+
 updates:
   - package-ecosystem: "uv"
     directory: "/backend"
@@ -12,6 +26,14 @@ updates:
       - "backend"
     commit-message:
       prefix: "chore(deps)"
+    groups:
+      backend:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "npm"
     directory: "/web"
@@ -25,6 +47,35 @@ updates:
     commit-message:
       prefix: "chore(deps)"
     versioning-strategy: increase
+    groups:
+      frontend:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "npm"
+    directory: "/docs"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docs"
+    commit-message:
+      prefix: "chore(deps)"
+    versioning-strategy: increase
+    groups:
+      docs:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -37,6 +88,14 @@ updates:
       - "ci"
     commit-message:
       prefix: "chore(ci)"
+    groups:
+      actions:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "docker"
     directory: "/backend"
