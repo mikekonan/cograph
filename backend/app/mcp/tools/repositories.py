@@ -1,4 +1,4 @@
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 from pydantic import BaseModel, Field
 
 from backend.app.mcp.services import (
@@ -16,7 +16,7 @@ class RepositoriesToolArgs(BaseModel):
     limit: int = Field(default=100, ge=1, le=100)
 
 
-def register(server: FastMCP, services: MCPServices) -> None:
+def register(server: MCPServer, services: MCPServices) -> None:
     @server.tool(
         name="cograph_repositories",
         description=(

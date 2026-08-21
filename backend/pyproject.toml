@@ -48,11 +48,14 @@ dependencies = [
   "PyYAML>=6.0",
   "uvicorn[standard]>=0.30",
   "uvicorn-worker>=0.3",
-  # ponytail: ceiling at <2 — mcp 2.0 renamed FastMCP to MCPServer and moved
-  # `mcp.server.fastmcp` to `mcp.server.mcpserver`, so an unpinned install
-  # breaks `backend/app/mcp/server.py` at import time. Lift the ceiling in the
-  # same commit that ports the server to MCPServer.
-  "mcp[cli]>=1.13.1,<2",
+  # ponytail: ceiling at <3. The 1.x -> 2.x move made four breaking changes
+  # this package depends on: FastMCP became MCPServer, `mcp.server.fastmcp`
+  # became `mcp.server.mcpserver`, the transport keywords left the
+  # constructor for `streamable_http_app()` / `run()`, and the lowlevel
+  # `request_ctx` contextvar was removed with no replacement. All four are
+  # ported. A 3.x is free to break them again, so the ceiling stays — lift it
+  # in the same commit that handles whatever it breaks.
+  "mcp[cli]>=2,<3",
   "openai>=1.50",
   "pgvector>=0.3",
   "python-multipart>=0.0.12",
