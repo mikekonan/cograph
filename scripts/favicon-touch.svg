@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Cograph">
+  <!-- Source of docs/public/apple-touch-icon.png; scripts/gen-favicons.sh
+       rasterises it. iOS and Android draw a home screen icon on an opaque
+       square of their own choosing, so the mark needs its own dark ground and
+       its own padding here: a transparent favicon gets composited onto white
+       and loses the violet. Colours are literal copies of the dark theme's
+       page ground and accent, because an image fetched outside the page cannot
+       resolve CSS custom properties. -->
+  <title>Cograph</title>
+  <rect width="32" height="32" fill="#0a0a0f" />
+  <g transform="translate(16 16) scale(0.78) translate(-16 -16)">
+    <circle cx="16" cy="16" r="13" fill="none" stroke="#7c3aed" stroke-width="2.2"
+            stroke-dasharray="20.23 7" stroke-dashoffset="-3.5" stroke-linecap="round" />
+    <circle cx="16" cy="3" r="3.2" fill="#7c3aed" />
+    <circle cx="4.74" cy="22.5" r="3.2" fill="#7c3aed" />
+    <circle cx="27.26" cy="22.5" r="3.2" fill="#7c3aed" />
+  </g>
+</svg>

@@ -69,7 +69,17 @@ export default withMermaid(
     sitemap: { hostname: SITE },
 
     head: [
+      // Three declarations, and all three earn their place. Modern browsers pick
+      // the SVG because it is the only one with a `type`; the ICO is what a
+      // browser requests by name at /favicon.ico when it cannot use the SVG,
+      // and without it that request was a 404 on every page load. The
+      // apple-touch-icon is a separate drawing rather than the same mark scaled:
+      // iOS composites a home screen icon onto an opaque square, so a
+      // transparent favicon would lose the violet against white. Regenerate the
+      // two rasters with scripts/gen-favicons.sh after editing either SVG.
       ["link", { rel: "icon", href: "/favicon.svg", type: "image/svg+xml" }],
+      ["link", { rel: "icon", href: "/favicon.ico", sizes: "48x48" }],
+      ["link", { rel: "apple-touch-icon", href: "/apple-touch-icon.png", sizes: "180x180" }],
       ["meta", { name: "theme-color", content: "#7c3aed" }],
       ["meta", { property: "og:type", content: "website" }],
       ["meta", { property: "og:site_name", content: "Cograph" }],
