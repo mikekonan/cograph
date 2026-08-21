@@ -1,6 +1,7 @@
-# Cograph
+[![Cograph — code knowledge for humans and agents](docs/public/og-image.png)](https://cograph.cc)
 
 [![CI](https://github.com/mikekonan/cograph/actions/workflows/ci.yml/badge.svg)](https://github.com/mikekonan/cograph/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-cograph.cc-7c3aed)](https://cograph.cc)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 Cograph turns a Git repository into a searchable, source-grounded knowledge base
@@ -71,7 +72,8 @@ per-language extraction detail.
 ## Quick start
 
 ```bash
-export COGRAPH_EMBEDDING__API_KEY="<openai-compatible-key>"
+git clone https://github.com/mikekonan/cograph.git
+cd cograph
 docker compose up --build
 ```
 
@@ -161,7 +163,11 @@ bearer header.
 ## Project status
 
 Pre-1.0. The core surfaces are all present and it is being run in production, but
-APIs, migrations and UI details may still change. Pin your image tags.
+APIs, migrations and UI details may still change.
+
+Every release publishes images to `ghcr.io/mikekonan/cograph-backend` and
+`ghcr.io/mikekonan/cograph-web` — what the Helm chart pulls by default. Pin a
+release tag rather than `latest`.
 
 The [FAQ](https://cograph.cc/faq#is-it-production-ready) lists the current known
 limitations explicitly rather than hiding them.
