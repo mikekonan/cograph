@@ -31,6 +31,16 @@ updates:
         applies-to: version-updates
         patterns:
           - "*"
+        # tree-sitter-language-pack is pinned to an exact version on purpose:
+        # backend/app/graph/parser.py drives its `download` /
+        # `downloaded_languages` helpers to bake every grammar into the image
+        # at build time, and the Dockerfile asserts none are missing. Those
+        # helpers changed shape after 1.6, so the bump needs the loader
+        # rewritten — grouped, it fails that assert and takes ten harmless
+        # bumps down with it. Ungrouped, it arrives as its own pull request,
+        # which is what a change requiring code deserves.
+        exclude-patterns:
+          - "tree-sitter*"
         update-types:
           - "minor"
           - "patch"
