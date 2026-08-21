@@ -70,7 +70,17 @@ jobs:
       # The gate below is a backstop, not proof of confidentiality: a deny-list
       # can only find strings someone thought to list. The primary control is
       # not writing internal identifiers into docs/ in the first place.
+      #
+      # Audited exactly when publishable. Dependabot pull requests — and fork
+      # pull requests — are deliberately denied Actions secrets, so DENY_LIST
+      # arrives empty there and the gate fails closed on every one of them:
+      # a dependency bump that touches docs/ could never go green, which
+      # trains everyone to ignore a red check rather than read it. Those runs
+      # also cannot deploy, so nothing unaudited reaches the public either
+      # way. The condition below is a conjunct of the publish condition, so
+      # the invariant still holds: no publish without this gate.
       - name: Internal-identifier gate
+        if: env.HOSTING_CONFIGURED == 'true'
         env:
           DENY_LIST: ${{ secrets.DOCS_DENY_LIST }}
         run: |
@@ -190,7 +200,9 @@ jobs:
       - name: Hosting not configured
         if: env.HOSTING_CONFIGURED != 'true'
         run: |
-          echo "::notice::Built and audited, but not published: no"
-          echo "::notice::CLOUDFLARE_API_TOKEN. Create the Pages project"
-          echo "::notice::(cograph-docs) and add CLOUDFLARE_API_TOKEN and"
-          echo "::notice::CLOUDFLARE_ACCOUNT_ID to publish."
+          echo "::notice::Built, but neither audited nor published: this run"
+          echo "::notice::has no CLOUDFLARE_API_TOKEN, so the internal-identifier"
+          echo "::notice::gate was skipped with it. Expected on a Dependabot or"
+          echo "::notice::fork pull request, which are denied Actions secrets."
+          echo "::notice::Treat this run's output as unaudited — the push to main"
+          echo "::notice::audits it before anything is published."
