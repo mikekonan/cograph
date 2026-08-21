@@ -31,7 +31,7 @@ so any non-zero rate on `after` holds the merge.
 - `score.py` — reads the JSONL, applies deterministic scoring rules
   (no LLM-as-judge), emits `<target>.summary.json`.
 - `compare.py` — diffs `baseline.summary.json` against `after.summary.json`
-  per H1-H6 and prints a pass/fail table.
+  per H1-H7 and prints a pass/fail table.
 - `cograph-eval.skill.md` — the slash command body Claude reads when
   you invoke `/cograph-eval`. Symlink it into your local
   `.claude/commands/` (which is gitignored as user-specific) to
@@ -67,8 +67,7 @@ so any non-zero rate on `after` holds the merge.
 # In Claude (Code or Desktop) with cograph-connect attached:
 /cograph-eval baseline
 
-# Then locally:
-cd /Users/enquix/work/cograph
+# Then locally, from the repository root:
 python -m eval.cograph_mcp_eval.score --target=baseline
 git add eval/results/baseline.jsonl eval/results/baseline.summary.json
 git commit -m "eval: capture baseline metrics for MCP eval"
@@ -113,14 +112,7 @@ keep wall-clock manageable. Always include negative questions
 
 ## Re-running a single category
 
-The skill currently re-runs everything. To re-run one category:
-
-```bash
-# Trim baseline.jsonl to the records you want to keep, then run:
-/cograph-eval baseline-rerun-symbol-lookup
-# (the skill should accept a category filter — TODO if needed)
-```
-
-For now, just delete the relevant lines from the JSONL and re-invoke
-`/cograph-eval` for the same target — `score.py` last-write-wins on
-duplicate IDs.
+There is no category filter. The skill re-runs everything, so to redo one
+category: delete its lines from `<target>.jsonl` and re-invoke `/cograph-eval`
+for the same target. `score.py` is last-write-wins on duplicate question IDs, so
+the re-run replaces the deleted records.

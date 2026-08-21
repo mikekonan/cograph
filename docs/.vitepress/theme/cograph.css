@@ -1,0 +1,339 @@
+/* Cograph documentation theme.
+ *
+ * The only hand-written stylesheet on the site. It maps VitePress's default
+ * theme variables onto the application's design tokens, which arrive from
+ * `tokens.generated.css` (produced by docs/scripts/sync-tokens.mjs out of
+ * web/src/styles/globals.css). Nothing here defines a colour of its own — if a
+ * hex value shows up below, the mapping is wrong.
+ *
+ * Structure mirrors VitePress's own vars.css so the two can be diffed:
+ * colours, then semantic slots, then typography, then components.
+ */
+
+:root {
+  /* --- surfaces ---
+     VitePress uses `bg` for the page, `bg-soft` for cards and feature boxes,
+     `bg-alt` for the nav/sidebar rail, `bg-elv` for popovers. The app's ladder
+     is bg -> surface -> elevated, with `subtle` reserved for insets (code,
+     inputs), so the two line up directly. */
+  --vp-c-bg: var(--color-bg);
+  --vp-c-bg-alt: var(--color-bg-subtle);
+  --vp-c-bg-soft: var(--color-bg-surface);
+  --vp-c-bg-elv: var(--color-bg-elevated);
+  --vp-backdrop-bg-color: var(--color-bg-backdrop);
+
+  --vp-nav-bg-color: var(--color-bg);
+  --vp-local-nav-bg-color: var(--color-bg);
+  --vp-sidebar-bg-color: var(--color-bg);
+  --vp-nav-screen-bg-color: var(--color-bg);
+
+  /* --- text --- */
+  --vp-c-text-1: var(--color-fg);
+  --vp-c-text-2: var(--color-fg-muted);
+  --vp-c-text-3: var(--color-fg-subtle);
+
+  /* --- lines ---
+     `divider` separates content, `border` outlines controls, `gutter` is the
+     hairline between layout regions — matching the app's three-step scale. */
+  --vp-c-divider: var(--color-border);
+  --vp-c-border: var(--color-border-strong);
+  --vp-c-gutter: var(--color-border-subtle);
+
+  /* --- accent ---
+     brand-1 is link and heading-accent text, brand-2 its hover, brand-3 the
+     fill behind solid buttons. Light mode can use the product violet for all
+     three: #7c3aed on the ink-50 page clears AA for body text. */
+  --vp-c-brand-1: var(--color-accent);
+  --vp-c-brand-2: var(--color-accent-hover);
+  --vp-c-brand-3: var(--color-accent);
+  --vp-c-brand-soft: var(--color-accent-subtle);
+  --vp-c-brand: var(--color-accent);
+
+  /* --- semantic slots ---
+     VitePress ships six block flavours; the app has four status colours. Map
+     what exists and let the rest inherit the neutral treatment. The `-soft`
+     backgrounds are derived with color-mix so a token change carries through
+     instead of needing a second hand-picked tint. */
+  --vp-c-default-1: var(--color-fg);
+  --vp-c-default-2: var(--color-fg-muted);
+  --vp-c-default-3: var(--color-fg-subtle);
+  --vp-c-default-soft: color-mix(in srgb, var(--color-fg-muted) 12%, transparent);
+
+  --vp-c-tip-1: var(--color-accent);
+  --vp-c-tip-2: var(--color-accent-hover);
+  --vp-c-tip-3: var(--color-accent);
+  --vp-c-tip-soft: var(--color-accent-subtle);
+
+  --vp-c-note-1: var(--color-info);
+  --vp-c-note-2: var(--color-info);
+  --vp-c-note-3: var(--color-info);
+  --vp-c-note-soft: color-mix(in srgb, var(--color-info) 14%, transparent);
+
+  --vp-c-success-1: var(--color-success);
+  --vp-c-success-2: var(--color-success);
+  --vp-c-success-3: var(--color-success);
+  --vp-c-success-soft: color-mix(in srgb, var(--color-success) 14%, transparent);
+
+  --vp-c-warning-1: var(--color-warning);
+  --vp-c-warning-2: var(--color-warning);
+  --vp-c-warning-3: var(--color-warning);
+  --vp-c-warning-soft: color-mix(in srgb, var(--color-warning) 14%, transparent);
+
+  --vp-c-caution-1: var(--color-warning);
+  --vp-c-caution-2: var(--color-warning);
+  --vp-c-caution-3: var(--color-warning);
+  --vp-c-caution-soft: color-mix(in srgb, var(--color-warning) 14%, transparent);
+
+  --vp-c-danger-1: var(--color-danger);
+  --vp-c-danger-2: var(--color-danger);
+  --vp-c-danger-3: var(--color-danger);
+  --vp-c-danger-soft: color-mix(in srgb, var(--color-danger) 14%, transparent);
+
+  --vp-c-important-1: var(--color-accent);
+  --vp-c-important-2: var(--color-accent-hover);
+  --vp-c-important-3: var(--color-accent);
+  --vp-c-important-soft: var(--color-accent-subtle);
+
+  /* --- typography ---
+     Inter Variable and JetBrains Mono Variable, self-hosted through the same
+     @fontsource-variable packages the app uses. The default theme is imported
+     as `theme-without-fonts` so VitePress does not also ship its own Inter. */
+  --vp-font-family-base: var(--font-sans);
+  --vp-font-family-mono: var(--font-mono);
+
+  /* --- code ---
+     Inline code and code blocks both sit on the app's inset surface, which is
+     lighter than the page in light mode and *deeper* than it in dark mode. */
+  --vp-code-color: var(--color-fg);
+  --vp-code-bg: var(--color-bg-subtle);
+  --vp-code-block-bg: var(--color-bg-subtle);
+  --vp-code-block-color: var(--color-fg);
+  --vp-code-block-divider-color: var(--color-border-subtle);
+  --vp-code-line-highlight-color: var(--color-accent-subtle);
+  --vp-code-line-number-color: var(--color-fg-subtle);
+  /* Not --color-fg-subtle: on the code surface that measures 2.33:1 in light
+     and 3.77:1 in dark, both below the 4.5:1 AA floor. --color-fg-muted does
+     not fix it either (4.40:1 light). These two clear it: 7.03:1 and 7.52:1. */
+  --vp-code-lang-color: var(--color-ink-600);
+  --vp-code-link-color: var(--color-accent);
+  --vp-code-link-hover-color: var(--color-accent-hover);
+
+  --vp-code-copy-code-bg: var(--color-bg-surface);
+  --vp-code-copy-code-hover-bg: var(--color-bg-hover);
+  --vp-code-copy-code-border-color: var(--color-border);
+  --vp-code-copy-code-hover-border-color: var(--color-border-strong);
+  --vp-code-copy-code-active-text: var(--color-fg-muted);
+
+  --vp-code-tab-bg: var(--color-bg-subtle);
+  --vp-code-tab-divider: var(--color-border-subtle);
+  --vp-code-tab-text-color: var(--color-fg-muted);
+  --vp-code-tab-hover-text-color: var(--color-fg);
+  --vp-code-tab-active-text-color: var(--color-fg);
+  --vp-code-tab-active-bar-color: var(--color-accent);
+
+  --vp-code-line-diff-add-color: color-mix(in srgb, var(--color-success) 16%, transparent);
+  --vp-code-line-diff-add-symbol-color: var(--color-success);
+  --vp-code-line-diff-remove-color: color-mix(in srgb, var(--color-danger) 16%, transparent);
+  --vp-code-line-diff-remove-symbol-color: var(--color-danger);
+  --vp-code-line-warning-color: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  --vp-code-line-error-color: color-mix(in srgb, var(--color-danger) 16%, transparent);
+
+  /* --- controls --- */
+  --vp-input-bg-color: var(--color-bg-surface);
+  --vp-input-border-color: var(--color-border);
+  --vp-input-switch-bg-color: var(--color-bg-hover);
+
+  --vp-button-brand-bg: var(--color-accent);
+  --vp-button-brand-text: var(--color-accent-fg);
+  --vp-button-brand-border: transparent;
+  --vp-button-brand-hover-bg: var(--color-accent-hover);
+  --vp-button-brand-hover-text: var(--color-accent-fg);
+  --vp-button-brand-hover-border: transparent;
+  --vp-button-brand-active-bg: var(--color-accent-pressed);
+  --vp-button-brand-active-text: var(--color-accent-fg);
+  --vp-button-brand-active-border: transparent;
+
+  --vp-button-alt-bg: var(--color-bg-surface);
+  --vp-button-alt-text: var(--color-fg);
+  --vp-button-alt-border: var(--color-border);
+  --vp-button-alt-hover-bg: var(--color-bg-hover);
+  --vp-button-alt-hover-text: var(--color-fg);
+  --vp-button-alt-hover-border: var(--color-border-strong);
+  --vp-button-alt-active-bg: var(--color-bg-hover);
+  --vp-button-alt-active-text: var(--color-fg);
+  --vp-button-alt-active-border: var(--color-border-strong);
+
+  /* --- badges --- */
+  --vp-badge-info-bg: var(--vp-c-default-soft);
+  --vp-badge-info-border: transparent;
+  --vp-badge-info-text: var(--color-fg-muted);
+  --vp-badge-tip-bg: var(--color-accent-subtle);
+  --vp-badge-tip-border: transparent;
+  --vp-badge-tip-text: var(--color-accent);
+  --vp-badge-warning-bg: var(--vp-c-warning-soft);
+  --vp-badge-warning-border: transparent;
+  --vp-badge-warning-text: var(--color-warning);
+  --vp-badge-danger-bg: var(--vp-c-danger-soft);
+  --vp-badge-danger-border: transparent;
+  --vp-badge-danger-text: var(--color-danger);
+
+  /* --- local search --- */
+  --vp-local-search-bg: var(--color-bg-elevated);
+  --vp-local-search-result-bg: var(--color-bg-surface);
+  --vp-local-search-result-border: var(--color-border);
+  --vp-local-search-result-selected-bg: var(--color-bg-hover);
+  --vp-local-search-result-selected-border: var(--color-accent);
+  --vp-local-search-highlight-bg: var(--color-accent-subtle);
+  --vp-local-search-highlight-text: var(--color-fg);
+
+  /* --- elevation --- */
+  --vp-shadow-1: var(--shadow-sm);
+  --vp-shadow-2: var(--shadow-sm);
+  --vp-shadow-3: var(--shadow-md);
+  --vp-shadow-4: var(--shadow-lg);
+  --vp-shadow-5: var(--shadow-lg);
+
+
+  /* Anchor marker matches the app's muted foreground rather than VitePress's
+     default hash colour. */
+  --vp-header-anchor-symbol: "#";
+}
+
+/* Dark mode. Only the values that must differ from the mapping above: the
+   accent needs lifting for text contrast on the midnight ink background —
+   violet-500 is the *fill* colour, violet-300 is the *text* colour. This
+   mirrors the app, which swaps `--color-accent-hover` to violet-300 in dark. */
+.dark {
+  --vp-c-brand-1: var(--color-violet-300);
+  --vp-c-brand-2: var(--color-violet-300);
+  --vp-c-brand-3: var(--color-accent);
+  --vp-c-tip-1: var(--color-violet-300);
+  --vp-c-tip-2: var(--color-violet-300);
+  --vp-c-important-1: var(--color-violet-300);
+  --vp-c-important-2: var(--color-violet-300);
+  --vp-code-link-color: var(--color-violet-300);
+  --vp-code-link-hover-color: var(--color-violet-300);
+  --vp-badge-tip-text: var(--color-violet-300);
+  --vp-code-lang-color: var(--color-fg-muted);
+}
+
+/* --- base treatment lifted from the app's `@layer base` ---
+   Inter is tuned in the product with cv11 (single-storey a/g) and ss01; the
+   mono face with calt/liga/cv01. Without these the same font reads subtly
+   different from the app, which is the tell this whole file exists to avoid. */
+:root {
+  color-scheme: light dark;
+}
+
+body {
+  font-feature-settings: "cv11" 1, "ss01" 1;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+code,
+kbd,
+pre,
+samp {
+  font-feature-settings: "calt" 1, "liga" 1, "cv01" 1;
+}
+
+::selection {
+  background-color: var(--color-accent-subtle);
+  color: var(--color-fg);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* --- radii ---
+   VitePress hardcodes its corner radii inside component styles, so the app's
+   softened scale has to be applied per component. These are the surfaces a
+   reader actually sees on a docs page. */
+.VPButton {
+  border-radius: var(--radius) !important;
+}
+
+.VPFeature {
+  border-radius: var(--radius-md) !important;
+}
+
+.vp-doc div[class*="language-"],
+.vp-block {
+  border-radius: var(--radius) !important;
+}
+
+.vp-doc :not(pre) > code {
+  border-radius: var(--radius-xs);
+}
+
+.vp-doc .custom-block {
+  border-radius: var(--radius) !important;
+}
+
+.VPLocalSearchBox .shell {
+  border-radius: var(--radius-lg) !important;
+}
+
+.VPLocalSearchBox .result {
+  border-radius: var(--radius-sm) !important;
+}
+
+.DocSearch-Button,
+.VPNavBarSearchButton {
+  border-radius: var(--radius-full) !important;
+}
+
+/* --- tables ---
+   The reference pages lean on wide tables (config keys, MCP tools, per-language
+   support). Keep them inside their own scroll container so the page body never
+   scrolls sideways on a narrow viewport. */
+.vp-doc table {
+  display: table;
+  width: 100%;
+  font-size: 0.875em;
+}
+
+/* The wrapper is emitted by `wrapTables` in ../config.ts. Do not add a
+   `div:has(> table)` fallback: VitePress puts tables directly in the markdown
+   container, so that selector matches the container holding every table *and*
+   all the prose, and one wide table scrolls the entire page body sideways. */
+.vp-doc .vp-table-wrapper {
+  overflow-x: auto;
+}
+
+.vp-doc th {
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+}
+
+/* --- headings ---
+   The app sets tight tracking on display text; match it so a heading on the
+   site and a heading in the product measure the same. */
+.vp-doc h1,
+.vp-doc h2,
+.vp-doc h3,
+.VPHero .name,
+.VPHero .text {
+  letter-spacing: var(--tracking-tight);
+}
+
+/* Section rules are the app's subtle border, not VitePress's heavier divider. */
+.vp-doc h2 {
+  border-top-color: var(--color-border-subtle);
+}
+
+/* --- mermaid ---
+   Diagrams are rendered by mermaid with the app's own theme variables (see
+   .vitepress/config.ts). Centre them and let wide graphs scroll rather than
+   overflow the column. */
+.vp-doc .mermaid {
+  display: block;
+  overflow-x: auto;
+  margin: 1.5rem 0;
+  text-align: center;
+}

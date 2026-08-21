@@ -1,0 +1,196 @@
+name: Docs
+
+# Builds and publishes the documentation site (docs/ -> https://cograph.cc).
+#
+# Hosting is Cloudflare Pages, deployed with wrangler from here rather than by
+# Cloudflare's own git integration: this repository is private, and this way
+# Cloudflare never needs access to it. Pushes to main publish; pull requests get
+# a preview URL.
+#
+# The site is PUBLIC while the repository is not, so a deny-list gate runs
+# between the build and the deploy. It fails closed.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "README.md"
+      - "web/src/styles/globals.css" # the theme is generated from it
+      - ".github/workflows/docs.yml"
+  pull_request:
+    paths:
+      - "docs/**"
+      - "README.md"
+      - "web/src/styles/globals.css"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: write
+  pull-requests: write
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # A step `if` may not read `secrets` — GitHub rejects the whole workflow
+      # file with "Unrecognized named-value: 'secrets'", which shows up as a run
+      # that failed before any job started. Job-level `env` may read secrets, and
+      # `if` may read `env`, so the test is hoisted here.
+      HOSTING_CONFIGURED: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+    steps:
+      # Full checkout, not just docs/: scripts/sync-tokens.mjs reads the
+      # application stylesheet to derive the site's palette.
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+
+      - name: Install
+        working-directory: docs
+        run: npm ci
+
+      # VitePress fails the build on any dead internal link, so this doubles as
+      # the link check.
+      - name: Build
+        working-directory: docs
+        run: npm run build
+
+      # The gate below is a backstop, not proof of confidentiality: a deny-list
+      # can only find strings someone thought to list. The primary control is
+      # not writing internal identifiers into docs/ in the first place.
+      - name: Internal-identifier gate
+        env:
+          DENY_LIST: ${{ secrets.DOCS_DENY_LIST }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${DENY_LIST:-}" ]; then
+            echo "::error::DOCS_DENY_LIST secret is not set. The gate fails closed"
+            echo "::error::rather than passing silently on an unset secret."
+            exit 1
+          fi
+
+          # The term list lives in a secret, never in the repository: a committed
+          # list of real internal names is itself the leak it exists to prevent.
+          # One term per line; blank lines and #-comments ignored. Normalise CRLF
+          # so a secret pasted from Windows does not carry \r into the pattern
+          # and silently match nothing.
+          printf '%s\n' "${DENY_LIST}" | tr -d '\r' > /tmp/deny.txt
+
+          # Scan the two surfaces separately so the log states exactly what was
+          # audited: the sources, and the artifact that actually gets published.
+          # $1 label, $2 space-separated grep excludes (deliberately unquoted on
+          # use), then the paths.
+          #
+          # The excludes must differ per surface: `--exclude-dir=dist` makes grep
+          # skip that directory even when it is named directly as the target, so
+          # sharing one exclude set would turn the artifact scan into a silent
+          # no-op. Found by seeding a term into the built artifact and watching
+          # the gate pass.
+          scan() {
+            local label="$1"; shift
+            local excludes="$1"; shift
+            local status=0
+            while IFS= read -r term; do
+              case "$term" in ''|'#'*) continue ;; esac
+              set +e
+              # shellcheck disable=SC2086 # word splitting of $excludes is intended
+              grep -rInFi --binary-files=without-match $excludes \
+                -e "$term" "$@" > /tmp/hits.txt
+              local rc=$?
+              set -e
+              # grep: 0 = match, 1 = no match, >1 = a real error (unreadable
+              # path, bad option). Treating >1 as "clean" is exactly how a gate
+              # like this passes by accident.
+              if [ "$rc" -gt 1 ]; then
+                echo "::error::grep failed with status $rc while scanning $label."
+                return 1
+              fi
+              if [ "$rc" -eq 0 ]; then
+                # Print only file:line, never the matched text — this log is
+                # public, and echoing the term would republish it.
+                echo "::error::Denied term found in $label (term masked). Locations:"
+                cut -d: -f1,2 /tmp/hits.txt | sort -u | sed 's/^/::error::  /'
+                status=1
+              fi
+            done < /tmp/deny.txt
+            return $status
+          }
+
+          rc=0
+          # node_modules, the vitepress cache and the lockfile are third-party
+          # bytes, not authored content — a dependency's TLD table or icon set
+          # hits short terms and would fail the job for nothing. The lockfile is
+          # the least obvious of the three and the worst offender: base64
+          # integrity hashes and package names like `rollup-win32-x64-msvc` match
+          # three-letter service names, so without this the gate fails on every
+          # run for reasons no author can act on.
+          scan "sources" \
+            "--exclude-dir=node_modules --exclude-dir=cache --exclude-dir=dist
+             --exclude=package-lock.json" \
+            docs README.md || rc=1
+          scan "published artifact" "" docs/.vitepress/dist || rc=1
+
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::Rewrite the text, do not partially mask it. Describe"
+            echo "::error::failures generically instead of naming internal systems."
+            exit 1
+          fi
+
+          # Prove the gate can actually fail. Without this, a broken matcher and
+          # a clean tree look identical in the log.
+          sentinel_dir=$(mktemp -d)
+          head -n 1 /tmp/deny.txt > /tmp/sentinel-term.txt
+          cp -R docs/.vitepress/dist "$sentinel_dir/dist"
+          cat /tmp/sentinel-term.txt >> "$sentinel_dir/dist/index.html"
+          set +e
+          grep -rqIFi -f /tmp/sentinel-term.txt "$sentinel_dir/dist"
+          sentinel_rc=$?
+          set -e
+          rm -rf "$sentinel_dir"
+          if [ "$sentinel_rc" -ne 0 ]; then
+            echo "::error::Self-test failed: a seeded denied term was NOT detected."
+            echo "::error::The matcher is broken; treat this run as unverified."
+            exit 1
+          fi
+
+          echo "Internal-identifier gate passed (matcher self-test OK)."
+
+      # Two conditions. The first keeps a fork's pull request from reaching the
+      # deployment credentials. The second lets the build and the gate above run
+      # and report honestly before hosting is configured, instead of every run
+      # failing inside wrangler on an empty token — which reads as "the docs are
+      # broken" when it means "nobody has created the Pages project yet".
+      - name: Publish to Cloudflare Pages
+        if: >-
+          (github.event_name != 'pull_request'
+           || github.event.pull_request.head.repo.full_name == github.repository)
+          && env.HOSTING_CONFIGURED == 'true'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: >-
+            pages deploy docs/.vitepress/dist
+            --project-name=cograph-docs
+            --branch=${{ github.head_ref || github.ref_name }}
+
+      - name: Hosting not configured
+        if: env.HOSTING_CONFIGURED != 'true'
+        run: |
+          echo "::notice::Built and audited, but not published: no"
+          echo "::notice::CLOUDFLARE_API_TOKEN. Create the Pages project"
+          echo "::notice::(cograph-docs) and add CLOUDFLARE_API_TOKEN and"
+          echo "::notice::CLOUDFLARE_ACCOUNT_ID to publish."

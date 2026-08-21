@@ -3551,9 +3551,10 @@ async def run_wiki_generation(
             # gone. Pin every page that survives from the prior plan to its
             # prior contract (only cited evidence can dirty it) and persist that
             # prior spec, so the artifact's spec_hash matches the reused page's
-            # stamp and the next incremental sync stays clean too. The OWNER
-            # "Rebuild wiki" hatch runs with incremental off and never reaches
-            # this branch, so a deliberate re-plan is unaffected.
+            # stamp and the next incremental sync stays clean too. A deliberate
+            # full rebuild is unaffected: the only non-incremental entry point
+            # is `cograph wiki run` on the CLI, which runs with incremental off
+            # and never reaches this branch.
             records = await load_page_records(session, repository_id=repository_id)
             rehydrated_prior = (
                 rehydrate_artifact(artifact) if artifact is not None else None

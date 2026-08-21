@@ -76,6 +76,13 @@ jobs:
           COGRAPH_DATABASE__URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/cograph_ci
         run: alembic -c backend/alembic.ini upgrade head
 
+      # The public REST and MCP references are generated from the app itself.
+      # This runs here rather than in the Docs workflow because only this job has
+      # the backend installed, and it needs no database — both the OpenAPI
+      # document and the MCP tool list are built from the routers alone.
+      - name: Generated references are current
+        run: python scripts/gen_reference_docs.py --check
+
   wiki-schema-guard:
     name: Wiki schema guard
     # Diff-based, so it only makes sense on PRs where a base sha exists.

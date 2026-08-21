@@ -325,7 +325,7 @@ requires-dist = [
     { name = "gitpython", specifier = ">=3.1" },
     { name = "gunicorn", specifier = ">=23.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28" },
-    { name = "mcp", extras = ["cli"], specifier = ">=1.13.1" },
+    { name = "mcp", extras = ["cli"], specifier = ">=1.13.1,<2" },
     { name = "openai", specifier = ">=1.50" },
     { name = "pathspec", specifier = ">=0.12" },
     { name = "pgvector", specifier = ">=0.3" },

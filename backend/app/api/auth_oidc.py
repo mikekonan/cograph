@@ -156,7 +156,7 @@ def _build_oidc_client(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/{slug}/login")
+@router.get("/{slug}/login", status_code=302, response_class=RedirectResponse)
 async def oidc_login(
     slug: str,
     request: Request,
@@ -206,7 +206,7 @@ async def oidc_login(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/{slug}/link/start")
+@router.post("/{slug}/link/start", status_code=302, response_class=RedirectResponse)
 async def oidc_link_start(
     slug: str,
     request: Request,
@@ -419,7 +419,7 @@ async def _handle_callback(
     return redirect
 
 
-@router.get("/{slug}/callback")
+@router.get("/{slug}/callback", status_code=302, response_class=RedirectResponse)
 async def oidc_callback_get(
     slug: str,
     code: str,
@@ -440,7 +440,7 @@ async def oidc_callback_get(
     )
 
 
-@router.post("/{slug}/callback")
+@router.post("/{slug}/callback", status_code=302, response_class=RedirectResponse)
 async def oidc_callback_post(
     slug: str,
     request: Request,

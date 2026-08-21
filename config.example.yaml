@@ -1,3 +1,18 @@
+# Cograph — example local configuration.
+#
+# Copy to `config.yaml` (gitignored) and edit. Every setting here can also be
+# set as an environment variable: COGRAPH_<GROUP>__<FIELD>, double underscore
+# between group and field, e.g. COGRAPH_EMBEDDING__API_KEY.
+#
+# IMPORTANT: environment variables OVERRIDE this file, not the other way round.
+#
+# The commented groups at the bottom are optional — shown with their defaults so
+# you can see what exists. Full reference: https://cograph.cc/configuration
+#
+# NOTE: this file configures the *deployment*. Which model does what is stored in
+# the database and set in the admin UI (Admin -> LLM runtime). A repository will
+# not index until the `embedding` role is assigned there.
+
 app_name: Cograph
 environment: development
 version: 0.1.0
@@ -9,18 +24,29 @@ database:
 
 redis:
   url: redis://localhost:6379/0
+  # In production, Redis-backed rate limiting is mandatory unless this is true.
   allow_in_memory_rate_limit_fallback: false
 
 git:
   checkouts_root: .cograph/checkouts
 
 auth:
+  # Production refuses to boot on a placeholder or a secret under 32 chars.
   jwt_secret: change-me-in-production
   access_token_ttl_seconds: 900
   refresh_token_ttl_seconds: 604800
   registration_enabled: false
+  # Anonymous browsing. Only ever exposes repositories whose visibility is
+  # `public`; both this and the per-repository setting must agree.
   public_read: false
   secure_cookies: false
+  # Pin the public origin when behind a proxy, or OIDC redirect_uri checks fail.
+  # external_url: https://cograph.example.com
+  #
+  # Set both, then run `cograph-backend reencrypt-secrets`, so that rotating
+  # jwt_secret does not invalidate stored provider and IdP credentials.
+  # llm_encryption_secret: ""
+  # oidc_encryption_secret: ""
 
 cors:
   allowed_origins:
@@ -28,15 +54,77 @@ cors:
     - http://localhost:3000
 
 embedding:
+  # Mandatory for indexing. The pipeline reads its provider from the database,
+  # but batch_size/dimensions and the query-time embedding path use these.
   enabled: true
   api_url: https://api.openai.com/v1
   api_key: set-me
   model: text-embedding-3-small
+  # Validated: 1536 is the only accepted value.
   dimensions: 1536
   batch_size: 256
+  request_timeout_seconds: 120.0
+  connect_timeout_seconds: 10.0
 
 completion:
+  # Needed for generated summaries and wiki pages. Without it those two
+  # pipeline steps are recorded as skipped; indexing and search still work.
   enabled: false
   api_url: https://api.openai.com/v1
   api_key: ""
   model: gpt-5.4-mini
+  request_timeout_seconds: 120.0
+  connect_timeout_seconds: 10.0
+
+# logging:
+#   level: INFO          # DEBUG | INFO | WARNING | ERROR | CRITICAL
+#   format: text         # `json` wherever logs are shipped to a collector
+#   access_log: true
+
+# retrieval:
+#   rrf_k: 60            # reciprocal-rank-fusion constant
+#   candidate_cap: 300   # candidates per stream, before fusion
+#   rerank:
+#     enabled: true
+#     threshold: 50      # candidate count below which reranking is skipped
+#     # Only `disabled` and `local_cross_encoder` are implemented;
+#     # cohere / voyage / jina raise NotImplementedError.
+#     # `local_cross_encoder` needs the [reranker-local] extra (~500MB torch).
+#     provider: disabled
+#     model: cross-encoder/ms-marco-MiniLM-L-6-v2
+
+# pipeline_timeouts:
+#   # Per-step ceilings. A step that exceeds its deadline fails with
+#   # step_timeout instead of hanging the whole run.
+#   parse_seconds: 3600
+#   extract_graph_seconds: 3600
+#   embed_seconds: 3600
+#   index_repo_docs_seconds: 3600
+#   embed_repo_docs_seconds: 3600
+#   generate_summaries_seconds: 3600
+#   generate_wiki_seconds: 3600
+#   # Recovery for runs abandoned by a dead worker.
+#   stale_run_threshold_minutes: 15
+#   stale_run_sweep_limit: 50
+
+# query_log:
+#   disabled: false            # kill switch, no redeploy needed
+#   query_text_max_bytes: 200  # 16..4096; truncated on a UTF-8 boundary
+#   retention_days: 30         # 1..365; enforced by a daily prune
+#   repo_flag_cache_ttl_seconds: 30
+
+# mcp:
+#   # A non-empty allowed_hosts turns on DNS-rebinding protection. Set it for
+#   # any internet-facing deployment.
+#   allowed_hosts: []
+#   allowed_origins: []
+#   briefing_max_length: 8000  # 256..32768
+
+# archive_upload:
+#   # Zip-bomb guards for the repository-upload path. max_compressed_bytes is
+#   # mirrored by nginx `client_max_body_size`; raise both or neither.
+#   max_compressed_bytes: 209715200
+#   max_decompressed_bytes: 1073741824
+#   max_per_file_bytes: 52428800
+#   max_inflation_ratio: 100.0
+#   max_entries: 200000

@@ -286,7 +286,7 @@ async def get_user(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/Users")
+@router.post("/Users", status_code=201)
 async def create_user(
     request: Request,
     client: SCIMClient = Depends(_require_scim_client),
@@ -484,7 +484,7 @@ async def patch_user(
     )
 
 
-@router.delete("/Users/{user_id}")
+@router.delete("/Users/{user_id}", status_code=204)
 async def delete_user(
     user_id: UUID,
     client: SCIMClient = Depends(_require_scim_client),
