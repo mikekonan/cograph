@@ -204,6 +204,6 @@ async def test_repository_readme_returns_not_found_when_nothing_indexed(client, 
 
     assert response.status_code == 200
     payload = response.json()
-    # FastMCP serialises tool ValueError into an error result.
+    # MCPServer serialises tool ValueError into an error result.
     assert payload["result"]["isError"] is True
     assert "NOT_FOUND" in payload["result"]["content"][0]["text"]

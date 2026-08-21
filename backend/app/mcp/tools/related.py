@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 from pydantic import BaseModel, Field
 
 from backend.app.graph.traversal import TraversalDirection
@@ -24,7 +24,7 @@ class RelatedToolArgs(BaseModel):
     direction: TraversalDirection = TraversalDirection.BOTH
 
 
-def register(server: FastMCP, services: MCPServices) -> None:
+def register(server: MCPServer, services: MCPServices) -> None:
     @server.tool(
         name="cograph_related",
         description=(

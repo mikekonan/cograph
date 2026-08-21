@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 from pydantic import BaseModel
 from sqlalchemy import func, select
 
@@ -44,7 +44,7 @@ class OutlineArgs(BaseModel):
     collection_id: UUID | None = None
 
 
-def register(server: FastMCP, services: MCPServices) -> None:
+def register(server: MCPServer, services: MCPServices) -> None:
     @server.tool(
         name="cograph_outline",
         description=_OUTLINE_DESCRIPTION,

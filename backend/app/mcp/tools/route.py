@@ -12,7 +12,7 @@ side by side — the agent treats them as two independent verticals. See
 
 from __future__ import annotations
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 from pydantic import BaseModel, Field
 
 from backend.app.mcp.services import (
@@ -55,7 +55,7 @@ def _hit_payload(hit: RouteHit) -> dict[str, object]:
     }
 
 
-def register(server: FastMCP, services: MCPServices) -> None:
+def register(server: MCPServer, services: MCPServices) -> None:
     @server.tool(name="cograph_route", description=_DESCRIPTION)
     async def route(
         query: str,

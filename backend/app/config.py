@@ -250,7 +250,7 @@ class QueryLogSettings(BaseModel):
 class McpSettings(BaseModel):
     """DNS-rebinding protection for the mounted MCP transport.
 
-    FastMCP can validate the `Host` and `Origin` headers on every MCP
+    MCPServer can validate the `Host` and `Origin` headers on every MCP
     request and reject anything not on an allowlist. We default both
     lists to empty so the protection stays *off* — turning it on with
     no allowlist would 421/403 every request and silently break

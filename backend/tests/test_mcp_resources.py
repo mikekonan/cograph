@@ -36,7 +36,7 @@ from backend.app.models.user import User
 
 
 def _content_str(read_result) -> str:
-    """`FastMCP.read_resource` returns `list[ReadResourceContents]`. We
+    """`MCPServer.read_resource` returns `list[ReadResourceContents]`. We
     only ever return one block from these resources, so unwrap and
     decode UTF-8 if the SDK gave bytes."""
     assert len(read_result) == 1, read_result
