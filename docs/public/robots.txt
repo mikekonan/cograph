@@ -1,4 +1,18 @@
+# Public documentation for an Apache-2.0 project. All of it is meant to be
+# read, indexed and cited — by search engines and by coding assistants alike.
+# https://cograph.cc/llms.txt is the agent-readable index of this site.
+#
+# Content signals per contentsignals.org. ai-train=yes is deliberate: a model
+# that already knows Cograph exists is the entire point of publishing this.
+#
+# Cloudflare can prepend a managed block here that sets ai-train=no and
+# disallows ClaudeBot, GPTBot and CCBot outright. It is off for this zone on
+# purpose — Security Settings > Bot traffic > "Set your preference to block
+# training in robots.txt". If those Disallow lines reappear in the served
+# file, that toggle came back on, not this file.
+
 User-agent: *
+Content-Signal: search=yes, ai-input=yes, ai-train=yes
 Allow: /
 
 Sitemap: https://cograph.cc/sitemap.xml
