@@ -110,7 +110,11 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: "22"
+          # Kept in step with web/Dockerfile, which builds the shipped SPA.
+          # They drifted three ways once (image on 26, CI on 22, developers on
+          # 24), which is how a build that passes CI can still fail in the
+          # image.
+          node-version: "26"
           cache: npm
           cache-dependency-path: web/package-lock.json
 
