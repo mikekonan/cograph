@@ -77,22 +77,27 @@ def encode_payload(value: object) -> object:
     return jsonable_encoder(value)
 
 
-def current_user_from_context(ctx: object | None) -> User | None:
-    request_context = None
-    if ctx is not None:
-        try:
-            request_context = getattr(ctx, "request_context", None)
-        except ValueError:
-            request_context = None
-    if request_context is None:
-        try:
-            from mcp.server.lowlevel.server import request_ctx
+def _request_context(ctx: object | None) -> object | None:
+    """The MCP request context carried by a tool's `Context` argument.
 
-            request_context = request_ctx.get(None)
-        except LookupError:
-            request_context = None
-        except Exception:
-            request_context = None
+    `Context.request_context` raises rather than returning None when the
+    tool is called outside a request, which is why this is a try. There
+    used to be a fallback onto a module-level `request_ctx` contextvar in
+    the SDK's lowlevel server; the SDK no longer exposes one, and the
+    `Context` argument every tool already receives is the supported way
+    to reach it.
+    """
+
+    if ctx is None:
+        return None
+    try:
+        return getattr(ctx, "request_context", None)
+    except ValueError:
+        return None
+
+
+def current_user_from_context(ctx: object | None) -> User | None:
+    request_context = _request_context(ctx)
     request = getattr(request_context, "request", None)
     state = getattr(request, "state", None)
     actor = getattr(state, "cograph_actor", None)
@@ -117,21 +122,7 @@ def _app_state_from_context(ctx: object | None) -> Any | None:
     helper can reuse the arq pool initialised at app startup instead
     of opening a fresh connection on every MCP call.
     """
-    request_context = None
-    if ctx is not None:
-        try:
-            request_context = getattr(ctx, "request_context", None)
-        except ValueError:
-            request_context = None
-    if request_context is None:
-        try:
-            from mcp.server.lowlevel.server import request_ctx
-
-            request_context = request_ctx.get(None)
-        except LookupError:
-            request_context = None
-        except Exception:
-            request_context = None
+    request_context = _request_context(ctx)
     request = getattr(request_context, "request", None)
     app = getattr(request, "app", None)
     return getattr(app, "state", None)
@@ -145,12 +136,7 @@ def _mcp_client_label(ctx: object | None) -> str | None:
     else None. Logged into `query_logs.client_label` so admins can
     see which tools their team is using.
     """
-    request_context = None
-    if ctx is not None:
-        try:
-            request_context = getattr(ctx, "request_context", None)
-        except ValueError:
-            request_context = None
+    request_context = _request_context(ctx)
     if request_context is None:
         return None
     session = getattr(request_context, "session", None)

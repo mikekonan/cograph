@@ -1,4 +1,4 @@
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from backend.app.mcp.services import MCPServices
 from backend.app.mcp.tools.collections import register as register_collection_tools
@@ -16,7 +16,7 @@ from backend.app.mcp.tools.search_code import register as register_search_code_t
 from backend.app.mcp.tools.wiki_page import register as register_wiki_page_tool
 
 
-def register_tools(server: FastMCP, services: MCPServices) -> None:
+def register_tools(server: MCPServer, services: MCPServices) -> None:
     register_repositories_tool(server, services)
     register_collection_tools(server, services)
     register_route_tool(server, services)

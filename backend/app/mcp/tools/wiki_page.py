@@ -9,7 +9,7 @@ default.
 
 from __future__ import annotations
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 from pydantic import BaseModel
 
 from backend.app.mcp.services import (
@@ -41,7 +41,7 @@ class WikiPageArgs(BaseModel):
     section: str | None = None
 
 
-def register(server: FastMCP, services: MCPServices) -> None:
+def register(server: MCPServer, services: MCPServices) -> None:
     @server.tool(
         name="cograph_wiki_page",
         description=_WIKI_PAGE_DESCRIPTION,

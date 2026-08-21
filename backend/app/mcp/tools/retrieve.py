@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from backend.app.mcp.services import (
@@ -113,7 +113,7 @@ class RetrieveToolArgs(BaseModel):
         return set(_MODE_TO_LAYERS[self.mode])
 
 
-def register(server: FastMCP, services: MCPServices) -> None:
+def register(server: MCPServer, services: MCPServices) -> None:
     @server.tool(
         name="cograph_retrieve",
         description=_RETRIEVE_DESCRIPTION,

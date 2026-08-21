@@ -7,7 +7,7 @@ asking for whole 50K-line files this way.
 
 from __future__ import annotations
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
@@ -40,7 +40,7 @@ class ReadFileRangeArgs(BaseModel):
     end_line: int = Field(..., ge=1, description="Inclusive 1-indexed end")
 
 
-def register(server: FastMCP, services: MCPServices) -> None:
+def register(server: MCPServer, services: MCPServices) -> None:
     @server.tool(
         name="cograph_read_file_range",
         description=_READ_FILE_RANGE_DESCRIPTION,
