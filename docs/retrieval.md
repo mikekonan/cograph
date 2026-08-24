@@ -196,7 +196,7 @@ evidence about nothing, so it contributes nothing.
 
 | Pool | Fields |
 | --- | --- |
-| Repositories | slug (`host/owner/name`), branch, the first 2000 characters of the README, and a corpus of module-level qualified names and file paths (capped at 1500 per repository) |
+| Repositories | slug (`host/owner/name`), branch, the first 2000 characters of the **root** README, and a corpus of module-level qualified names and file paths (capped at 1500 per repository) |
 | Collections | name, description, flattened heading tree (within a 64 KB budget), and chunk body text via the full-text index |
 
 Matching is substring-based rather than whole-word, so a query term hits inside a

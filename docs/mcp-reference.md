@@ -78,7 +78,7 @@ Do NOT use to read content (use cograph_repository_readme / cograph_collection_d
 
 Fetch the canonical README/Overview document for a repository in one call.
 
-Use when: the agent has a repo slug and wants to know what the project does, its scope, or how to use it. Falls back to the compacted wiki Overview (lead + section headings) if no README-named file is indexed.
+Use when: the agent has a repo slug and wants to know what the project does, its scope, or how to use it. Only the README at the repository's tree root counts; a nested one describes something narrower. Falls back to the compacted wiki Overview (lead + section headings) when there is none.
 
 Do NOT use to search inside the readme (use cograph_retrieve mode='wiki') or to read other docs (use cograph_collection_search / cograph_read_chunk).
 
