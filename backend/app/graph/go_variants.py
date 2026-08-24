@@ -54,7 +54,6 @@ class _TruthValue(StrEnum):
     TRUE = "true"
     FALSE = "false"
     UNKNOWN = "unknown"
-    NEUTRAL = "neutral"
 
 
 class GoVariantSelectionError(RuntimeError):
@@ -401,10 +400,23 @@ def _evaluate_identifier(identifier: str, *, profile: GoIndexProfile) -> _TruthV
         return _truth(version_key <= profile.version_key, expected=True)
     if _is_known_unsupported_build_identifier(identifier):
         return _TruthValue.UNKNOWN
-    # Custom build tags are intentionally neutral: they cannot select a canonical
-    # winner, but they also must not force the whole package into an unsupported
-    # failure when the supported selectors already resolve the file-set.
-    return _TruthValue.NEUTRAL
+    # A tag nobody passed is absent, which is exactly what `go build` with no
+    # `-tags` sees. Treating it as neutral instead — "this constraint does not
+    # decide anything" — makes `mytag` and `!mytag` both true, so both halves of
+    # every build-tag pair get selected and the package fails on a duplicate
+    # symbol. That is what happened to `redis/go-redis`, where `safe.go`
+    # (`//go:build appengine`) and `unsafe.go` (`//go:build !appengine`) both
+    # define `String`: the whole repository failed to index over a pair of files
+    # the Go toolchain has no trouble choosing between.
+    #
+    # The consequence is deliberate and worth stating: a file guarded only by a
+    # custom tag contributes no graph nodes. It is still indexed as a source
+    # file, so its text remains searchable — it just does not claim symbols that
+    # the default build does not contain. This is the same choice the canonical
+    # profile already makes for GOOS, GOARCH and cgo; custom tags were the one
+    # dimension that refused to pick, and refusing is what produced the
+    # collision.
+    return _TruthValue.FALSE
 
 
 def _is_known_unsupported_build_identifier(identifier: str) -> bool:
@@ -422,23 +434,20 @@ def _truth(value: object, *, expected: object) -> _TruthValue:
     return _TruthValue.FALSE
 
 
+# Kleene three-valued logic. UNKNOWN means "this expression names a selector the
+# canonical profile does not model", and it propagates so the caller can fail the
+# package loudly rather than guess which variant to keep.
 def _tri_not(value: _TruthValue) -> _TruthValue:
     if value is _TruthValue.TRUE:
         return _TruthValue.FALSE
     if value is _TruthValue.FALSE:
         return _TruthValue.TRUE
-    if value is _TruthValue.NEUTRAL:
-        return _TruthValue.NEUTRAL
     return _TruthValue.UNKNOWN
 
 
 def _tri_and(left: _TruthValue, right: _TruthValue) -> _TruthValue:
     if left is _TruthValue.FALSE or right is _TruthValue.FALSE:
         return _TruthValue.FALSE
-    if left is _TruthValue.NEUTRAL:
-        return right
-    if right is _TruthValue.NEUTRAL:
-        return left
     if left is _TruthValue.TRUE and right is _TruthValue.TRUE:
         return _TruthValue.TRUE
     return _TruthValue.UNKNOWN
@@ -447,10 +456,6 @@ def _tri_and(left: _TruthValue, right: _TruthValue) -> _TruthValue:
 def _tri_or(left: _TruthValue, right: _TruthValue) -> _TruthValue:
     if left is _TruthValue.TRUE or right is _TruthValue.TRUE:
         return _TruthValue.TRUE
-    if left is _TruthValue.NEUTRAL:
-        return right
-    if right is _TruthValue.NEUTRAL:
-        return left
     if left is _TruthValue.FALSE and right is _TruthValue.FALSE:
         return _TruthValue.FALSE
     return _TruthValue.UNKNOWN

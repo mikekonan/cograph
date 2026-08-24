@@ -155,6 +155,18 @@ a genuine conflict between variants, surface as the dedicated error codes
 `go_build_constraint_unsupported` and `go_build_variant_conflict` rather than
 being silently mis-indexed.
 
+A build tag that is none of the above — `appengine`, `purego`, `integration`,
+`tools`, anything a project invents — counts as **absent**, which is what `go
+build` with no `-tags` sees. So `//go:build appengine` excludes a file and
+`//go:build !appengine` includes it, and a pair of files guarded that way
+resolves to one winner instead of colliding.
+
+The consequence is worth knowing: a file the default build does not compile
+contributes no symbols to the graph. It is still indexed as a source file, so its
+text stays searchable and retrievable — it simply does not claim symbols the
+default build does not contain. If a project keeps real code behind a tag its
+Makefile always passes, that code is text-only here.
+
 Go also gets special handling for `func init()` and `func _()`, which are not
 unique within a package: their qualified names are pinned to the file stem so
 they do not collide.
