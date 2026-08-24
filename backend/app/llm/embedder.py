@@ -113,8 +113,7 @@ class OpenAIEmbedProvider:
         _wait_initial: float = 1.0,
         _wait_max: float = 30.0,
     ) -> None:
-        import httpx
-        from openai import AsyncOpenAI
+        from openai import AsyncOpenAI, Timeout
 
         # Split timeouts: see the matching comment in
         # `OpenAICompletionProvider.__init__` — the bare AsyncOpenAI had
@@ -123,7 +122,7 @@ class OpenAIEmbedProvider:
         self._client = AsyncOpenAI(
             base_url=api_url,
             api_key=api_key,
-            timeout=httpx.Timeout(
+            timeout=Timeout(
                 connect=connect_timeout_seconds,
                 read=request_timeout_seconds,
                 write=request_timeout_seconds,

@@ -417,8 +417,7 @@ class OpenAICompatibleStructuredProvider:
         connect_timeout_seconds: float = 10.0,
         usage_tally: LlmUsageTally | None = None,
     ) -> None:
-        import httpx
-        from openai import AsyncOpenAI
+        from openai import AsyncOpenAI, Timeout
 
         # Split connect/read so a slow upstream that completes the TCP
         # handshake but stalls mid-stream still times out — the prior
@@ -427,7 +426,7 @@ class OpenAICompatibleStructuredProvider:
         self._client = AsyncOpenAI(
             base_url=api_url,
             api_key=api_key,
-            timeout=httpx.Timeout(
+            timeout=Timeout(
                 connect=connect_timeout_seconds,
                 read=request_timeout_seconds,
                 write=request_timeout_seconds,
