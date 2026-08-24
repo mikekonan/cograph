@@ -330,7 +330,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings=resolved_settings,
         session_manager=session_manager,
     )
-    # DNS-rebinding protection: FastMCP validates Host/Origin against
+    # DNS-rebinding protection: MCPServer validates Host/Origin against
     # configured allowlists when enabled. We auto-enable when the
     # operator has populated `mcp.allowed_hosts` (= they took an
     # explicit deployment decision); empty list keeps protection off so
@@ -339,16 +339,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     #   COGRAPH_MCP__ALLOWED_HOSTS='["cograph.example.com"]'
     #   COGRAPH_MCP__ALLOWED_ORIGINS='["https://cograph.example.com"]'
     mcp_protection_enabled = bool(resolved_settings.mcp.allowed_hosts)
-    mcp_server = create_mcp_server(
-        services=mcp_services,
+    mcp_server = create_mcp_server(services=mcp_services)
+    # The path is "/" because the app is mounted at "/mcp" below — the mount
+    # already consumes the prefix, so asking for it twice would serve
+    # "/mcp/mcp". stateless_http/json_response keep every call a single
+    # request-response with no server-side session to lose across workers.
+    mcp_http_app = mcp_server.streamable_http_app(
         streamable_http_path="/",
+        stateless_http=True,
+        json_response=True,
         transport_security=TransportSecuritySettings(
             enable_dns_rebinding_protection=mcp_protection_enabled,
             allowed_hosts=list(resolved_settings.mcp.allowed_hosts),
             allowed_origins=list(resolved_settings.mcp.allowed_origins),
         ),
     )
-    mcp_http_app = mcp_server.streamable_http_app()
 
     async def run_mcp_session_manager(*, task_status=anyio.TASK_STATUS_IGNORED) -> None:
         async with mcp_server.session_manager.run():

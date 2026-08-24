@@ -1,6 +1,6 @@
 """Tests for the rendered MCP `instructions=` payload.
 
-The MCP server can't read per-user state inside FastMCP's
+The MCP server can't read per-user state inside MCPServer's
 `create_initialization_options()` (no request context yet), so this
 test suite only covers what the renderer can actually deliver:
 
@@ -146,5 +146,5 @@ async def test_refresh_cached_instructions_reads_db(db_session) -> None:
     )
     assert "Custom team payments rules" in rendered
     # The cache must hold the same text the function returned — that's
-    # what FastMCP's `instructions` property will read on next initialize.
+    # what MCPServer's `instructions` property will read on next initialize.
     assert get_cached_instructions() == rendered

@@ -1,4 +1,4 @@
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from sqlalchemy import select
 
 from backend.app.mcp.instructions import DEFAULT_BRIEFING
@@ -20,7 +20,7 @@ from backend.app.models.mcp_operator_briefing import McpOperatorBriefing
 # REST graph endpoint — this only narrows the agent-facing surface.
 
 
-def register_resources(server: FastMCP, services: MCPServices) -> None:
+def register_resources(server: MCPServer, services: MCPServices) -> None:
     @server.resource(
         "cograph://repo/{host}/{owner}/{name}/wiki",
         name="cograph_wiki_tree",

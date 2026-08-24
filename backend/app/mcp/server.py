@@ -3,8 +3,7 @@ from __future__ import annotations
 import argparse
 
 import anyio
-from mcp.server.fastmcp import FastMCP
-from mcp.server.transport_security import TransportSecuritySettings
+from mcp.server.mcpserver import MCPServer
 
 from backend.app.config import Settings, get_settings
 from backend.app.db.session import SessionManager
@@ -58,16 +57,7 @@ def build_mcp_services(
     return services, owns_session_manager
 
 
-def create_mcp_server(
-    *,
-    services: MCPServices,
-    host: str = "127.0.0.1",
-    port: int = 8001,
-    streamable_http_path: str = "/mcp",
-    sse_path: str = "/sse",
-    message_path: str = "/messages/",
-    transport_security: TransportSecuritySettings | None = None,
-) -> FastMCP:
+def create_mcp_server(*, services: MCPServices) -> MCPServer:
     # Seed with the playbook + default briefing so even a server that boots
     # before the DB is reachable (e.g. during a migration window) still serves
     # a coherent `instructions=`. The first DB-backed refresh happens in the
@@ -77,22 +67,16 @@ def create_mcp_server(
     )
     set_cached_instructions(bootstrap_instructions)
 
-    server = FastMCP(
-        "Cograph",
-        instructions=bootstrap_instructions,
-        host=host,
-        port=port,
-        stateless_http=True,
-        json_response=True,
-        streamable_http_path=streamable_http_path,
-        sse_path=sse_path,
-        message_path=message_path,
-        transport_security=transport_security,
-    )
+    # Transport configuration — host, port, paths, statelessness and the
+    # DNS-rebinding settings — belongs to `streamable_http_app()`, `sse_app()`
+    # and `run()` rather than to the constructor, so each caller states it
+    # where it actually serves: `main.py` for the mounted app, `main()` below
+    # for the standalone process.
+    server = MCPServer("Cograph", instructions=bootstrap_instructions)
 
-    # FastMCP's underlying `Server.create_initialization_options()` reads
-    # `self.instructions` as a plain string each time a new MCP session
-    # initialises. We don't subclass Server (FastMCP owns construction) —
+    # MCPServer's underlying lowlevel `Server.create_initialization_options()`
+    # reads `self.instructions` as a plain string each time a new MCP session
+    # initialises. We don't subclass Server (MCPServer owns construction) —
     # instead we replace the attribute with a property-like descriptor
     # that returns the freshest cached value. The cache is refreshed:
     #
@@ -107,8 +91,8 @@ def create_mcp_server(
     return server
 
 
-def _install_dynamic_instructions(server: FastMCP) -> None:
-    """Make `_mcp_server.instructions` read from the in-process cache.
+def _install_dynamic_instructions(server: MCPServer) -> None:
+    """Make `_lowlevel_server.instructions` read from the in-process cache.
 
     `Server.instructions` is a plain instance attribute. Replacing the
     instance's `__class__` with a thin subclass lets us turn it into a
@@ -117,7 +101,7 @@ def _install_dynamic_instructions(server: FastMCP) -> None:
     cache somehow gets cleared between requests.
     """
 
-    mcp_server = server._mcp_server
+    mcp_server = server._lowlevel_server
     stored = mcp_server.instructions
 
     class _DynamicInstructions(type(mcp_server)):  # type: ignore[misc]
@@ -156,11 +140,6 @@ def main() -> None:
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8001)
-    parser.add_argument(
-        "--mount-path",
-        default=None,
-        help="Optional mount path override for SSE transport.",
-    )
     args = parser.parse_args()
 
     services, owns_session_manager = build_mcp_services()
@@ -175,14 +154,19 @@ def main() -> None:
                 )
 
         anyio.run(_validate_runtime)
-        server = create_mcp_server(
-            services=services,
-            host=args.host,
-            port=args.port,
-            streamable_http_path="/mcp",
-            sse_path="/sse",
+        server = create_mcp_server(services=services)
+        # Each transport accepts a different keyword set and rejects the
+        # others, so build exactly the one it takes. stdio takes none.
+        transport_kwargs: dict[str, object] = (
+            {} if args.transport == "stdio" else {"host": args.host, "port": args.port}
         )
-        server.run(transport=args.transport, mount_path=args.mount_path)
+        if args.transport == "streamable-http":
+            transport_kwargs |= {
+                "streamable_http_path": "/mcp",
+                "stateless_http": True,
+                "json_response": True,
+            }
+        server.run(transport=args.transport, **transport_kwargs)  # type: ignore[arg-type]
     finally:
         if owns_session_manager:
             anyio.run(services.session_manager.dispose)

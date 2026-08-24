@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 from pydantic import BaseModel, Field, field_validator
 
 from backend.app.mcp.services import (
@@ -55,7 +55,7 @@ class ReadChunkToolArgs(BaseModel):
     chunk_id: UUID
 
 
-def register(server: FastMCP, services: MCPServices) -> None:
+def register(server: MCPServer, services: MCPServices) -> None:
     @server.tool(
         name="cograph_collections",
         description=(

@@ -4,7 +4,7 @@ A *briefing* is the free-form markdown an operator writes to tell every
 MCP client what this Cograph deployment is for — team, glossary,
 "ask me first" rules. It's surfaced to agents two ways:
 
-- inlined into the FastMCP `instructions=` payload sent at `initialize`,
+- inlined into the MCPServer `instructions=` payload sent at `initialize`,
 - and exposed as the `cograph://briefing` resource so agents can
   re-fetch it after a context-compaction.
 

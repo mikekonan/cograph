@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 from pydantic import BaseModel, Field
 
 from backend.app.mcp.services import (
@@ -44,7 +44,7 @@ class ReadNodeArgs(BaseModel):
     )
 
 
-def register(server: FastMCP, services: MCPServices) -> None:
+def register(server: MCPServer, services: MCPServices) -> None:
     @server.tool(
         name="cograph_read_node",
         description=_READ_NODE_DESCRIPTION,

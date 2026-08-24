@@ -156,7 +156,7 @@ def test_retrieve_marks_repository_as_required() -> None:
 
     async def _schema() -> dict:
         tools = {t.name: t for t in await server.list_tools()}
-        return tools["cograph_retrieve"].inputSchema
+        return tools["cograph_retrieve"].input_schema
 
     schema = asyncio.run(_schema())
     assert "repository" in schema.get("required", []), (

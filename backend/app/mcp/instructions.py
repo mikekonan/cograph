@@ -362,9 +362,9 @@ async def render_instructions_for(
     return render_instructions(content, settings=settings)
 
 
-# ----- in-process cache for FastMCP's sync `create_initialization_options` ----
+# ----- in-process cache for MCPServer's sync `create_initialization_options` ----
 #
-# FastMCP reads `self.instructions` as a plain string at `initialize` time
+# MCPServer reads `self.instructions` as a plain string at `initialize` time
 # and the call site is synchronous, so we cannot reach the DB from there.
 # We render the playbook+briefing eagerly at server boot, cache it here,
 # and refresh the cache from the admin PATCH endpoint. The cache is process-
