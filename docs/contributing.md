@@ -157,13 +157,22 @@ Two rules specific to this site:
 
 ## Dependencies
 
-Two pins carry explanations in `pyproject.toml`; read the comment before lifting
-either.
+Three entries in `pyproject.toml` carry explanations; read the comment before
+touching any of them.
 
 - `tree-sitter-language-pack` is pinned exactly, because a patch release changed
   the wheel layout and dropped the module the parser imports.
-- `mcp[cli]` is capped below 2.0, because 2.0 renamed and moved the server class.
-  Lift the cap in the same commit that ports the server.
+- `mcp[cli]` is capped below 3.0. The 1.x → 2.x move renamed the server class,
+  relocated its module, moved the transport keywords off the constructor and
+  deleted a contextvar with no replacement — four breaking changes, all ported.
+  A 3.x is free to do the same again, so the cap stays. Lift it in the same
+  commit that handles whatever it breaks.
+- `httpx` is declared even though nothing obvious seems to need it. Two modules
+  import it at module level for their own HTTP calls, and it used to arrive as
+  an openai transitive — until openai 3 switched to httpx2 and stopped shipping
+  it. The image installs with `uv export --frozen --no-dev`, so dropping this
+  line builds an image that fails at import, and no test would catch it: the
+  Backend job installs the `dev` extra, where httpx has always been present.
 
 The Ruff rule selection is also frozen deliberately. Widening it is a separate,
 intentional change, not a side effect of a version bump.
