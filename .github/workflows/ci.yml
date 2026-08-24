@@ -315,12 +315,13 @@ jobs:
               async with httpx.AsyncClient(
                   timeout=30, follow_redirects=True, headers=headers
               ) as http_client:
+                  # Two values, not three: 2.0 dropped the get_session_id
+                  # callable this smoke test never used from the tuple.
                   async with streamable_http_client(
                       "http://web/mcp", http_client=http_client
                   ) as (
                       read_stream,
                       write_stream,
-                      _,
                   ):
                       async with ClientSession(read_stream, write_stream) as session:
                           await session.initialize()
