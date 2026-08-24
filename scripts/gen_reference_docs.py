@@ -481,7 +481,7 @@ def render_request_bodies(schema: dict) -> list[str]:
 def load_tools() -> list[tuple[Any, dict[str, dict]]]:
     """Every registered MCP tool, paired with its argument model's JSON schema.
 
-    Two schemas per tool, and both are needed. `tool.inputSchema` is what an agent
+    Two schemas per tool, and both are needed. `tool.input_schema` is what an agent
     actually receives — FastMCP derives it from the handler's signature, so it
     carries names, types and defaults but *no* bounds. The bounds live on the
     Pydantic model the handler validates against, which is where a call is
@@ -506,7 +506,7 @@ def load_tools() -> list[tuple[Any, dict[str, dict]]]:
         module = importlib.import_module(
             server._tool_manager.get_tool(tool.name).fn.__module__
         )
-        wire = set(tool.inputSchema.get("properties") or {})
+        wire = set(tool.input_schema.get("properties") or {})
         # Exact field-set match, never a best guess: a near-match would quietly
         # attach the wrong tool's bounds, which is worse than having none.
         models = [
@@ -577,7 +577,7 @@ def bounds(node: dict, tool_name: str, param: str) -> str:
 def render_mcp(tools: list[tuple[Any, dict[str, dict]]]) -> str:
     for tool_name, param in VALIDATOR_NOTES:
         if not any(
-            t.name == tool_name and param in (t.inputSchema.get("properties") or {})
+            t.name == tool_name and param in (t.input_schema.get("properties") or {})
             for t, _ in tools
         ):
             raise SystemExit(
@@ -635,7 +635,7 @@ def render_mcp(tools: list[tuple[Any, dict[str, dict]]]) -> str:
             lines += [blurb, ""]
         for name in names:
             tool, model_props = by_name[name]
-            schema = tool.inputSchema
+            schema = tool.input_schema
             defs = schema.get("$defs") or {}
             required = set(schema.get("required") or [])
 
