@@ -7,6 +7,7 @@ import os
 import secrets
 import socket
 import subprocess
+import sys
 import time
 from pathlib import Path
 from uuid import UUID
@@ -278,7 +279,14 @@ async def test_mcp_streamable_http_entrypoint_serves_node_tool(tmp_path):
         repository_slug, node_id, _bearer = await _seed_transport_fixture(session_manager, settings)
         process = subprocess.Popen(
             [
-                "python",
+                # sys.executable, not "python": bare "python" is whatever the
+                # PATH happens to resolve to, which is not necessarily the
+                # interpreter running this suite. On a machine with an unrelated
+                # python earlier in PATH the subprocess imported a *different*
+                # mcp -- during the SDK 2.0 port that made this test pass
+                # against a stale 1.x that still had `mcp.server.fastmcp`, and
+                # then fail with nothing but a closed port to go on.
+                sys.executable,
                 "-m",
                 "backend.app.mcp.server",
                 "--transport",
@@ -339,7 +347,7 @@ async def test_mounted_mcp_streamable_http_app_serves_node_tool(tmp_path):
         repository_slug, node_id, bearer_token = await _seed_transport_fixture(session_manager, settings)
         process = subprocess.Popen(
             [
-                "python",
+                sys.executable,  # see the note on the sibling test above
                 "-m",
                 "uvicorn",
                 "backend.app.main:app",
