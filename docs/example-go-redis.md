@@ -133,6 +133,38 @@ generated text — a malformed diagram is dropped and the page ships without one
 but a plausible-and-wrong one would ship. The Go block under it is different:
 that is quoted from `osscluster.go` verbatim, not paraphrased.
 
+The same page as text, so the prose is legible rather than pixels — this is one
+subsection of `cluster-routing`, copied out of the database unedited:
+
+> ### Slot hashing and routing policy primitives
+>
+> [`internal.hashtag.Slot`](https://github.com/redis/go-redis/blob/216593cc01faa029006266a5f1fc3d5004312ecf/internal/hashtag/hashtag.go#L76-L82)
+> is the slot calculator used for cluster key placement. It honors Redis hash
+> tags via `Key`, then reduces the CRC16 hash into the 16,384-slot Redis Cluster
+> range.
+>
+> ```go
+> func Slot(key string) int {
+> 	if key == "" {
+> 		return RandomSlot()
+> 	}
+> 	key = Key(key)
+> 	return int(crc16sum(key)) % slotNumber
+> }
+> ```
+>
+> Source: internal/hashtag/hashtag.go:L76-L82
+>
+> [`internal.routing.CommandPolicy`](https://github.com/redis/go-redis/blob/216593cc01faa029006266a5f1fc3d5004312ecf/internal/routing/policy.go#L129-L143)
+> describes how the router should treat a command: which request fan-out shape to
+> use, which response aggregation shape to use, and whether the command should be
+> treated as read-only for routing purposes.
+
+In the product those two symbol links point at the graph browser rather than at
+GitHub; they are rewritten above so they resolve from this page. Everything else
+— the prose, the quoted Go, the `Source:` line and its line numbers — is
+verbatim.
+
 Following any citation lands on the symbol in the graph browser, at its real
 line range:
 
