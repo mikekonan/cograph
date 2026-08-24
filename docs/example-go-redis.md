@@ -202,11 +202,14 @@ answers.
 | Surface | Size |
 | --- | --- |
 | Full wiki, all 14 pages | 190,782 chars ≈ 48k tokens |
-| Compact map (`cograph_wiki_tree`) | 12,426 chars ≈ 3.1k tokens |
+| The `cograph_wiki_tree` resource | 15,748 chars ≈ 3.9k tokens |
+| — of which the compact map | 12,426 chars |
+| — of which the page tree | 3,285 chars |
 
-That is the whole design: 3.1k tokens buys an agent an accurate map of a
+That is the whole design: under 4k tokens buys an agent an accurate map of a
 7,000-symbol codebase, and it pulls a full page with `cograph_wiki_page` only
-when the map is too terse for the question in front of it.
+when the map is too terse for the question in front of it. Twelve times smaller,
+and it is the *default* — an agent has to ask for the expensive surface.
 
 ## Reproducing this
 
