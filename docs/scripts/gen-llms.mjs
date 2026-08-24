@@ -44,7 +44,10 @@ const SECTIONS = [
     title: "Get started",
     pages: ["quickstart", "install/kubernetes", "configuration"],
   },
-  { title: "How it works", pages: ["retrieval", "wiki", "collections"] },
+  {
+    title: "How it works",
+    pages: ["retrieval", "wiki", "example-go-redis", "collections"],
+  },
   { title: "Use it", pages: ["mcp", "api", "access-control"] },
   { title: "Operate", pages: ["operations", "faq"] },
   { title: "Reference", pages: ["modes", "mcp-reference", "api-reference"] },

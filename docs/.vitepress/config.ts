@@ -150,6 +150,10 @@ export default withMermaid(
           items: [
             { text: "Retrieval", link: "/retrieval" },
             { text: "Generated wiki", link: "/wiki" },
+            // Directly after /wiki: the page it exists to make concrete. Every
+            // figure on it comes from one measured run, so it is where a reader
+            // goes when the wiki page's claims sound like marketing.
+            { text: "Example: go-redis", link: "/example-go-redis" },
             { text: "Document RAG", link: "/collections" },
           ],
         },
