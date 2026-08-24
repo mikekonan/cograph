@@ -23,15 +23,44 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: "22"
+          node-version: "26"
           cache: npm
           cache-dependency-path: web/package-lock.json
 
       - name: Install frontend dependencies
         run: npm ci
 
+      # `playwright install` downloads ~270 MB (chromium, its headless shell,
+      # ffmpeg) from a CDN with no timeout of its own. Twice on 2026-08-24 a
+      # download stalled after the first archive finished and the step sat
+      # silent until the 20-minute job timeout killed it -- reported as
+      # "The operation was canceled", which reads like a cancelled run rather
+      # than a stuck fetch.
+      #
+      # Cache the browsers so a hit skips the network entirely, and bound the
+      # miss. The key carries the resolved @playwright/test version because the
+      # browser build is pinned to it: a bump must miss the cache rather than
+      # run new code against old binaries.
+      - name: Resolve the installed Playwright version
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        id: pw-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+      # The OS libraries live outside the cached directory, so they are
+      # installed either way -- only the browser download is skipped on a hit.
+      - name: Install Playwright system dependencies
+        timeout-minutes: 6
+        run: npx playwright install-deps chromium
+
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 8
+        run: npx playwright install chromium
 
       - name: Run Playwright smoke
         run: npm run e2e
