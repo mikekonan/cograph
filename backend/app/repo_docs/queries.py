@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from math import ceil
@@ -23,6 +24,44 @@ _MARKDOWN_STRIP_RE = re.compile(r"^#+\s*|[*_`]+", re.MULTILINE)
 
 def _strip_markdown(text: str) -> str:
     return _MARKDOWN_STRIP_RE.sub("", text).strip()
+
+
+# The repository's README is the one at the tree root -- a path with no
+# directory part. Three call sites each guessed differently and each guessed
+# wrong: a basename match, an unordered `%readme%` ilike, and a
+# `like('readme%')`. In `redis/go-redis` the first of those picked
+# `example/hset-struct/README.md`, so the repo subtitle read "To run this
+# example:". Only these extensions can be repo documents at all; see
+# SUPPORTED_REPO_DOC_SUFFIXES in repo_docs/discover.py.
+_ROOT_README_PATHS = ("readme.md", "readme.mdx", "readme.rst")
+
+
+async def load_root_readmes(
+    session: AsyncSession,
+    repository_ids: Sequence[UUID],
+) -> dict[UUID, RepoDocument]:
+    """Map repository id -> its root README document, where one exists.
+
+    A repository whose only README sits in a subdirectory gets no entry. That
+    is deliberate: no README is a better answer than a nested one describing
+    something other than the repository.
+    """
+    if not repository_ids:
+        return {}
+    rows = await session.scalars(
+        select(RepoDocument)
+        .where(
+            RepoDocument.repository_id.in_(list(repository_ids)),
+            func.lower(RepoDocument.file_path).in_(_ROOT_README_PATHS),
+        )
+        # Lexicographic order makes the pick deterministic for a repository
+        # that ships two, and puts README.md ahead of README.rst.
+        .order_by(func.lower(RepoDocument.file_path))
+    )
+    found: dict[UUID, RepoDocument] = {}
+    for doc in rows:
+        found.setdefault(doc.repository_id, doc)
+    return found
 
 
 @dataclass(slots=True, kw_only=True)

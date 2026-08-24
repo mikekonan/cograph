@@ -78,6 +78,7 @@ from backend.app.pipeline.orchestrator import JobEnqueueError, RepoSyncOrchestra
 from backend.app.pipeline.schedule import RepoSyncScheduleService
 from backend.app.pipeline.worker import build_redis_settings
 from backend.app.pipeline.zip_checkout import ZipCheckoutAdapter, ZipCheckoutError
+from backend.app.repo_docs.queries import load_root_readmes
 
 router = APIRouter(prefix="/repos", tags=["repos"])
 
@@ -132,13 +133,6 @@ _SSH_URL_RE = re.compile(
     r"^ssh://([^@/\s]+@)?[^/\s]+(:\d+)?/[^/\s]+/[^/\s]+",
     re.IGNORECASE,
 )
-
-# Regex patterns for README file detection (case-insensitive)
-_README_FILE_RE = re.compile(
-    r"^(readme)(\.md|\.rst|\.txt|\.adoc|)$",
-    re.IGNORECASE,
-)
-
 
 class RepoStatsResponse(BaseModel):
     languages: list[str]
@@ -351,8 +345,9 @@ def _parse_host_owner_and_name(git_url: str) -> tuple[str, str, str]:
 def _extract_description(readme_content: str) -> str | None:
     """Extract a one-liner description from the README.
 
-    Heuristic: find the first non-heading, non-blank paragraph after the
-    leading H1. Falls back to the first non-blank line if no paragraph found.
+    Heuristic: find the first non-heading, non-blank, non-badge paragraph
+    after the leading H1, unwrapping a blockquote marker if it carries one.
+    Falls back to the first non-blank line if no paragraph found.
     Returns None when the content is empty or only headings/badges.
     """
     if not readme_content:
@@ -360,7 +355,12 @@ def _extract_description(readme_content: str) -> str | None:
 
     lines = readme_content.splitlines()
     for line in lines:
-        stripped = line.strip()
+        # A README lead wrapped in a blockquote is a common tagline pattern
+        # ("> go-redis is the official Redis client library for the Go
+        # programming language."). The quoting is presentation, so drop the
+        # marker before deciding what kind of line this is -- otherwise the
+        # repo subtitle renders with a stray "> " in front of it.
+        stripped = line.strip().removeprefix(">").strip()
         if not stripped:
             continue
         if stripped.startswith("#"):
@@ -1357,20 +1357,14 @@ async def _build_repository_response(
         )
     ) or 0
 
-    # 5. README -- first repo_document whose file_path basename matches README pattern
-    readme_content: str | None = None
-    readme_rows = (
-        await session.execute(
-            select(RepoDocument.file_path, RepoDocument.content).where(
-                RepoDocument.repository_id == repository.id
-            )
-        )
-    ).all()
-    for row in readme_rows:
-        basename = row.file_path.rsplit("/", 1)[-1]
-        if _README_FILE_RE.match(basename):
-            readme_content = row.content
-            break
+    # 5. README -- the one at the repository root. This used to scan every
+    #    indexed document and take the first basename match, which loaded the
+    #    full text of every markdown file in the repo and then picked a nested
+    #    README at random.
+    root_readme = (await load_root_readmes(session, [repository.id])).get(
+        repository.id
+    )
+    readme_content: str | None = root_readme.content if root_readme else None
 
     description: str | None = (
         _extract_description(readme_content) if readme_content else None

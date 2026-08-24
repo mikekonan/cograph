@@ -227,10 +227,15 @@ function runsDetail(s: SyncStats): string {
   return `${pass} passed · ${fail} failed`;
 }
 
+// `median_duration_sec` is a float, and this is the only duration formatter in
+// the app fed one directly -- the other three derive seconds from two timestamps
+// and round on the way in. Without the round here, a 550.61s median rendered as
+// "9m 10.610000000000014s". Whole seconds is also what the per-step rows show.
 function formatDuration(sec: number): string {
-  if (sec < 60) return `${sec}s`;
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
+  const total = Math.round(sec);
+  if (total < 60) return `${total}s`;
+  const m = Math.floor(total / 60);
+  const s = total % 60;
   return s === 0 ? `${m}m` : `${m}m ${s}s`;
 }
 

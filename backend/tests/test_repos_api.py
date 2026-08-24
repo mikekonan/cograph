@@ -1684,6 +1684,143 @@ async def test_get_repository_readme_populated_from_repo_documents(client, db_se
     assert data["description"] == "A great project that does things."
 
 
+async def test_get_repository_description_unwraps_a_blockquote_lead(
+    client, db_session
+):
+    """A tagline in a blockquote is the description, minus the quote marker.
+
+    Verbatim shape of `redis/go-redis`: H1, badges, then the one-sentence
+    summary as a blockquote. The subtitle used to render "> go-redis is ...".
+    """
+    from backend.app.models.repo_document import RepoDocument
+
+    repository = Repository(
+        host="example.com",
+        git_url="https://github.com/acme/quoted-lead.git",
+        name="quoted-lead",
+        owner="acme",
+        branch="main",
+        visibility=RepositoryVisibility.PUBLIC,
+    )
+    db_session.add(repository)
+    await db_session.commit()
+
+    content = (
+        "# Acme client for Go\n\n"
+        "[![build](https://img.shields.io/x)](https://example.com)\n\n"
+        ">\n"
+        "> acme-go is the official Acme client library for Go.\n"
+    )
+    db_session.add(
+        RepoDocument(
+            repository_id=repository.id,
+            file_path="README.md",
+            title="README",
+            content=content,
+            content_hash="quoted",
+            bytes=len(content),
+        )
+    )
+    await db_session.commit()
+
+    response = await client.get(
+        f"/api/repos/{repository.host}/{repository.owner}/{repository.name}"
+    )
+
+    assert response.status_code == 200
+    assert (
+        response.json()["description"]
+        == "acme-go is the official Acme client library for Go."
+    )
+
+
+async def test_get_repository_readme_ignores_nested_readmes(client, db_session):
+    """A README in a subdirectory is not the repository's README.
+
+    `redis/go-redis` ships a README in every example program. Matching on the
+    basename picked `example/hset-struct/README.md` -- 96 characters about one
+    example -- and the repo subtitle then read "To run this example:".
+    """
+    from backend.app.models.repo_document import RepoDocument
+
+    repository = Repository(
+        host="example.com",
+        git_url="https://github.com/acme/nested-readme.git",
+        name="nested-readme",
+        owner="acme",
+        branch="main",
+        visibility=RepositoryVisibility.PUBLIC,
+    )
+    db_session.add(repository)
+    await db_session.commit()
+
+    root = "# Acme\n\nThe library itself."
+    # Added first so an unordered scan would hit it first.
+    for path, content in (
+        ("example/hset-struct/README.md", "# Example\n\nTo run this example:"),
+        ("docs/README.md", "# Docs\n\nDocumentation index."),
+        ("README.md", root),
+    ):
+        db_session.add(
+            RepoDocument(
+                repository_id=repository.id,
+                file_path=path,
+                title="README",
+                content=content,
+                content_hash=f"hash-{path}",
+                bytes=len(content),
+            )
+        )
+    await db_session.commit()
+
+    response = await client.get(
+        f"/api/repos/{repository.host}/{repository.owner}/{repository.name}"
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["readme"] == root
+    assert data["description"] == "The library itself."
+
+
+async def test_get_repository_readme_absent_when_only_nested(client, db_session):
+    """No root README means no README, rather than a nested stand-in."""
+    from backend.app.models.repo_document import RepoDocument
+
+    repository = Repository(
+        host="example.com",
+        git_url="https://github.com/acme/only-nested.git",
+        name="only-nested",
+        owner="acme",
+        branch="main",
+        visibility=RepositoryVisibility.PUBLIC,
+    )
+    db_session.add(repository)
+    await db_session.commit()
+
+    content = "# Example\n\nTo run this example:"
+    db_session.add(
+        RepoDocument(
+            repository_id=repository.id,
+            file_path="example/hset-struct/README.md",
+            title="README",
+            content=content,
+            content_hash="nested",
+            bytes=len(content),
+        )
+    )
+    await db_session.commit()
+
+    response = await client.get(
+        f"/api/repos/{repository.host}/{repository.owner}/{repository.name}"
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["readme"] is None
+    assert data["description"] is None
+
+
 async def test_get_repository_readme_none_when_no_readme_document(client, db_session):
     """readme field is null when no README-like document exists."""
     repository = Repository(
