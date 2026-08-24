@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import BaseModel
-from sqlalchemy import select
 
 from backend.app.mcp.services import (
     MCPServices,
@@ -17,8 +16,8 @@ from backend.app.mcp.services import (
     require_ready_repository,
     resolve_readable_repository_by_slug,
 )
-from backend.app.models.repo_document import RepoDocument
 from backend.app.rag.snippet import make_snippet
+from backend.app.repo_docs.queries import load_root_readmes
 from backend.app.wiki.compact import extract_lead, extract_sections
 
 _README_DESCRIPTION = (
@@ -60,14 +59,11 @@ def register(server: FastMCP, services: MCPServices) -> None:
                 repository_id=repository.id,
             )
 
-            doc = await session.scalar(
-                select(RepoDocument)
-                .where(
-                    RepoDocument.repository_id == repository.id,
-                    RepoDocument.file_path.ilike("%readme%"),
-                )
-                .order_by(RepoDocument.bytes.desc())
-                .limit(1)
+            # `%readme%` ordered by size also matched `docs/readme-dev.md`
+            # and any nested example README, and "biggest wins" is not the
+            # same question as "which one is the repository's".
+            doc = (await load_root_readmes(session, [repository.id])).get(
+                repository.id
             )
 
             slug_path = (

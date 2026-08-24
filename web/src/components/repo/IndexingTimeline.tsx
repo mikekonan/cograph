@@ -175,11 +175,17 @@ export function IndexingTimeline({
         ))}
       </div>
 
-      <ol className="grid gap-x-3 gap-y-2 text-xs sm:grid-cols-2 xl:grid-cols-4">
+      {/* Two columns, not four. The wiki step's value carries a usage suffix
+          -- "5m 5s . 9.0M tok (78% cached) . $2.64" -- which is wider than a
+          quarter of this card. The value track took the space it needed, the
+          label's 1fr track collapsed under it, and the label then painted on
+          top of the value. `break-words` is the other half of that fix: it
+          keeps the label inside its track at any width instead of overflowing. */}
+      <ol className="grid gap-x-3 gap-y-2 text-xs sm:grid-cols-2">
         {final.map((s) => (
           <li key={s.job.id} className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] gap-1.5">
             <StatusDot job={s.job} />
-            <span className="leading-tight text-[color:var(--color-fg)]">
+            <span className="leading-tight break-words text-[color:var(--color-fg)]">
               {stepCopy(s.job.step).full}
             </span>
             <span className="tabular-nums text-[color:var(--color-fg-muted)] whitespace-nowrap">

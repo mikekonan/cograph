@@ -32,8 +32,8 @@ v3 (this commit) adds:
 Searchable fields:
 
 * **Repositories**: `host/owner/name` slug + `branch` + the first ~2K
-  chars of the repo's README (`RepoDocument` whose file_path matches
-  `^README`, case-insensitive) + **module-level symbol corpus**:
+  chars of the repo's **root** README (`repo_docs.queries.load_root_readmes`)
+  + **module-level symbol corpus**:
   distinct `qualified_name` and `file_path` strings from each
   `code_node` with `node_type='module'`. This is the chunky structural
   skeleton (one row per file); pulling it gives the router fuel for
@@ -80,9 +80,9 @@ from backend.app.core.repository_access import apply_repository_read_scope
 from backend.app.models.code_node import CodeNode
 from backend.app.models.enums import CodeNodeType
 from backend.app.models.md_collection import MdCollection, MdDocument
-from backend.app.models.repo_document import RepoDocument
 from backend.app.models.repository import Repository
 from backend.app.models.user import User
+from backend.app.repo_docs.queries import load_root_readmes
 
 
 # Tokens of <2 chars are punctuation noise ("a", "of") that match too much;
@@ -366,20 +366,15 @@ async def _route_repositories(
     if not repos:
         return []
 
-    # Pull each repo's README first-section in one shot. Filtering on
-    # `lower(file_path) LIKE 'readme%'` covers README.md, README.rst,
-    # readme.txt, README — every casing we've seen in indexed repos.
+    # Pull each repo's root README first-section in one shot. The shared
+    # resolver keeps this in step with the repo page and the MCP tool, which
+    # each used to answer "which README?" differently and got a different
+    # document for the same repository.
     repo_ids = [r.id for r in repos]
-    readme_rows = await session.execute(
-        select(RepoDocument.repository_id, RepoDocument.content)
-        .where(RepoDocument.repository_id.in_(repo_ids))
-        .where(func.lower(RepoDocument.file_path).like("readme%"))
-    )
-    readme_by_repo: dict[UUID, str] = {}
-    for repo_id, content in readme_rows.all():
-        if repo_id in readme_by_repo:
-            continue  # first README wins; ignore alt-language READMEs
-        readme_by_repo[repo_id] = (content or "")[:_README_PREFIX_CHARS]
+    readme_by_repo: dict[UUID, str] = {
+        repo_id: (doc.content or "")[:_README_PREFIX_CHARS]
+        for repo_id, doc in (await load_root_readmes(session, repo_ids)).items()
+    }
 
     symbol_corpus_by_repo = await _load_symbol_corpus(session, repo_ids)
 
