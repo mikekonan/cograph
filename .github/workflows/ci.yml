@@ -45,6 +45,42 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ./backend[dev]
 
+      # tree-sitter-language-pack ships no grammars: get_parser() downloads them
+      # from a GitHub release on first use, with no timeout. That put a network
+      # round trip inside the test run, and on 2026-08-21 GitHub answered the
+      # manifest request with a 504 — two integration tests failed with
+      # `LanguageNotFoundError: Download error` and the whole job went red for a
+      # reason no author could act on.
+      #
+      # Cache the grammars and fetch them in a step of their own. The key carries
+      # the pinned pack version, which is what the cache path is namespaced by, so
+      # a version bump misses the cache instead of serving grammars for the wrong
+      # ABI. On a miss the fetch retries, and a genuine outage now fails a step
+      # that says "grammars" rather than two tests that look like parser bugs.
+      - name: Resolve the pinned tree-sitter-language-pack version
+        id: grammars
+        run: |
+          version=$(sed -n 's/.*"tree-sitter-language-pack==\([^"]*\)".*/\1/p' backend/pyproject.toml)
+          [ -n "$version" ] || { echo "::error::tree-sitter-language-pack is no longer pinned to an exact version"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/tree-sitter-language-pack
+          key: tree-sitter-grammars-${{ runner.os }}-${{ steps.grammars.outputs.version }}
+
+      - name: Fetch missing tree-sitter grammars
+        run: |
+          for attempt in 1 2 3; do
+            if timeout 300 python -c "from backend.app.graph.parser import download_missing_grammars; download_missing_grammars()"; then
+              break
+            fi
+            echo "::warning::grammar download attempt $attempt failed"
+            [ "$attempt" = 3 ] && exit 1
+            sleep $((attempt * 10))
+          done
+          python -c "from backend.app.graph.parser import missing_grammars; left = missing_grammars(); assert not left, f'grammars still missing: {left}'"
+
       - name: Create CI databases
         run: |
           python - <<'PY'
