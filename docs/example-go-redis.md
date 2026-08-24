@@ -16,15 +16,37 @@ readable here, the claims on [Generated wiki](/wiki) mean something.
 | --- | --- |
 | Repository | `github.com/redis/go-redis`, branch `master` |
 | Commit | `216593cc01faa029006266a5f1fc3d5004312ecf` |
-| Source files indexed | 369 |
+| Source files indexed | 369 of the 373 `.go` files in the tree |
 | Graph nodes | 7,099 (369 modules, 5,946 functions, 0 classes) |
-| Repository documents | 110 markdown files → 790 chunks |
+| Repository documents | 110 → 790 chunks (38 markdown, 29 `go.mod`, 24 example `.go`, 12 CI workflows, 7 other) |
 | Embedding model | `text-embedding-3-small`, 1536 dim |
 | Completion model | `gpt-5.4-mini` for all three completion roles |
+
+Two rows in that table are worth unpacking.
 
 `classes: 0` is not a failure. Go has no classes, and Cograph does not invent a
 node kind to fill the column — a struct is a `struct`, and the count you see is
 the count that exists.
+
+**Repository documents are not just markdown.** Only 38 of the 110 are `.md`.
+The rest are the files a reader would actually reach for to answer "how do I run
+this": 29 `go.mod` files, the 24 `.go` programs under `example/`, and 12 CI
+workflows. See [Document RAG](/collections) for the discovery rules.
+
+**And 369 is four short of 373 on purpose.** Those four are the files the
+default build does not compile:
+
+| Excluded file | Constraint |
+| --- | --- |
+| `extra/rediscmd/safe.go` | `//go:build appengine` |
+| `internal/util/safe.go` | `//go:build appengine` |
+| `fuzz/fuzz.go` | `//go:build gofuzz` |
+| `internal/pool/conn_check_dummy.go` | `//go:build !linux && !darwin && …` |
+
+Their counterparts — `unsafe.go` twice, and `conn_check.go` — *are* indexed. No
+tag was passed, so `appengine` is absent, `!appengine` holds, and `gofuzz` is
+absent. That is the same set of files `go build` with no `-tags` would compile,
+and getting it wrong is not cosmetic; see [the last section](#reproducing-this).
 
 ## What came out
 
@@ -54,8 +76,8 @@ index                          Redis Client Wiki
 Those titles are worth a second look, because they are the part a template
 cannot produce. Nothing in the repository is named "maintenance notifications"
 or "streaming authentication"; the planner named those pages after reading the
-code, and both correspond to real subsystems (`maintnotifications/`,
-`auth/streaming_provider.go`).
+code, and both correspond to real directories (`maintnotifications/`,
+`internal/auth/streaming/`).
 
 Total body: **190,782 characters** across the fourteen pages, carrying **136
 citations**.
@@ -196,15 +218,9 @@ Then follow [the quickstart](/quickstart) to create the first admin and wire the
 `embedding` and `completion_writer` roles, add
 `https://github.com/redis/go-redis.git` as a repository, and watch `/jobs`.
 
-One thing specific to this repository, and the reason it is a good test case:
-go-redis pairs `//go:build appengine` with `//go:build !appengine` twice
-(`extra/rediscmd/` and `internal/util/`), and puts `fuzz/fuzz.go` behind a lone
-`//go:build gofuzz`. A tag nobody passed counts as **absent**, so the untagged
-half of each pair is selected, the tagged half is not, and the `gofuzz` file
-contributes no symbols — exactly what `go build` with no `-tags` does. See
-[build constraints](/languages#go-build-constraints).
-
-Getting that wrong is not a cosmetic matter: treating an unknown tag as *neutral*
-selects both halves of every pair, `safe.go` and `unsafe.go` both define
-`String`, and the whole repository fails to index with
-`GO_BUILD_VARIANT_CONFLICT`. That is what this repository was indexed to find.
+This repository is a good test case because of the four excluded files above.
+Treating an unknown build tag as *neutral* rather than absent selects **both**
+halves of every `appengine` / `!appengine` pair — `safe.go` and `unsafe.go` then
+both define `String`, and the whole repository fails to index with
+`GO_BUILD_VARIANT_CONFLICT`. That is the defect this run was set up to find, and
+it found it. See [build constraints](/languages#go-build-constraints).
