@@ -236,10 +236,11 @@ async def _call_node_tool(
 ) -> dict[str, object]:
     headers = {"Authorization": f"Bearer {bearer_token}"} if bearer_token else None
     async with httpx.AsyncClient(headers=headers, timeout=30, follow_redirects=True) as http_client:
+        # Two values, not three: 2.0 dropped the get_session_id callable this
+        # test never used from the tuple the client yields.
         async with streamable_http_client(base_url, http_client=http_client) as (
             read_stream,
             write_stream,
-            _,
         ):
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()

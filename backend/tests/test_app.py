@@ -3,7 +3,6 @@ from __future__ import annotations
 from builtins import ExceptionGroup
 from contextlib import asynccontextmanager
 import logging
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -41,14 +40,13 @@ class _FakeMCPServerSessionManager:
 
 class _FakeMCPServer:
     def __init__(self) -> None:
-        self.settings = SimpleNamespace(
-            transport_security=SimpleNamespace(
-                enable_dns_rebinding_protection=False,
-            )
-        )
         self.session_manager = _FakeMCPServerSessionManager()
 
-    def streamable_http_app(self):
+    # Keyword-only and permissive on purpose: create_app passes the transport
+    # configuration here rather than to the constructor, and the exact set of
+    # keywords is the SDK's business, not this test's.
+    def streamable_http_app(self, **kwargs):
+        del kwargs
         async def app(scope, receive, send):
             del receive
             assert scope["type"] == "http"
@@ -182,11 +180,15 @@ async def test_health_reports_connected_database(client):
 
 
 async def test_mounted_mcp_disables_direct_host_validation(app):
-    assert app.state.mcp_server.settings.transport_security is not None
-    assert (
-        app.state.mcp_server.settings.transport_security.enable_dns_rebinding_protection
-        is False
-    )
+    # Read the session manager rather than the server's settings: transport
+    # security is an argument to streamable_http_app(), so the session manager
+    # that enforces it is the only place the resolved value exists. Worth
+    # asserting because the SDK turns this protection ON by default when the
+    # caller passes nothing and the host looks like localhost, which would 421
+    # every request a fresh `docker compose up` makes.
+    security = app.state.mcp_server.session_manager.security_settings
+    assert security is not None
+    assert security.enable_dns_rebinding_protection is False
 
 
 @pytest.mark.anyio
