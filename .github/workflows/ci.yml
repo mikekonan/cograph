@@ -64,7 +64,7 @@ jobs:
           [ -n "$version" ] || { echo "::error::tree-sitter-language-pack is no longer pinned to an exact version"; exit 1; }
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.cache/tree-sitter-language-pack
           key: tree-sitter-grammars-${{ runner.os }}-${{ steps.grammars.outputs.version }}
