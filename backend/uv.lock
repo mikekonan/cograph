@@ -370,7 +370,7 @@ requires-dist = [
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
     { name = "tenacity", specifier = ">=9.1.4" },
     { name = "tree-sitter", specifier = ">=0.24" },
-    { name = "tree-sitter-language-pack", specifier = "==1.6.2" },
+    { name = "tree-sitter-language-pack", specifier = "==1.16.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.1" },
     { name = "uvicorn-worker", specifier = ">=0.3" },
 ]
@@ -471,43 +471,43 @@ wheels = [
 
 [package.optional-dependencies]
 cublas = [
-    { name = "nvidia-cublas", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
-    { name = "nvidia-cuda-nvrtc", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
+    { name = "nvidia-cublas", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
+    { name = "nvidia-cuda-nvrtc", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
 ]
 cudart = [
-    { name = "nvidia-cuda-runtime", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
+    { name = "nvidia-cuda-runtime", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
 ]
 cufft = [
-    { name = "nvidia-cufft", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
-    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
+    { name = "nvidia-cufft", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
+    { name = "nvidia-nvjitlink", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
 ]
 cufile = [
-    { name = "nvidia-cufile", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
+    { name = "nvidia-cufile", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
 ]
 cupti = [
-    { name = "nvidia-cuda-cupti", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
+    { name = "nvidia-cuda-cupti", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
 ]
 curand = [
-    { name = "nvidia-curand", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
+    { name = "nvidia-curand", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
 ]
 cusolver = [
-    { name = "nvidia-cublas", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
-    { name = "nvidia-cusolver", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
-    { name = "nvidia-cusparse", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
-    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
+    { name = "nvidia-cublas", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
+    { name = "nvidia-cusolver", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
+    { name = "nvidia-cusparse", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
+    { name = "nvidia-nvjitlink", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
 ]
 cusparse = [
-    { name = "nvidia-cusparse", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
-    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
+    { name = "nvidia-cusparse", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
+    { name = "nvidia-nvjitlink", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
 ]
 nvjitlink = [
-    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
+    { name = "nvidia-nvjitlink", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
 ]
 nvrtc = [
-    { name = "nvidia-cuda-nvrtc", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
+    { name = "nvidia-cuda-nvrtc", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
 ]
 nvtx = [
-    { name = "nvidia-nvtx", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
+    { name = "nvidia-nvtx", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
 ]
 
 [[package]]
@@ -2434,16 +2434,19 @@ wheels = [
 
 [[package]]
 name = "tree-sitter-language-pack"
-version = "1.6.2"
+version = "1.16.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "tree-sitter" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/cc/91/a91c2aa17112b3055eb70f815ed8fc80c1bd871672143384e6f123fbcf25/tree_sitter_language_pack-1.16.1.tar.gz", hash = "sha256:939f32d440f619744f145bbae2956cd7714c5aa040665af55ca558786050f9e4", size = 88441, upload-time = "2026-09-01T16:52:36.314Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/09/bd/ac34ab0ee92b2d27802754c575965e921490ce11b5357bf89f74a78e8309/tree_sitter_language_pack-1.6.2-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:f5998cfee5735a8e7e691f577062ff7eb3a7ea405ae5654c9cecaa4a1e6c81b0", size = 2241997, upload-time = "2026-04-18T07:04:36.042Z" },
-    { url = "https://files.pythonhosted.org/packages/a1/e0/b997b8c3e0886288a47890e6313c3a7e74ea8192e2d141b3eab64d59a276/tree_sitter_language_pack-1.6.2-cp310-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:8ce814ede4e295f3419ba179b523889c52cc3a998ac085356a470e776596c026", size = 2419565, upload-time = "2026-04-18T07:04:37.67Z" },
-    { url = "https://files.pythonhosted.org/packages/fa/a4/629e6983a93fbb52dc50af495ec0431565c6477eea4680d4298238e9831e/tree_sitter_language_pack-1.6.2-cp310-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:2305df7835c1cb3d34b71450b79d135878bc25ea5d02d9984cee864607a4ad60", size = 2555465, upload-time = "2026-04-18T07:04:39.57Z" },
-    { url = "https://files.pythonhosted.org/packages/b5/9c/0f486ca7344f6f3345441e8516b464214c7c5a0f3775d11fda1368901c38/tree_sitter_language_pack-1.6.2-cp310-abi3-win_amd64.whl", hash = "sha256:08351222b43c3a73665571eaa440366add2093a2492bb35f032fb7a31945e720", size = 2351156, upload-time = "2026-04-18T07:04:41.377Z" },
+    { url = "https://files.pythonhosted.org/packages/70/13/c4480ef79bd7b97cb82690d943656615bfa1cb3bba84522f5c6d40d849de/tree_sitter_language_pack-1.16.1-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:69255d58e8e2e1796763e3856fd98e5ade51d91e291d90e98234eccc4682df8e", size = 2259955, upload-time = "2026-09-01T16:52:26.871Z" },
+    { url = "https://files.pythonhosted.org/packages/7b/97/03ff160f347434e9dab5db9a0d3a2d9bd255435fb54eeded0cf529cb346e/tree_sitter_language_pack-1.16.1-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:638739a324aaa2d3db4ca42077db09b1af2e32c0e0e10b16820675c12b4aeb86", size = 2148304, upload-time = "2026-09-01T16:52:28.407Z" },
+    { url = "https://files.pythonhosted.org/packages/0d/79/3708c86f0e101d38f65cb7c171494309fc31104f5e3017784cb56db35e74/tree_sitter_language_pack-1.16.1-cp310-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:ade42b1ee4370f622b2c6c02ad9f35499eab289fcbe587370781b404c07694bb", size = 2307486, upload-time = "2026-09-01T16:52:30.082Z" },
+    { url = "https://files.pythonhosted.org/packages/a3/bd/46b91f0ff2b5a52bfe313c5b3419a2794664523ec29ce061564d7ff4167b/tree_sitter_language_pack-1.16.1-cp310-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:0224b8230788cc7a06ca210eb08eb42d1cb1654317423612d1b09d1ec7425478", size = 2423488, upload-time = "2026-09-01T16:52:31.602Z" },
+    { url = "https://files.pythonhosted.org/packages/b3/f8/e504421754f41a9ebbefd6c7a3ebcdcbd07883ea2c73b63ba312dc68f7ea/tree_sitter_language_pack-1.16.1-cp310-abi3-win_amd64.whl", hash = "sha256:cc04f28b6263b6b8592427349b2895e56564ce6f37e953f38ad5097f9efb534a", size = 2202547, upload-time = "2026-09-01T16:52:33.218Z" },
+    { url = "https://files.pythonhosted.org/packages/36/24/fc248f752ed25fe5c91bb4f791e638bbf2969c873ce039df374a9259abdb/tree_sitter_language_pack-1.16.1-cp310-abi3-win_arm64.whl", hash = "sha256:b3db9d87ed540b32b93d50d36b221019fb6d7105a5b93fee73e0fff2b407efc9", size = 2103179, upload-time = "2026-09-01T16:52:35.131Z" },
 ]
 
 [[package]]
