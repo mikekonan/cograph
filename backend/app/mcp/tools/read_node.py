@@ -59,7 +59,8 @@ def register(server: MCPServer, services: MCPServices) -> None:
         snippet_chars: int = DEFAULT_SNIPPET_CHARS,
         ctx: Context | None = None,
     ) -> object:
-        args = tool_args(ReadNodeArgs, 
+        args = tool_args(
+            ReadNodeArgs,
             repository=repository,
             node_id=node_id,
             with_graph=with_graph,

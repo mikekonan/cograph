@@ -50,7 +50,8 @@ def register(server: MCPServer, services: MCPServices) -> None:
         direction: TraversalDirection = TraversalDirection.BOTH,
         ctx: Context | None = None,
     ) -> object:
-        args = tool_args(RelatedToolArgs, 
+        args = tool_args(
+            RelatedToolArgs,
             repository=repository,
             node_id=node_id,
             depth=depth,

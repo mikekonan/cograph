@@ -54,7 +54,8 @@ def register(server: MCPServer, services: MCPServices) -> None:
         end_line: int,
         ctx: Context | None = None,
     ) -> object:
-        args = tool_args(ReadFileRangeArgs, 
+        args = tool_args(
+            ReadFileRangeArgs,
             repository=repository,
             path=path,
             start_line=start_line,
