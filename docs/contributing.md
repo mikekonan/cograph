@@ -157,6 +157,13 @@ Two rules specific to this site:
 
 ## Dependencies
 
+CI installs the backend from `backend/uv.lock`, exported with `--require-hashes`,
+exactly as the image does. It does not resolve the ranges in `pyproject.toml`. So
+a dependency change is not done until the lock is regenerated and committed with
+it — `uv lock` in `backend/`. Before this, the lock had one consumer and the
+tests had another, and main went red three weeks after its last commit when a
+caret range swallowed a breaking release.
+
 Three entries in `pyproject.toml` carry explanations; read the comment before
 touching any of them.
 
@@ -179,8 +186,14 @@ intentional change, not a side effect of a version bump.
 
 The docs site pins VitePress 1.x, which brings Vite 5 and its dev-server-only
 advisories. The published site is static files on a CDN, and VitePress 2 is
-alpha-only and incompatible with the mermaid plugin's peer range. Revisit when 2.x
-ships stable.
+alpha-only and incompatible with the mermaid plugin's peer range. Those alerts
+are dismissed as tolerable risk rather than left open, so the queue means
+something; the dismissal names this paragraph. Revisit when 2.x ships stable.
+
+On the web side, one trap is worth knowing before you edit the linter config:
+Biome reads a commented `biome.json` far enough to apply part of it and then
+silently drops the rest, with no warning that the file was not understood. That
+is why the config is `biome.jsonc`. Keep it that way.
 
 ## What is not accepted
 
