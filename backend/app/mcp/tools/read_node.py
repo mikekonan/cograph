@@ -9,6 +9,7 @@ from backend.app.mcp.services import (
     encode_payload,
     node_payload,
     resolve_readable_repository_by_slug,
+    tool_args,
 )
 from backend.app.rag.snippet import (
     DEFAULT_SNIPPET_CHARS,
@@ -58,7 +59,7 @@ def register(server: MCPServer, services: MCPServices) -> None:
         snippet_chars: int = DEFAULT_SNIPPET_CHARS,
         ctx: Context | None = None,
     ) -> object:
-        args = ReadNodeArgs(
+        args = tool_args(ReadNodeArgs, 
             repository=repository,
             node_id=node_id,
             with_graph=with_graph,

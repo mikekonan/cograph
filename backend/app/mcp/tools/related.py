@@ -10,6 +10,7 @@ from backend.app.mcp.services import (
     encode_payload,
     related_payload,
     resolve_readable_repository_by_slug,
+    tool_args,
 )
 
 
@@ -49,7 +50,7 @@ def register(server: MCPServer, services: MCPServices) -> None:
         direction: TraversalDirection = TraversalDirection.BOTH,
         ctx: Context | None = None,
     ) -> object:
-        args = RelatedToolArgs(
+        args = tool_args(RelatedToolArgs, 
             repository=repository,
             node_id=node_id,
             depth=depth,

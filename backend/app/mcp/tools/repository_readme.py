@@ -7,6 +7,7 @@ sequence agents currently use to answer "what is repo X about?".
 from __future__ import annotations
 
 from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import BaseModel
 
 from backend.app.mcp.services import (
@@ -15,6 +16,7 @@ from backend.app.mcp.services import (
     encode_payload,
     require_ready_repository,
     resolve_readable_repository_by_slug,
+    tool_args,
 )
 from backend.app.rag.snippet import make_snippet
 from backend.app.repo_docs.queries import load_root_readmes
@@ -46,7 +48,7 @@ def register(server: MCPServer, services: MCPServices) -> None:
         slug: str,
         ctx: Context | None = None,
     ) -> object:
-        args = RepositoryReadmeArgs(slug=slug)
+        args = tool_args(RepositoryReadmeArgs, slug=slug)
         current_user = current_user_from_context(ctx)
         async with services.session_manager.session() as session:
             repository = await resolve_readable_repository_by_slug(
@@ -100,7 +102,7 @@ def register(server: MCPServer, services: MCPServices) -> None:
             )
 
         if wiki_page is None:
-            raise ValueError(
+            raise ToolError(
                 "NOT_FOUND: No README and no wiki overview indexed for this repo"
             )
 

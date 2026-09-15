@@ -13,6 +13,7 @@ from backend.app.mcp.services import (
     mcp_query_log_scope,
     resolve_readable_repository_by_slug,
     retrieve_payload,
+    tool_args,
 )
 from backend.app.rag.context_builder import BROAD_RETRIEVAL_LAYERS, RetrievalLayer
 from backend.app.rag.snippet import (
@@ -133,7 +134,7 @@ def register(server: MCPServer, services: MCPServices) -> None:
         include_scores: bool = False,
         ctx: Context | None = None,
     ) -> object:
-        args = RetrieveToolArgs(
+        args = tool_args(RetrieveToolArgs, 
             query=query,
             repository=repository,
             mode=mode,
