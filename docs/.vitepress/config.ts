@@ -114,8 +114,19 @@ export default withMermaid(
       logo: undefined,
       siteTitle: false,
 
-      // No GitHub link or edit link: the repository is private, so both would
-      // 404 for every visitor. Add them in the same change that makes it public.
+      // Both of these waited on the repository going public — until then they
+      // would have 404'd for every visitor. The nav icon is the canonical
+      // backlink; the edit link puts a second one on every page, which is also
+      // what makes a typo fixable by a reader instead of reportable.
+      socialLinks: [
+        { icon: "github", link: "https://github.com/mikekonan/cograph" },
+      ],
+
+      editLink: {
+        pattern:
+          "https://github.com/mikekonan/cograph/edit/main/docs/:path",
+        text: "Edit this page on GitHub",
+      },
 
       nav: [
         { text: "Overview", link: "/overview" },
