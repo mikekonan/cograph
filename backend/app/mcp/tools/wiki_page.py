@@ -16,6 +16,7 @@ from backend.app.mcp.services import (
     MCPServices,
     current_user_from_context,
     resolve_readable_repository_by_slug,
+    tool_args,
     wiki_page_payload,
 )
 
@@ -52,7 +53,7 @@ def register(server: MCPServer, services: MCPServices) -> None:
         section: str | None = None,
         ctx: Context | None = None,
     ) -> object:
-        args = WikiPageArgs(repository=repository, page=page, section=section)
+        args = tool_args(WikiPageArgs, repository=repository, page=page, section=section)
         current_user = current_user_from_context(ctx)
         async with services.session_manager.session() as session:
             repo = await resolve_readable_repository_by_slug(

@@ -13,6 +13,7 @@ from backend.app.mcp.services import (
     encode_payload,
     mcp_query_log_scope,
     read_chunk_payload,
+    tool_args,
 )
 from backend.app.rag.snippet import (
     DEFAULT_SNIPPET_CHARS,
@@ -71,7 +72,7 @@ def register(server: MCPServer, services: MCPServices) -> None:
         limit: int = 100,
         ctx: Context | None = None,
     ) -> object:
-        args = CollectionsToolArgs(search=search, limit=limit)
+        args = tool_args(CollectionsToolArgs, search=search, limit=limit)
         response = await collections_payload(
             services=services,
             current_user=current_user_from_context(ctx),
@@ -96,7 +97,7 @@ def register(server: MCPServer, services: MCPServices) -> None:
         document_id: UUID,
         ctx: Context | None = None,
     ) -> object:
-        args = CollectionDocumentToolArgs(
+        args = tool_args(CollectionDocumentToolArgs, 
             collection_id=collection_id,
             document_id=document_id,
         )
@@ -127,7 +128,7 @@ def register(server: MCPServer, services: MCPServices) -> None:
         snippet_chars: int = DEFAULT_SNIPPET_CHARS,
         ctx: Context | None = None,
     ) -> object:
-        args = CollectionSearchToolArgs(
+        args = tool_args(CollectionSearchToolArgs, 
             collection_id=collection_id,
             query=query,
             top_k=top_k,
@@ -168,7 +169,7 @@ def register(server: MCPServer, services: MCPServices) -> None:
         chunk_id: UUID,
         ctx: Context | None = None,
     ) -> object:
-        args = ReadChunkToolArgs(
+        args = tool_args(ReadChunkToolArgs, 
             collection_id=collection_id,
             chunk_id=chunk_id,
         )

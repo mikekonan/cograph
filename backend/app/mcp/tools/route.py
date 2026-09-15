@@ -19,6 +19,7 @@ from backend.app.mcp.services import (
     MCPServices,
     current_user_from_context,
     encode_payload,
+    tool_args,
 )
 from backend.app.rag.source_router import RouteHit, route_sources
 
@@ -62,7 +63,7 @@ def register(server: MCPServer, services: MCPServices) -> None:
         top_k: int = 3,
         ctx: Context | None = None,
     ) -> object:
-        args = RouteToolArgs(query=query, top_k=top_k)
+        args = tool_args(RouteToolArgs, query=query, top_k=top_k)
         current_user = current_user_from_context(ctx)
         async with services.session_manager.session() as session:
             hits = await route_sources(

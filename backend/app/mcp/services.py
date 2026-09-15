@@ -4,10 +4,12 @@ import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, TypeVar
 from uuid import UUID
 
 from fastapi.encoders import jsonable_encoder
+from mcp.server.mcpserver.exceptions import ToolError
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -77,6 +79,28 @@ def encode_payload(value: object) -> object:
     return jsonable_encoder(value)
 
 
+ArgsT = TypeVar("ArgsT", bound=BaseModel)
+
+
+def tool_args(model: type[ArgsT], /, **fields: object) -> ArgsT:
+    """Build a tool's argument model, reporting a bad argument as a tool failure.
+
+    Every tool validates by constructing its model inside the body rather than by
+    typing the parameters, so the `ValidationError` surfaces there too — and since
+    mcp 2.2 an exception raised from a body is a crash: the caller gets a bare
+    `Error executing tool <name>` with the offending field withheld, and the
+    server logs a traceback for what is only a malformed call. Wrapping it as a
+    `ToolError` restores the message an agent needs to correct itself, and keeps
+    the field constraints (`ge`, `le`, `min_length`) reporting like the custom
+    validators beside them.
+    """
+
+    try:
+        return model(**fields)
+    except ValidationError as exc:
+        raise ToolError(f"INVALID_REQUEST: {exc}") from exc
+
+
 def _request_context(ctx: object | None) -> object | None:
     """The MCP request context carried by a tool's `Context` argument.
 
@@ -110,8 +134,19 @@ def current_user_from_context(ctx: object | None) -> User | None:
     return getattr(actor, "user", None)
 
 
-def _mcp_error(exc: ApiError) -> ValueError:
-    return ValueError(f"{exc.code}: {exc.message}")
+def _mcp_error(exc: ApiError) -> ToolError:
+    """Translate an `ApiError` into the SDK's anticipated-failure exception.
+
+    `ToolError`, not `ValueError`: since mcp 2.2 the SDK forwards the message of
+    a `ToolError` to the caller and logs it at INFO, while anything else counts
+    as a crash — the model is handed a bare `Error executing tool <name>` and the
+    server logs a traceback at ERROR. Every code below is a condition we expect
+    (a missing node, a repository the caller cannot read), so masking the code
+    both strips the one thing an agent can act on and files an ordinary 404 as a
+    server fault.
+    """
+
+    return ToolError(f"{exc.code}: {exc.message}")
 
 
 def _app_state_from_context(ctx: object | None) -> Any | None:
@@ -325,7 +360,7 @@ async def node_payload(
             )
         )
         if node is None:
-            raise ValueError("NOT_FOUND: Graph node not found")
+            raise ToolError("NOT_FOUND: Graph node not found")
 
         chunk = RetrievedChunk(
             store="code",
@@ -423,7 +458,7 @@ async def related_payload(
             max_nodes=RELATED_MAX_NODES,
         )
         if result is None:
-            raise ValueError("NOT_FOUND: Graph node not found")
+            raise ToolError("NOT_FOUND: Graph node not found")
         return result
 
 
@@ -556,7 +591,7 @@ async def collection_document_payload(
             )
         )
         if document is None:
-            raise ValueError("NOT_FOUND: Document not found")
+            raise ToolError("NOT_FOUND: Document not found")
         chunk_count = (
             await session.scalar(
                 select(func.count(MdChunk.id)).where(MdChunk.document_id == document.id)
@@ -684,7 +719,7 @@ async def read_chunk_payload(
             )
         )
         if chunk is None:
-            raise ValueError("NOT_FOUND: Chunk not found")
+            raise ToolError("NOT_FOUND: Chunk not found")
         document = await session.get(MdDocument, chunk.document_id)
         return {
             "collection_id": collection.id,
@@ -804,7 +839,7 @@ async def wiki_page_payload(
             slug=page,
         )
     if wiki_page is None:
-        raise ValueError(
+        raise ToolError(
             f"NOT_FOUND: No wiki page '{page}' for this repository"
         )
 
@@ -815,7 +850,7 @@ async def wiki_page_payload(
         if extracted is None:
             available = extract_sections(wiki_page.content)
             listed = ", ".join(available) if available else "(none)"
-            raise ValueError(
+            raise ToolError(
                 f"NOT_FOUND: Section '{section}' not in wiki page '{page}'. "
                 f"Available sections: {listed}"
             )
@@ -857,7 +892,7 @@ async def require_ready_repository(
         repository_id=repository_id,
     )
     if repository.status is not RepositoryStatus.READY:
-        raise ValueError("REPO_NOT_READY: Repository is not ready")
+        raise ToolError("REPO_NOT_READY: Repository is not ready")
     return repository
 
 
@@ -868,7 +903,7 @@ async def require_repository(
 ) -> Repository:
     repository = await session.get(Repository, repository_id)
     if repository is None:
-        raise ValueError("NOT_FOUND: Repository not found")
+        raise ToolError("NOT_FOUND: Repository not found")
     return repository
 
 
@@ -885,7 +920,7 @@ async def resolve_repository_by_slug(
     """
     parts = [segment for segment in slug.strip().split("/") if segment]
     if len(parts) != 3:
-        raise ValueError(
+        raise ToolError(
             "NOT_FOUND: repository slug must be of the form 'host/owner/name'"
         )
     host, owner, name = parts
@@ -898,7 +933,7 @@ async def resolve_repository_by_slug(
         )
     )
     if repository is None:
-        raise ValueError("NOT_FOUND: Repository not found")
+        raise ToolError("NOT_FOUND: Repository not found")
     return repository
 
 
@@ -911,7 +946,7 @@ async def resolve_readable_repository_by_slug(
 ) -> Repository:
     parts = [segment for segment in slug.strip().split("/") if segment]
     if len(parts) != 3:
-        raise ValueError(
+        raise ToolError(
             "NOT_FOUND: repository slug must be of the form 'host/owner/name'"
         )
     host, owner, name = parts

@@ -26,6 +26,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
+from mcp.server.mcpserver.exceptions import ToolError
 
 from backend.app.mcp.services import (
     MCPServices,
@@ -150,7 +151,7 @@ async def test_resolve_readable_repository_by_slug_404s_private_for_anon(
     app, db_session
 ) -> None:
     await _seed_private_repo(db_session)
-    with pytest.raises(ValueError) as excinfo:
+    with pytest.raises(ToolError) as excinfo:
         async with app.state.session_manager.session() as session:
             await resolve_readable_repository_by_slug(
                 session=session,
@@ -160,6 +161,10 @@ async def test_resolve_readable_repository_by_slug_404s_private_for_anon(
             )
     # MCP's error-mapping prefixes "NOT_FOUND:" — leaking "PERMISSION_DENIED"
     # would tell an anonymous caller the repo exists, defeating the gate.
+    #
+    # ToolError, not ValueError: since mcp 2.2 only a ToolError keeps its message
+    # on the way to the caller. A ValueError here would reach the agent as a bare
+    # "Error executing tool <name>", which is the code this assertion exists for.
     assert "NOT_FOUND" in str(excinfo.value), str(excinfo.value)
 
 
@@ -169,7 +174,7 @@ async def test_resolve_readable_repository_by_slug_404s_unknown_slug(
 ) -> None:
     # Same error code for a slug that doesn't exist at all — the
     # "private vs missing" distinction must collapse to one observable.
-    with pytest.raises(ValueError) as excinfo:
+    with pytest.raises(ToolError) as excinfo:
         async with app.state.session_manager.session() as session:
             await resolve_readable_repository_by_slug(
                 session=session,

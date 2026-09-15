@@ -6,6 +6,7 @@ from backend.app.mcp.services import (
     current_user_from_context,
     encode_payload,
     repositories_payload,
+    tool_args,
 )
 from backend.app.models.enums import RepositoryStatus
 
@@ -36,7 +37,7 @@ def register(server: MCPServer, services: MCPServices) -> None:
         limit: int = 100,
         ctx: Context | None = None,
     ) -> object:
-        args = RepositoriesToolArgs(search=search, status=status, limit=limit)
+        args = tool_args(RepositoriesToolArgs, search=search, status=status, limit=limit)
         response = await repositories_payload(
             services=services,
             current_user=current_user_from_context(ctx),

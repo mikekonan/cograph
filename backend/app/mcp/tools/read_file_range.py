@@ -8,6 +8,7 @@ asking for whole 50K-line files this way.
 from __future__ import annotations
 
 from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
@@ -17,6 +18,7 @@ from backend.app.mcp.services import (
     encode_payload,
     require_ready_repository,
     resolve_readable_repository_by_slug,
+    tool_args,
 )
 from backend.app.models.source_file import SourceFile
 
@@ -52,18 +54,18 @@ def register(server: MCPServer, services: MCPServices) -> None:
         end_line: int,
         ctx: Context | None = None,
     ) -> object:
-        args = ReadFileRangeArgs(
+        args = tool_args(ReadFileRangeArgs, 
             repository=repository,
             path=path,
             start_line=start_line,
             end_line=end_line,
         )
         if args.end_line < args.start_line:
-            raise ValueError(
+            raise ToolError(
                 "INVALID_RANGE: end_line must be >= start_line"
             )
         if args.end_line - args.start_line + 1 > MAX_LINE_RANGE:
-            raise ValueError(
+            raise ToolError(
                 f"INVALID_RANGE: range exceeds {MAX_LINE_RANGE} lines"
             )
 
@@ -87,19 +89,19 @@ def register(server: MCPServer, services: MCPServices) -> None:
             )
 
         if source_file is None:
-            raise ValueError("NOT_FOUND: Source file not found")
+            raise ToolError("NOT_FOUND: Source file not found")
 
         try:
             full = bytes(source_file.raw_bytes).decode("utf-8")
         except UnicodeDecodeError as exc:
-            raise ValueError(
+            raise ToolError(
                 f"INVALID_RANGE: cannot decode {args.path} as UTF-8"
             ) from exc
 
         lines = full.splitlines()
         total_lines = len(lines)
         if args.start_line > total_lines:
-            raise ValueError(
+            raise ToolError(
                 f"INVALID_RANGE: start_line {args.start_line} > total_lines {total_lines}"
             )
         clamped_end = min(args.end_line, total_lines)

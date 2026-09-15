@@ -175,3 +175,35 @@ async def test_read_file_range_returns_not_found_for_unknown_path(client, db_ses
     payload = response.json()
     assert payload["result"]["isError"] is True
     assert "NOT_FOUND" in payload["result"]["content"][0]["text"]
+
+
+async def test_read_file_range_reports_which_argument_was_rejected(client, db_session):
+    """A malformed argument must come back naming the field, not as a crash.
+
+    The tools validate by constructing their args model inside the body, so the
+    `ValidationError` is raised from the body — and since mcp 2.2 an exception
+    from a body is treated as a crash: the caller is handed a bare
+    `Error executing tool <name>` and the server logs a traceback for what is
+    only a bad call. `tool_args` wraps it as a `ToolError` so the offending field
+    survives the trip, which is the only thing an agent can act on.
+    """
+
+    _, plaintext = await _seed_pat_user(db_session)
+    _, slug = await _seed_repo_with_file(db_session, content="hello")
+
+    response = await _call_tool(
+        client,
+        plaintext,
+        {
+            "repository": slug,
+            "path": "src/main.py",
+            "start_line": 0,  # the model floors this at 1
+            "end_line": 5,
+        },
+    )
+
+    payload = response.json()
+    assert payload["result"]["isError"] is True
+    text = payload["result"]["content"][0]["text"]
+    assert "INVALID_REQUEST" in text, text
+    assert "start_line" in text, text

@@ -10,6 +10,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import BaseModel
 from sqlalchemy import func, select
 
@@ -22,6 +23,7 @@ from backend.app.mcp.services import (
     encode_payload,
     require_ready_repository,
     resolve_readable_repository_by_slug,
+    tool_args,
 )
 from backend.app.models.md_collection import MdDocument
 from backend.app.models.source_file import SourceFile
@@ -54,9 +56,9 @@ def register(server: MCPServer, services: MCPServices) -> None:
         collection_id: UUID | None = None,
         ctx: Context | None = None,
     ) -> object:
-        args = OutlineArgs(repository=repository, collection_id=collection_id)
+        args = tool_args(OutlineArgs, repository=repository, collection_id=collection_id)
         if (args.repository is None) == (args.collection_id is None):
-            raise ValueError(
+            raise ToolError(
                 "INVALID_REQUEST: provide exactly one of `repository` or `collection_id`"
             )
         current_user = current_user_from_context(ctx)

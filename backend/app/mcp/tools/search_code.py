@@ -9,6 +9,7 @@ from backend.app.mcp.services import (
     mcp_query_log_scope,
     resolve_readable_repository_by_slug,
     search_code_payload,
+    tool_args,
 )
 
 
@@ -45,7 +46,7 @@ def register(server: MCPServer, services: MCPServices) -> None:
         top_k: int = 10,
         ctx: Context | None = None,
     ) -> object:
-        args = SearchCodeToolArgs(
+        args = tool_args(SearchCodeToolArgs, 
             repository=repository,
             query=query,
             top_k=top_k,
