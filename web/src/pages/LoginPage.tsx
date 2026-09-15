@@ -1,10 +1,10 @@
+import { KeyRound, LockKeyhole } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
-import { KeyRound, LockKeyhole } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router";
 
 const OIDC_ERROR_MESSAGES: Record<string, string> = {
   OIDC_LINK_REQUIRED:

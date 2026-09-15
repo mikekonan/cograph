@@ -1,8 +1,8 @@
+import { render, screen } from "@testing-library/react";
+import { createMemoryRouter, RouterProvider } from "react-router";
+import { describe, expect, it } from "vitest";
 import { type AuthConfig, AuthContext, type User } from "@/contexts/AuthContext";
 import { ProtectedAdminRoute } from "@/router/ProtectedAdminRoute";
-import { render, screen } from "@testing-library/react";
-import { RouterProvider, createMemoryRouter } from "react-router";
-import { describe, expect, it } from "vitest";
 
 const baseConfig: AuthConfig = {
   registration_enabled: false,

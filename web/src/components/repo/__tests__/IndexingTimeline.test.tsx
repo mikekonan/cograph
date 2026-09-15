@@ -1,6 +1,6 @@
-import type { SyncBatchSummary, SyncJob } from "@/api/types";
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import type { SyncBatchSummary, SyncJob } from "@/api/types";
 import { IndexingTimeline } from "../IndexingTimeline";
 
 const batch: SyncBatchSummary = {

@@ -1,9 +1,9 @@
+import { AlertCircle } from "lucide-react";
+import type { ReactNode } from "react";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Spinner } from "@/components/shared/Spinner";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
-import { AlertCircle } from "lucide-react";
-import type { ReactNode } from "react";
 
 type State = "loading" | "empty" | "error" | "ok";
 

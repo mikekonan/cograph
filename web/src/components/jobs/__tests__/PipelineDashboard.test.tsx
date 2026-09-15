@@ -1,7 +1,7 @@
-import type { SyncStats } from "@/api/types";
-import { PipelineDashboard } from "@/components/jobs/PipelineDashboard";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import type { SyncStats } from "@/api/types";
+import { PipelineDashboard } from "@/components/jobs/PipelineDashboard";
 
 function stats(overrides: Partial<SyncStats> = {}): SyncStats {
   return {

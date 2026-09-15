@@ -1,6 +1,6 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createSecret, deleteSecret, listSecrets, testSecret, updateSecret } from "@/api/secrets";
 import type { LLMSecret, SecretUpsertRequest } from "@/api/types";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 const SECRETS_KEY = ["admin", "secrets"] as const;
 

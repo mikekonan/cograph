@@ -1,3 +1,5 @@
+import { FolderOpen, Plus } from "lucide-react";
+import { useEffect, useState } from "react";
 import type { MdCollectionVisibility } from "@/api/mdCollections";
 import { DocsTabs } from "@/components/md/DocsTabs";
 import { MdCollectionGrid } from "@/components/md/MdCollectionGrid";
@@ -23,8 +25,6 @@ import {
   SelectValue,
 } from "@/components/ui/Select";
 import { useCreateMdCollection, useMdCollections } from "@/hooks/useMdCollections";
-import { FolderOpen, Plus } from "lucide-react";
-import { useEffect, useState } from "react";
 
 export default function MdCollectionsPage() {
   const [page, setPage] = useState(1);

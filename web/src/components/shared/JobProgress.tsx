@@ -1,4 +1,3 @@
-import { cn } from "@/lib/utils";
 import {
   AlertCircle,
   CheckCircle2,
@@ -10,6 +9,7 @@ import {
   XCircle,
 } from "lucide-react";
 import type { ComponentType } from "react";
+import { cn } from "@/lib/utils";
 
 export type JobStatus =
   | "queued"

@@ -1,8 +1,8 @@
+import { HttpResponse, http } from "msw";
 import type { TokenScope, TokenView } from "@/api/tokens";
 import type { ApiErrorBody } from "@/api/types";
 import { mockDb } from "@/mocks/state";
 import { netDelay } from "@/mocks/utils";
-import { http, HttpResponse } from "msw";
 
 const ALLOWED_SCOPES: ReadonlySet<TokenScope> = new Set(["api:read", "api:write", "mcp"]);
 

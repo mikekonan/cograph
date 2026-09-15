@@ -1,8 +1,8 @@
-import { type AuthConfig, AuthContext, type User } from "@/contexts/AuthContext";
-import { type EffectiveTheme, ThemeContext, type ThemeMode } from "@/contexts/ThemeContext";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
+import { type AuthConfig, AuthContext, type User } from "@/contexts/AuthContext";
+import { type EffectiveTheme, ThemeContext, type ThemeMode } from "@/contexts/ThemeContext";
 import { TopBar } from "../TopBar";
 
 const themeValue: {

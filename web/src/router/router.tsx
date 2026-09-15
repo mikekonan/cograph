@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+import { createBrowserRouter, Navigate, Outlet, useLocation, useNavigate } from "react-router";
 import { subscribeAuthFailure } from "@/api/client";
 import { TopBar } from "@/components/layout/TopBar";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
@@ -20,8 +22,6 @@ import RepoOverviewPage from "@/pages/RepoOverviewPage";
 import RepoWikiPage from "@/pages/RepoWikiPage";
 import SearchPage from "@/pages/SearchPage";
 import SetupPage from "@/pages/SetupPage";
-import { useEffect, useState } from "react";
-import { Navigate, Outlet, createBrowserRouter, useLocation, useNavigate } from "react-router";
 import { ProtectedAdminRoute } from "./ProtectedAdminRoute";
 import { ProtectedAuthRoute } from "./ProtectedAuthRoute";
 

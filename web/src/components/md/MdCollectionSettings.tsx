@@ -1,11 +1,11 @@
+import { Eye } from "lucide-react";
+import type { ReactNode } from "react";
 import type { MdCollection, MdCollectionVisibility } from "@/api/mdCollections";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/Select";
 import { useAuth } from "@/hooks/useAuth";
 import { useUpdateMdCollection } from "@/hooks/useMdCollections";
 import { hasAdminAccess } from "@/lib/auth";
 import { cn } from "@/lib/utils";
-import { Eye } from "lucide-react";
-import type { ReactNode } from "react";
 import { MdCollectionVisibilityBadge } from "./MdCollectionVisibilityBadge";
 
 type MdCollectionSettingsProps = {

@@ -1,7 +1,7 @@
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiJson } from "@/api/client";
 import type { GraphNodeDetail, GraphResponse, Language, NodeType, RepoSlug } from "@/api/types";
 import { repoApiPath } from "@/lib/repoPath";
-import { useMutation, useQuery } from "@tanstack/react-query";
 
 /**
  * Default graph view.

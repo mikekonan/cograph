@@ -1,8 +1,8 @@
+import { HttpResponse, http } from "msw";
 import type { ApiErrorBody, Language, NodeType } from "@/api/types";
-import { type GraphView, buildGraphResponse, buildNodeDetail } from "@/mocks/fixtures/graph";
+import { buildGraphResponse, buildNodeDetail, type GraphView } from "@/mocks/fixtures/graph";
 import { getReadableMockRepoBySlug } from "@/mocks/repoAccess";
 import { maybeFail, netDelay } from "@/mocks/utils";
-import { http, HttpResponse } from "msw";
 
 function err(code: string, message: string): ApiErrorBody {
   return { error: { code, message, request_id: `req-${Date.now()}` } };

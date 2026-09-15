@@ -1,7 +1,7 @@
-import { cn } from "@/lib/utils";
 import { ChevronRight } from "lucide-react";
 import { Fragment, type ReactNode } from "react";
 import { NavLink } from "react-router";
+import { cn } from "@/lib/utils";
 
 export type BreadcrumbItem = {
   label: ReactNode;

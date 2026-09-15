@@ -1,8 +1,8 @@
+import { ArrowLeft, ArrowRight } from "lucide-react";
+import { NavLink } from "react-router";
 import type { DocTreeNodeBase, RepoSlug } from "@/api/types";
 import { repoPath } from "@/lib/repoPath";
 import { cn } from "@/lib/utils";
-import { ArrowLeft, ArrowRight } from "lucide-react";
-import { NavLink } from "react-router";
 
 type Entry = Pick<DocTreeNodeBase, "slug" | "title">;
 

@@ -1,15 +1,15 @@
+import { HttpResponse, http } from "msw";
 import type {
   ApiErrorBody,
   OffsetPage,
   RepoStatus,
-  RepoVisibility,
   Repository,
+  RepoVisibility,
   SyncSchedule,
 } from "@/api/types";
 import { getReadableMockRepoBySlug, listReadableMockRepos } from "@/mocks/repoAccess";
 import { mockAuth, mockDb } from "@/mocks/state";
 import { maybeFail, netDelay, wantEmpty } from "@/mocks/utils";
-import { http, HttpResponse } from "msw";
 
 function paginate<T>(items: T[], page: number, perPage: number): OffsetPage<T> {
   const start = (page - 1) * perPage;

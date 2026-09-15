@@ -1,13 +1,13 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   type CreateScimClientInput,
-  type ScimEventFilters,
   createScimClient,
   listScimClients,
   listScimEvents,
   revokeScimClient,
   rotateScimClient,
+  type ScimEventFilters,
 } from "@/api/scim";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 export const scimClientsQueryKey = ["admin", "scim-clients"] as const;
 export const scimEventsQueryKey = (filters: ScimEventFilters) =>

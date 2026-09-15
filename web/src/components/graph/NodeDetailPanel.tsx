@@ -1,9 +1,9 @@
+import { ArrowDownRight, ArrowUpRight, Braces, ExternalLink, Layers } from "lucide-react";
 import type { GraphNode, GraphNodeDetail } from "@/api/types";
 import { CodeBlock } from "@/components/shared/CodeBlock";
 import { Skeleton } from "@/components/shared/Skeleton";
 import { buildSourceUrl } from "@/lib/git";
 import { cn } from "@/lib/utils";
-import { ArrowDownRight, ArrowUpRight, Braces, ExternalLink, Layers } from "lucide-react";
 import { NodeTypeBadge } from "./NodeTypeBadge";
 
 type NodeDetailPanelProps = {

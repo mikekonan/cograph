@@ -1,5 +1,5 @@
-import { normalizeWikiMarkdown, stripWikiCitationFootnotes } from "@/lib/wikiContent";
 import { describe, expect, it } from "vitest";
+import { normalizeWikiMarkdown, stripWikiCitationFootnotes } from "@/lib/wikiContent";
 
 describe("stripWikiCitationFootnotes", () => {
   it("removes footnote refs, definitions, and Sources lines", () => {

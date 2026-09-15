@@ -1,3 +1,5 @@
+import { Check, Copy, KeyRound, Plus, RotateCw, Trash2 } from "lucide-react";
+import { useId, useMemo, useState } from "react";
 import { ApiError } from "@/api/errors";
 import type { IdentityProvider } from "@/api/identityProviders";
 import type { ScimClientCreated, ScimClientView, ScimEventView } from "@/api/scim";
@@ -29,8 +31,6 @@ import {
   useScimEvents,
 } from "@/hooks/useScim";
 import { cn } from "@/lib/utils";
-import { Check, Copy, KeyRound, Plus, RotateCw, Trash2 } from "lucide-react";
-import { useId, useMemo, useState } from "react";
 
 /**
  * AdminScimClientsPage — `/admin/scim`. Owner-only management of SCIM 2.0
@@ -494,13 +494,7 @@ function RevealTokenDialog({
   );
 }
 
-function RevokeDialog({
-  target,
-  onClose,
-}: {
-  target: ScimClientView | null;
-  onClose: () => void;
-}) {
+function RevokeDialog({ target, onClose }: { target: ScimClientView | null; onClose: () => void }) {
   const revoke = useRevokeScimClient();
   const [error, setError] = useState<string | null>(null);
 

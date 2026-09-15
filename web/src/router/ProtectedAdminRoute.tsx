@@ -1,9 +1,9 @@
+import type { ReactNode } from "react";
+import { Navigate, useLocation } from "react-router";
 import { Skeleton } from "@/components/shared/Skeleton";
 import { Button } from "@/components/ui/Button";
 import { useAuth } from "@/hooks/useAuth";
 import { hasAdminAccess } from "@/lib/auth";
-import type { ReactNode } from "react";
-import { Navigate, useLocation } from "react-router";
 
 export function ProtectedAdminRoute({ children }: { children: ReactNode }) {
   const { status, user } = useAuth();

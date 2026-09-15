@@ -1,6 +1,6 @@
+import { useQuery } from "@tanstack/react-query";
 import { retrieve } from "@/api/retrieve";
 import type { RetrieveRequest } from "@/api/types";
-import { useQuery } from "@tanstack/react-query";
 
 export function useRetrieve(payload: RetrieveRequest | undefined) {
   const enabled = Boolean(payload?.query && payload.repository_id);

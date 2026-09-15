@@ -1,8 +1,8 @@
-import type { Repository } from "@/api/types";
 import { describe, expect, it } from "vitest";
+import type { Repository } from "@/api/types";
 import {
-  FIRST_RUN_LIFECYCLE_TOTAL_MS,
   applyFirstRunPlaceholder,
+  FIRST_RUN_LIFECYCLE_TOTAL_MS,
   getFirstRunLifecycleStatus,
   repoInFlightMessage,
 } from "../repoStatus";

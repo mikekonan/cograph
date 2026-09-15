@@ -1,3 +1,6 @@
+import { AlertCircle, BookText, Clock } from "lucide-react";
+import { useMemo } from "react";
+import { Navigate, useNavigate, useParams } from "react-router";
 import { ConflictError, NotFoundError } from "@/api/errors";
 import type { RepoSlug, WikiPage, WikiTreeNode } from "@/api/types";
 import { DocSidebar, DocSidebarSkeleton } from "@/components/docs/DocSidebar";
@@ -22,9 +25,6 @@ import { parseSlugFromParams, repoPath } from "@/lib/repoPath";
 import { isInFlightRepoStatus } from "@/lib/repoStatus";
 import { cn } from "@/lib/utils";
 import { normalizeWikiMarkdown, stripWikiCitationFootnotes } from "@/lib/wikiContent";
-import { AlertCircle, BookText, Clock } from "lucide-react";
-import { useMemo } from "react";
-import { Navigate, useNavigate, useParams } from "react-router";
 
 export default function RepoWikiPage() {
   const params = useParams<{ host: string; owner: string; name: string; slug?: string }>();

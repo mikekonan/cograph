@@ -1,3 +1,6 @@
+import { FolderGit2, Search, X } from "lucide-react";
+import { useDeferredValue, useMemo, useState } from "react";
+import { useNavigate } from "react-router";
 import type { RepoStatus } from "@/api/types";
 import { AddRepoDialog } from "@/components/repo/AddRepoDialog";
 import { RepoGrid } from "@/components/repo/RepoGrid";
@@ -17,9 +20,6 @@ import { useAuth } from "@/hooks/useAuth";
 import { useRepos } from "@/hooks/useRepos";
 import { hasAdminAccess } from "@/lib/auth";
 import { cn } from "@/lib/utils";
-import { FolderGit2, Search, X } from "lucide-react";
-import { useDeferredValue, useMemo, useState } from "react";
-import { useNavigate } from "react-router";
 
 type StatusFilter = RepoStatus | "all";
 

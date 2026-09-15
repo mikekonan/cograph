@@ -1,5 +1,5 @@
-import type { ApiErrorBody } from "@/api/types";
 import { HttpResponse } from "msw";
+import type { ApiErrorBody } from "@/api/types";
 
 /**
  * Slow-backend simulation for MSW. Every handler passes through these so the

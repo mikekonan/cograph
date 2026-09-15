@@ -1,7 +1,7 @@
+import { Clock } from "lucide-react";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { type Job, JobProgress } from "@/components/shared/JobProgress";
 import { cn } from "@/lib/utils";
-import { Clock } from "lucide-react";
 
 type JobsListProps = {
   jobs: Job[];

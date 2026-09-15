@@ -1,3 +1,5 @@
+import { Crown, KeyRound, Link2, Pencil, Plus, Shield, Trash2, Users } from "lucide-react";
+import { useMemo, useState } from "react";
 import { ApiError } from "@/api/errors";
 import type { AdminLinkedProvider, AdminUser, AdminUserGroup } from "@/api/users";
 import { Skeleton } from "@/components/shared/Skeleton";
@@ -28,8 +30,6 @@ import {
   useUpdateAdminUser,
 } from "@/hooks/useUsers";
 import { cn } from "@/lib/utils";
-import { Crown, KeyRound, Link2, Pencil, Plus, Shield, Trash2, Users } from "lucide-react";
-import { useMemo, useState } from "react";
 
 /** Max number of group chips rendered inline before the "+N" overflow chip kicks in. */
 const GROUP_CHIP_VISIBLE_LIMIT = 3;

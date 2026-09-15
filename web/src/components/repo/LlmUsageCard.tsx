@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { SyncBatchSummary, SyncJob, SyncStep } from "@/api/types";
 import {
   Select,
@@ -9,7 +10,6 @@ import {
 import { useJobBatch } from "@/hooks/useJobs";
 import { cachedShare, formatCost, formatRunDate, formatTokens } from "@/lib/llmUsage";
 import { cn } from "@/lib/utils";
-import { useState } from "react";
 
 type LlmUsageCardProps = {
   /** Latest repo_sync batch — the default selection. */

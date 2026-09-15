@@ -1,6 +1,6 @@
+import { cva, type VariantProps } from "class-variance-authority";
+import { forwardRef, type TextareaHTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
-import { type VariantProps, cva } from "class-variance-authority";
-import { type TextareaHTMLAttributes, forwardRef } from "react";
 
 const textareaVariants = cva(
   [

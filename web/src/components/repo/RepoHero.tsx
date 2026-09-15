@@ -1,3 +1,6 @@
+import { ExternalLink, GitBranch, RefreshCw, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { useNavigate } from "react-router";
 import type { Repository } from "@/api/types";
 import { RepoVisibilityBadge } from "@/components/repo/RepoVisibilityBadge";
 import { LanguageTags } from "@/components/shared/LanguageTags";
@@ -18,9 +21,6 @@ import { useAuth } from "@/hooks/useAuth";
 import { useDeleteRepo, useReindexRepo } from "@/hooks/useRepos";
 import { hasAdminAccess } from "@/lib/auth";
 import { cn, formatRelativeTime } from "@/lib/utils";
-import { ExternalLink, GitBranch, RefreshCw, Trash2 } from "lucide-react";
-import { useState } from "react";
-import { useNavigate } from "react-router";
 
 const REINDEX_DISABLED_FOR_ZIP =
   "Re-index is disabled for uploaded archives — re-upload to refresh.";

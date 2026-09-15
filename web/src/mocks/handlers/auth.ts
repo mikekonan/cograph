@@ -1,8 +1,8 @@
+import { HttpResponse, http } from "msw";
 import type { ApiErrorBody } from "@/api/types";
 import type { AuthConfig, AuthProviderConfig, User } from "@/contexts/AuthContext";
 import { MOCK_CSRF, mockAuth, mockDb, mockRuntime } from "@/mocks/state";
 import { netDelay } from "@/mocks/utils";
-import { http, HttpResponse } from "msw";
 
 function currentUser(): User {
   return {

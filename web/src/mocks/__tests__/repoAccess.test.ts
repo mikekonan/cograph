@@ -1,3 +1,5 @@
+import { setupServer } from "msw/node";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { apiJson } from "@/api/client";
 import { NotFoundError } from "@/api/errors";
 import type { GraphResponse, OffsetPage, Repository } from "@/api/types";
@@ -8,8 +10,6 @@ import { repoHandlers } from "@/mocks/handlers/repos";
 import { retrieveHandlers } from "@/mocks/handlers/retrieve";
 import { wikiHandlers } from "@/mocks/handlers/wiki";
 import { mockAuth, mockDb, mockRuntime, resetMockState } from "@/mocks/state";
-import { setupServer } from "msw/node";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 const PUBLIC_REPO_ID = "00000000-0000-0000-0000-000000000001";
 const PUBLIC_REPO_PATH = "/api/repos/github.com/fastapi/fastapi";

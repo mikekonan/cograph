@@ -1,6 +1,6 @@
-import type { SyncBatchSummary, SyncJob, SyncStats } from "@/api/types";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { SyncBatchSummary, SyncJob, SyncStats } from "@/api/types";
 import JobsPage from "../JobsPage";
 
 const authState = {

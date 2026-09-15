@@ -1,5 +1,3 @@
-import type { Language, NodeType } from "@/api/types";
-import { cn } from "@/lib/utils";
 import {
   Box,
   ChevronDown,
@@ -11,6 +9,8 @@ import {
   Puzzle,
 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
+import type { Language, NodeType } from "@/api/types";
+import { cn } from "@/lib/utils";
 
 export type AstNode = {
   id: string;
@@ -67,7 +67,10 @@ export function AstTree({ nodes, onSelect, initialExpanded, className }: AstTree
   );
 
   return (
-    <ul role="tree" className={cn("flex flex-col gap-0.5 text-sm font-mono", className)}>
+    // ponytail: a plain list of buttons, not role="tree" -- a tree role
+    // promises arrow-key navigation and a roving tabindex this widget does
+    // not implement. Add the roles back in the commit that adds the keymap.
+    <ul className={cn("flex flex-col gap-0.5 text-sm font-mono", className)}>
       {nodes.map((node) => (
         <AstNodeRow
           key={node.id}
@@ -99,9 +102,10 @@ function AstNodeRow({ node, depth, expanded, selectedId, onToggle, onSelect }: R
   const Icon = iconFor(node.node_type);
 
   return (
-    <li role="treeitem" aria-expanded={hasChildren ? isExpanded : undefined}>
+    <li>
       <button
         type="button"
+        aria-expanded={hasChildren ? isExpanded : undefined}
         onClick={() => {
           if (hasChildren) onToggle(node.id);
           onSelect(node);

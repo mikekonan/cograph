@@ -1,3 +1,4 @@
+import { RefreshCw } from "lucide-react";
 import type { MdJobWithCollection } from "@/api/mdCollections";
 import {
   Dialog,
@@ -7,7 +8,6 @@ import {
   DialogTitle,
 } from "@/components/ui/Dialog";
 import { cn, formatRelativeTime } from "@/lib/utils";
-import { RefreshCw } from "lucide-react";
 
 type JobHistoryDrawerProps = {
   open: boolean;

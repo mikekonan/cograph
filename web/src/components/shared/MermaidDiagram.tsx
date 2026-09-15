@@ -1,8 +1,8 @@
+import { AlertTriangle } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { Skeleton } from "@/components/shared/Skeleton";
 import { useTheme } from "@/hooks/useTheme";
 import { cn } from "@/lib/utils";
-import { AlertTriangle } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
 
 // Mermaid's `securityLevel: "antiscript"` only strips <script> tags. It
 // does NOT scrub `onclick`/`onerror`/`onload` and similar event-handler

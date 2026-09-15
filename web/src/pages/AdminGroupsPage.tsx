@@ -1,3 +1,15 @@
+import { useQuery } from "@tanstack/react-query";
+import {
+  Database,
+  GitBranch,
+  Pencil,
+  Plus,
+  Trash2,
+  UserPlus,
+  Users,
+  UsersRound,
+} from "lucide-react";
+import { useMemo, useState } from "react";
 import { apiJson } from "@/api/client";
 import { ApiError } from "@/api/errors";
 import type {
@@ -49,18 +61,6 @@ import {
 import { useIdentityProviders } from "@/hooks/useIdentityProviders";
 import { useAdminUsers } from "@/hooks/useUsers";
 import { cn } from "@/lib/utils";
-import { useQuery } from "@tanstack/react-query";
-import {
-  Database,
-  GitBranch,
-  Pencil,
-  Plus,
-  Trash2,
-  UserPlus,
-  Users,
-  UsersRound,
-} from "lucide-react";
-import { useMemo, useState } from "react";
 
 /**
  * AdminGroupsPage — Settings → Groups. CRUD for groups, group membership,
@@ -594,13 +594,7 @@ function AddMembersDialog({
 // Repository grants panel
 // ---------------------------------------------------------------------------
 
-function RepositoryGrantsPanel({
-  groupId,
-  groupName,
-}: {
-  groupId: UUID;
-  groupName: string;
-}) {
+function RepositoryGrantsPanel({ groupId, groupName }: { groupId: UUID; groupName: string }) {
   const grantsQuery = useGroupRepositoryGrants(groupId);
   const putGrant = usePutGroupRepositoryGrant(groupId);
   const deleteGrant = useDeleteGroupRepositoryGrant(groupId);
@@ -893,13 +887,7 @@ function AddRepositoryGrantDialog({
 // Collection grants panel
 // ---------------------------------------------------------------------------
 
-function CollectionGrantsPanel({
-  groupId,
-  groupName,
-}: {
-  groupId: UUID;
-  groupName: string;
-}) {
+function CollectionGrantsPanel({ groupId, groupName }: { groupId: UUID; groupName: string }) {
   const grantsQuery = useGroupCollectionGrants(groupId);
   const putGrant = usePutGroupCollectionGrant(groupId);
   const deleteGrant = useDeleteGroupCollectionGrant(groupId);
@@ -1402,13 +1390,7 @@ function CreateGroupDialog({
   );
 }
 
-function EditGroupDialog({
-  group,
-  onClose,
-}: {
-  group: AdminGroup | null;
-  onClose: () => void;
-}) {
+function EditGroupDialog({ group, onClose }: { group: AdminGroup | null; onClose: () => void }) {
   const updateGroup = useUpdateAdminGroup();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");

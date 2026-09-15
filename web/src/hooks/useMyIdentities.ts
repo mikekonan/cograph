@@ -1,5 +1,5 @@
-import { type LinkedIdentity, listMyIdentities, unlinkMyIdentity } from "@/api/identities";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type LinkedIdentity, listMyIdentities, unlinkMyIdentity } from "@/api/identities";
 
 export const myIdentitiesQueryKey = ["me", "identities"] as const;
 

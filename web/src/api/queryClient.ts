@@ -1,5 +1,5 @@
-import { ApiError, RateLimitError, RecoverableError } from "@/api/errors";
 import { QueryClient } from "@tanstack/react-query";
+import { ApiError, RateLimitError, RecoverableError } from "@/api/errors";
 
 /**
  * Single shared QueryClient. Retry policy matches the API error contract:

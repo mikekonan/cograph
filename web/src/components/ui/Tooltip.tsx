@@ -1,6 +1,6 @@
-import { cn } from "@/lib/utils";
 import * as TooltipPrimitive from "@radix-ui/react-tooltip";
-import { type ComponentPropsWithoutRef, type ReactNode, forwardRef } from "react";
+import { type ComponentPropsWithoutRef, forwardRef, type ReactNode } from "react";
+import { cn } from "@/lib/utils";
 
 /**
  * Tooltip — hover-triggered hint. Uses Radix for positioning + a11y.

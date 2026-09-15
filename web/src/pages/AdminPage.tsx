@@ -1,12 +1,3 @@
-import { cn } from "@/lib/utils";
-import AdminGitHostsPage from "@/pages/AdminGitHostsPage";
-import AdminGroupsPage from "@/pages/AdminGroupsPage";
-import AdminIdentityProvidersPage from "@/pages/AdminIdentityProvidersPage";
-import AdminLLMRuntimePage from "@/pages/AdminLLMRuntimePage";
-import AdminMcpPage from "@/pages/AdminMcpPage";
-import AdminQueryLogsPage from "@/pages/AdminQueryLogsPage";
-import AdminScimClientsPage from "@/pages/AdminScimClientsPage";
-import AdminUsersPage from "@/pages/AdminUsersPage";
 import {
   BarChart3,
   BookOpen,
@@ -21,6 +12,15 @@ import {
 } from "lucide-react";
 import { type ComponentType, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router";
+import { cn } from "@/lib/utils";
+import AdminGitHostsPage from "@/pages/AdminGitHostsPage";
+import AdminGroupsPage from "@/pages/AdminGroupsPage";
+import AdminIdentityProvidersPage from "@/pages/AdminIdentityProvidersPage";
+import AdminLLMRuntimePage from "@/pages/AdminLLMRuntimePage";
+import AdminMcpPage from "@/pages/AdminMcpPage";
+import AdminQueryLogsPage from "@/pages/AdminQueryLogsPage";
+import AdminScimClientsPage from "@/pages/AdminScimClientsPage";
+import AdminUsersPage from "@/pages/AdminUsersPage";
 
 type TabId =
   | "llm-runtime"
@@ -111,7 +111,7 @@ export default function AdminPage() {
       </header>
 
       <nav aria-label="Config sections" className="-mx-2 overflow-x-auto pb-1">
-        <ul
+        <div
           role="tablist"
           className="inline-flex gap-1 border-b border-[color:var(--color-border-subtle)] px-2"
         >
@@ -119,34 +119,33 @@ export default function AdminPage() {
             const isActive = tab.id === activeId;
             const Icon = tab.icon;
             return (
-              <li key={tab.id} role="presentation">
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={isActive}
-                  aria-controls={`tab-panel-${tab.id}`}
-                  id={`tab-${tab.id}`}
-                  onClick={() => {
-                    const next = new URLSearchParams(searchParams);
-                    next.set("tab", tab.id);
-                    setSearchParams(next, { replace: false });
-                  }}
-                  className={cn(
-                    "inline-flex h-9 items-center gap-1.5 whitespace-nowrap rounded-t-[var(--radius-sm)] px-3 text-sm font-medium",
-                    "transition-colors duration-[var(--motion-quick)]",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-ring)]/40",
-                    isActive
-                      ? "border-b-2 border-[color:var(--color-accent)] text-[color:var(--color-fg)]"
-                      : "border-b-2 border-transparent text-[color:var(--color-fg-muted)] hover:bg-[color:var(--color-bg-hover)] hover:text-[color:var(--color-fg)]",
-                  )}
-                >
-                  <Icon className="h-4 w-4" aria-hidden="true" />
-                  {tab.label}
-                </button>
-              </li>
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={isActive}
+                aria-controls={`tab-panel-${tab.id}`}
+                id={`tab-${tab.id}`}
+                onClick={() => {
+                  const next = new URLSearchParams(searchParams);
+                  next.set("tab", tab.id);
+                  setSearchParams(next, { replace: false });
+                }}
+                className={cn(
+                  "inline-flex h-9 items-center gap-1.5 whitespace-nowrap rounded-t-[var(--radius-sm)] px-3 text-sm font-medium",
+                  "transition-colors duration-[var(--motion-quick)]",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-ring)]/40",
+                  isActive
+                    ? "border-b-2 border-[color:var(--color-accent)] text-[color:var(--color-fg)]"
+                    : "border-b-2 border-transparent text-[color:var(--color-fg-muted)] hover:bg-[color:var(--color-bg-hover)] hover:text-[color:var(--color-fg)]",
+                )}
+              >
+                <Icon className="h-4 w-4" aria-hidden="true" />
+                {tab.label}
+              </button>
             );
           })}
-        </ul>
+        </div>
       </nav>
 
       <div role="tabpanel" id={`tab-panel-${activeId}`} aria-labelledby={`tab-${activeId}`}>

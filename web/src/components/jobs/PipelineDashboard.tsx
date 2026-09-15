@@ -1,8 +1,8 @@
+import { CheckCircle2, Clock, Zap } from "lucide-react";
+import type { ComponentType, SVGProps } from "react";
 import type { SyncStats } from "@/api/types";
 import { Skeleton } from "@/components/shared/Skeleton";
 import { cn } from "@/lib/utils";
-import { CheckCircle2, Clock, Zap } from "lucide-react";
-import type { ComponentType, SVGProps } from "react";
 
 type PipelineDashboardProps = {
   stats: SyncStats | undefined;

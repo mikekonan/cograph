@@ -1,10 +1,10 @@
-import type { Repository } from "@/api/types";
-import { TooltipProvider } from "@/components/ui/Tooltip";
-import { type AuthConfig, AuthContext } from "@/contexts/AuthContext";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
+import type { Repository } from "@/api/types";
+import { TooltipProvider } from "@/components/ui/Tooltip";
+import { type AuthConfig, AuthContext } from "@/contexts/AuthContext";
 import { RepoCard } from "../RepoCard";
 
 const authConfig: AuthConfig = {

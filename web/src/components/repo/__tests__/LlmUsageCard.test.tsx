@@ -1,6 +1,6 @@
-import type { SyncBatchSummary, SyncJob } from "@/api/types";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import type { SyncBatchSummary, SyncJob } from "@/api/types";
 import { LlmUsageCard } from "../LlmUsageCard";
 
 // Past-run selections fetch the batch via useJobBatch; stub it so the

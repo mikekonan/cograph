@@ -1,10 +1,10 @@
+import { ArrowUpRight, ChevronDown, FileCode, FileText, Network } from "lucide-react";
+import { useState } from "react";
+import { NavLink } from "react-router";
 import type { RepoSlug, WikiCitation } from "@/api/types";
 import { buildSourceUrl } from "@/lib/git";
 import { repoPath } from "@/lib/repoPath";
 import { cn } from "@/lib/utils";
-import { ArrowUpRight, ChevronDown, FileCode, FileText, Network } from "lucide-react";
-import { useState } from "react";
-import { NavLink } from "react-router";
 
 type WikiCitationSourcesProps = {
   citations: WikiCitation[];

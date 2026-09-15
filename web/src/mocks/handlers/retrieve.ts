@@ -1,8 +1,8 @@
+import { HttpResponse, http } from "msw";
 import type { ApiErrorBody, RetrieveRequest } from "@/api/types";
 import { retrieveFixtures } from "@/mocks/fixtures/retrieve";
 import { getReadableMockRepo } from "@/mocks/repoAccess";
 import { maybeFail, netDelay } from "@/mocks/utils";
-import { http, HttpResponse } from "msw";
 
 function err(code: string, message: string): ApiErrorBody {
   return { error: { code, message, request_id: `req-${Date.now()}` } };

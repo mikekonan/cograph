@@ -1,3 +1,5 @@
+import { Check, Pencil, Plug, Plus, ShieldCheck, Trash2 } from "lucide-react";
+import { useId, useMemo, useState } from "react";
 import { ApiError } from "@/api/errors";
 import type {
   AdminGroupMode,
@@ -34,8 +36,6 @@ import {
   useUpdateIdentityProvider,
 } from "@/hooks/useIdentityProviders";
 import { cn } from "@/lib/utils";
-import { Check, Pencil, Plug, Plus, ShieldCheck, Trash2 } from "lucide-react";
-import { useId, useMemo, useState } from "react";
 
 /**
  * AdminIdentityProvidersPage — `/admin/identity-providers`. Admin-or-owner

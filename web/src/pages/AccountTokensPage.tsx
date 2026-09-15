@@ -1,3 +1,5 @@
+import { Check, Copy, KeyRound, Plus, RotateCw, Terminal, Trash2 } from "lucide-react";
+import { useMemo, useState } from "react";
 import { ApiError } from "@/api/errors";
 import { ALL_SCOPES, type TokenCreated, type TokenScope, type TokenView } from "@/api/tokens";
 import { Skeleton } from "@/components/shared/Skeleton";
@@ -14,8 +16,6 @@ import {
 import { Input } from "@/components/ui/Input";
 import { useCreateToken, useRevokeToken, useRotateToken, useTokens } from "@/hooks/useTokens";
 import { cn } from "@/lib/utils";
-import { Check, Copy, KeyRound, Plus, RotateCw, Terminal, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
 
 const SCOPE_LABELS: Record<TokenScope, string> = {
   "api:read": "Read REST",
@@ -469,13 +469,7 @@ function RevealTokenDialog({
   );
 }
 
-function RevokeTokenDialog({
-  token,
-  onClose,
-}: {
-  token: TokenView | null;
-  onClose: () => void;
-}) {
+function RevokeTokenDialog({ token, onClose }: { token: TokenView | null; onClose: () => void }) {
   const revokeMutation = useRevokeToken();
   const [topError, setTopError] = useState<string | null>(null);
 

@@ -1,6 +1,6 @@
+import { HttpResponse, http } from "msw";
 import type { AssignmentRequest, AssignmentView, LLMRole, ReasoningEffort } from "@/api/llmRuntime";
 import { mockDb } from "@/mocks/state";
-import { http, HttpResponse } from "msw";
 
 const VALID_ROLES = new Set<LLMRole>([
   "embedding",

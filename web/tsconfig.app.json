@@ -17,7 +17,13 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true,
     "noEmit": true,
-    "baseUrl": ".",
+    // Listed explicitly because TypeScript 7 no longer pulls @types/node in
+    // on its own for a DOM project, and two files under src/ are node code:
+    // the vitest setup and the index.html test.
+    "types": ["node"],
+    // No "baseUrl": TypeScript 7 removed it, and it was doing nothing here --
+    // a "paths" entry without one already resolves against this file's own
+    // directory, which is what "./src/*" means.
     "paths": {
       "@/*": ["./src/*"]
     }

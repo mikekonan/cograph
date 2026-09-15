@@ -1,3 +1,5 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRef } from "react";
 import { apiFetch, apiJson } from "@/api/client";
 import type { OffsetPage, RepoSlug, Repository, SubmitRepoRequest } from "@/api/types";
 import { repoApiPath } from "@/lib/repoPath";
@@ -7,8 +9,6 @@ import {
   getFirstRunLifecycleTotalMs,
   isInFlightRepoStatus,
 } from "@/lib/repoStatus";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef } from "react";
 
 const CREATED_REPO_LIFECYCLES_QUERY_KEY = ["created-repo-lifecycles"] as const;
 
@@ -94,10 +94,7 @@ function seedCreatedRepoIntoListCaches(qc: ReturnType<typeof useQueryClient>, re
  * manual refresh. Capability-disabled first-run placeholders skip synthetic
  * embed/generate stages so the grid does not overstate skipped work.
  */
-export function useRepos(params?: {
-  search?: string;
-  status?: Repository["status"];
-}) {
+export function useRepos(params?: { search?: string; status?: Repository["status"] }) {
   const qc = useQueryClient();
   const query = useQuery({
     queryKey: ["repos", params?.search ?? "", params?.status ?? "all"],
@@ -142,7 +139,7 @@ export function useRepo(slug: RepoSlug | null | undefined) {
       const data = q.state.data as Repository | undefined;
       if (!data) return false;
       return isInFlightRepoStatus(data.status) ||
-        !!data.sync_state ||
+        data.sync_state ||
         hasActiveCreatedRepoLifecycle(qc, data.id)
         ? 1000
         : false;

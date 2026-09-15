@@ -1,8 +1,8 @@
+import { HttpResponse, http } from "msw";
 import type { ApiErrorBody, DocTreeNode, Repository } from "@/api/types";
 import { docsByRepo } from "@/mocks/fixtures/docs";
 import { getReadableMockRepoBySlug } from "@/mocks/repoAccess";
 import { maybeFail, netDelay } from "@/mocks/utils";
-import { http, HttpResponse } from "msw";
 
 /** Count leaf documents recursively — mirrors flattenLeaves in RepoDocsPage. */
 function countLeaves(nodes: DocTreeNode[]): number {

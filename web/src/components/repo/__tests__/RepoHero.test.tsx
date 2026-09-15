@@ -1,12 +1,12 @@
-import type { Repository } from "@/api/types";
-import { TooltipProvider } from "@/components/ui/Tooltip";
-import { type AuthConfig, AuthContext, type User } from "@/contexts/AuthContext";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { http, HttpResponse } from "msw";
+import { HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
 import { MemoryRouter } from "react-router";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import type { Repository } from "@/api/types";
+import { TooltipProvider } from "@/components/ui/Tooltip";
+import { type AuthConfig, AuthContext, type User } from "@/contexts/AuthContext";
 import { RepoHero } from "../RepoHero";
 
 const authConfig: AuthConfig = {

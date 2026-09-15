@@ -1,6 +1,6 @@
-import { cn } from "@/lib/utils";
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
+import { cn } from "@/lib/utils";
 
 type EmptyStateProps = {
   /** Visual variant: `hero` for full-section empties, `compact` for filtered/inline. */

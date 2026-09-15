@@ -1,8 +1,22 @@
+import {
+  AlertTriangle,
+  Bot,
+  Check,
+  KeyRound,
+  Loader2,
+  Pencil,
+  Plug,
+  PlugZap,
+  Plus,
+  ShieldAlert,
+  Trash2,
+} from "lucide-react";
+import { useId, useState } from "react";
 import { ApiError, ValidationError } from "@/api/errors";
 import {
   type AssignmentView,
-  type LLMRole,
   LLM_ROLES,
+  type LLMRole,
   REASONING_EFFORTS,
   type ReasoningEffort,
 } from "@/api/llmRuntime";
@@ -30,20 +44,6 @@ import {
 } from "@/hooks/useLlmRuntime";
 import { useAdminSecrets, useDeleteAdminSecret, useTestAdminSecret } from "@/hooks/useSecrets";
 import { cn } from "@/lib/utils";
-import {
-  AlertTriangle,
-  Bot,
-  Check,
-  KeyRound,
-  Loader2,
-  Pencil,
-  Plug,
-  PlugZap,
-  Plus,
-  ShieldAlert,
-  Trash2,
-} from "lucide-react";
-import { useId, useState } from "react";
 
 const ROLE_LABEL: Record<LLMRole, string> = {
   embedding: "Embedding (RAG ingest + query)",
@@ -143,13 +143,7 @@ export default function AdminLLMRuntimePage() {
   );
 }
 
-function SecretsSection({
-  secrets,
-  loading,
-}: {
-  secrets: LLMSecret[];
-  loading: boolean;
-}) {
+function SecretsSection({ secrets, loading }: { secrets: LLMSecret[]; loading: boolean }) {
   return (
     <section className="flex flex-col gap-3 border-t border-[color:var(--color-border-subtle)] pt-6">
       <header className="flex items-start justify-between gap-3">

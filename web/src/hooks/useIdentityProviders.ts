@@ -1,14 +1,14 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  createIdentityProvider,
+  deleteIdentityProvider,
   type IdentityProvider,
   type IdentityProviderCreate,
   type IdentityProviderUpdate,
-  createIdentityProvider,
-  deleteIdentityProvider,
   listIdentityProviders,
   testIdentityProvider,
   updateIdentityProvider,
 } from "@/api/identityProviders";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 export const identityProvidersQueryKey = ["admin", "identity-providers"] as const;
 

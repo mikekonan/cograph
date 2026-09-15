@@ -1,5 +1,5 @@
-import { type McpBriefing, getMcpBriefing, updateMcpBriefing } from "@/api/mcpBriefing";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { getMcpBriefing, type McpBriefing, updateMcpBriefing } from "@/api/mcpBriefing";
 
 export const mcpBriefingQueryKey = ["admin", "mcp", "briefing"] as const;
 
