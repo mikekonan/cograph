@@ -122,4 +122,8 @@ markers = [
 # can't redefine what CI enforces. 0.16 widened the default to B/I/UP/SIM/RUF
 # and turned a green tree into 779 findings — 411 of them B008 on FastAPI's
 # `Depends()` idiom. Widen this list deliberately, one rule family at a time.
-select = ["E4", "E7", "E9", "F"]
+# W is the one family widened since: it is whitespace only (trailing spaces,
+# blank lines carrying indentation, no newline at end of file), it found
+# nothing to fix when it was turned on, and it catches the class of mess a
+# hand-edited call argument leaves behind.
+select = ["E4", "E7", "E9", "F", "W"]

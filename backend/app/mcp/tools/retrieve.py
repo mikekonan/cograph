@@ -134,7 +134,8 @@ def register(server: MCPServer, services: MCPServices) -> None:
         include_scores: bool = False,
         ctx: Context | None = None,
     ) -> object:
-        args = tool_args(RetrieveToolArgs, 
+        args = tool_args(
+            RetrieveToolArgs,
             query=query,
             repository=repository,
             mode=mode,

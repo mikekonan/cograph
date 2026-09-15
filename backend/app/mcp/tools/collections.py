@@ -97,7 +97,8 @@ def register(server: MCPServer, services: MCPServices) -> None:
         document_id: UUID,
         ctx: Context | None = None,
     ) -> object:
-        args = tool_args(CollectionDocumentToolArgs, 
+        args = tool_args(
+            CollectionDocumentToolArgs,
             collection_id=collection_id,
             document_id=document_id,
         )
@@ -128,7 +129,8 @@ def register(server: MCPServer, services: MCPServices) -> None:
         snippet_chars: int = DEFAULT_SNIPPET_CHARS,
         ctx: Context | None = None,
     ) -> object:
-        args = tool_args(CollectionSearchToolArgs, 
+        args = tool_args(
+            CollectionSearchToolArgs,
             collection_id=collection_id,
             query=query,
             top_k=top_k,
@@ -169,7 +171,8 @@ def register(server: MCPServer, services: MCPServices) -> None:
         chunk_id: UUID,
         ctx: Context | None = None,
     ) -> object:
-        args = tool_args(ReadChunkToolArgs, 
+        args = tool_args(
+            ReadChunkToolArgs,
             collection_id=collection_id,
             chunk_id=chunk_id,
         )

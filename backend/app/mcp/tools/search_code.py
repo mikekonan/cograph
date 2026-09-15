@@ -46,7 +46,8 @@ def register(server: MCPServer, services: MCPServices) -> None:
         top_k: int = 10,
         ctx: Context | None = None,
     ) -> object:
-        args = tool_args(SearchCodeToolArgs, 
+        args = tool_args(
+            SearchCodeToolArgs,
             repository=repository,
             query=query,
             top_k=top_k,
