@@ -49,11 +49,20 @@ def download_missing_grammars() -> None:
     from worker startup as a dev-environment fallback — always wrap in a
     timeout: the underlying downloader can stall indefinitely.
     """
-    from tree_sitter_language_pack import download
+    from tree_sitter_language_pack import download, get_parser
 
     names = missing_grammars()
-    if names:
-        download(list(names))
+    if not names:
+        return
+    download(list(names))
+    # `download` only fetches the bundle archive. Since 1.17 a grammar is not
+    # unpacked into the cache — and so not reported by `downloaded_languages` —
+    # until a parser for it is built, which is what `get_parser` does here.
+    # Without this the cache looks empty to every later check: the Docker bake
+    # step and the worker-startup guard both re-report the same grammars as
+    # missing, and the image ships an archive nothing has opened.
+    for name in names:
+        get_parser(name)  # type: ignore[arg-type]
 
 
 @dataclass(slots=True, kw_only=True)
