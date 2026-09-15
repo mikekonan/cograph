@@ -40,10 +40,21 @@ jobs:
           python-version: "3.12"
           cache: pip
 
+      # Install from uv.lock, not from the ranges in pyproject.toml. `pip install
+      # -e ./backend[dev]` re-resolved every range on every run, so the job tested
+      # whatever PyPI served that morning while the image built from the lock --
+      # the tests were the only part of the repository that was not reproducible.
+      # It failed exactly as you would expect: main went red three weeks after its
+      # last commit, when mcp 2.2 changed how a tool reports an error. Dependabot
+      # already proposes every upgrade as a reviewable pull request; this makes
+      # that the only way one arrives.
       - name: Install backend dependencies
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ./backend[dev]
+          python -m pip install --upgrade pip 'uv==0.11.13'
+          uv export --frozen --directory backend --extra dev --no-emit-project \
+            --format requirements-txt --output-file /tmp/requirements.txt > /dev/null
+          python -m pip install --require-hashes -r /tmp/requirements.txt
+          python -m pip install --no-deps -e ./backend
 
       # tree-sitter-language-pack ships no grammars: get_parser() downloads them
       # from a GitHub release on first use, with no timeout. That put a network
