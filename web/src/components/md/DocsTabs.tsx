@@ -1,8 +1,8 @@
+import { FolderGit2, Loader2 } from "lucide-react";
+import { NavLink } from "react-router";
 import { useAuth } from "@/hooks/useAuth";
 import { hasAdminAccess } from "@/lib/auth";
 import { cn } from "@/lib/utils";
-import { FolderGit2, Loader2 } from "lucide-react";
-import { NavLink } from "react-router";
 
 type Tab = {
   to: string;

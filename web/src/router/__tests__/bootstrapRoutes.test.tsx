@@ -1,12 +1,12 @@
-import { AuthContext, AuthProvider } from "@/contexts/AuthContext";
-import { LoginRoute, SetupRoute } from "@/router/router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
-import { http, HttpResponse } from "msw";
+import { HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
 import { type ReactNode, useState } from "react";
-import { RouterProvider, createMemoryRouter } from "react-router";
+import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { AuthContext, AuthProvider } from "@/contexts/AuthContext";
+import { LoginRoute, SetupRoute } from "@/router/router";
 
 function makeQueryClient() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });

@@ -1,8 +1,8 @@
+import { HttpResponse, http } from "msw";
 import type { ApiErrorBody, Repository, WikiTreeNode } from "@/api/types";
 import { wikiByRepo } from "@/mocks/fixtures/wiki";
 import { getReadableMockRepoBySlug } from "@/mocks/repoAccess";
 import { maybeFail, netDelay } from "@/mocks/utils";
-import { http, HttpResponse } from "msw";
 
 function countLeaves(nodes: WikiTreeNode[]): number {
   let count = 0;

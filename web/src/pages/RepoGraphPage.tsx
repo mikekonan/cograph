@@ -1,3 +1,6 @@
+import { AlertTriangle, LayoutGrid, List, Network, Search, Unlink2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Navigate, useNavigate, useParams, useSearchParams } from "react-router";
 import { NotFoundError } from "@/api/errors";
 import type { GraphNode, Language, NodeType } from "@/api/types";
 import { NodeDetailPanel } from "@/components/graph/NodeDetailPanel";
@@ -23,9 +26,6 @@ import { useRepo } from "@/hooks/useRepos";
 import { parseSlugFromParams } from "@/lib/repoPath";
 import { isInFlightRepoStatus } from "@/lib/repoStatus";
 import { cn } from "@/lib/utils";
-import { AlertTriangle, LayoutGrid, List, Network, Search, Unlink2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import { Navigate, useNavigate, useParams, useSearchParams } from "react-router";
 
 /**
  * RepoGraphPage — `/repos/:host/:owner/:name/graph`.
@@ -375,6 +375,7 @@ function ViewToggle({ value, onChange }: { value: GraphView; onChange: (v: Graph
   return (
     <div
       aria-label="Graph view"
+      role="toolbar"
       className={cn(
         "inline-flex items-center rounded-[var(--radius)] border p-0.5",
         "border-[color:var(--color-border)] bg-[color:var(--color-bg-subtle)]",

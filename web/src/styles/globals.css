@@ -89,8 +89,9 @@
 
   /* --- typography --- */
   --font-sans: "Inter Variable", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", "Fira Code", ui-monospace,
-    SFMono-Regular, monospace;
+  --font-mono:
+    "JetBrains Mono Variable", "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular,
+    monospace;
 
   --text-2xs: 0.6875rem;
   --text-2xs--line-height: 1rem;
@@ -210,7 +211,9 @@
     font-family: var(--font-sans);
     font-size: var(--text-base);
     line-height: var(--text-base--line-height);
-    font-feature-settings: "cv11" 1, "ss01" 1;
+    font-feature-settings:
+      "cv11" 1,
+      "ss01" 1;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
@@ -221,7 +224,10 @@
   pre,
   samp {
     font-family: var(--font-mono);
-    font-feature-settings: "calt" 1, "liga" 1, "cv01" 1;
+    font-feature-settings:
+      "calt" 1,
+      "liga" 1,
+      "cv01" 1;
   }
 
   ::selection {
@@ -343,21 +349,21 @@
   *,
   *::before,
   *::after {
+    /* biome-ignore-start lint/complexity/noImportantStyles: the whole point of
+       this block is to outrank every animation declared anywhere else,
+       including the ones Tailwind emits from utility classes. Without
+       !important it loses to a later rule and the preference is ignored. */
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    /* biome-ignore-end lint/complexity/noImportantStyles: back to normal */
   }
 }
-/* ============================================================================
-   PATCH — append this block to the END of web/src/styles/globals.css
-   ============================================================================
-   Adds the dark-mode Rust-icon tint used by LanguageTags.tsx. The component
-   stamps `class="dark-tint"` + a `--tint` CSS var on icons whose source SVG
-   is pure black; this rule activates the filter only under [data-theme="dark"].
-
-   Light theme: pure black reads fine, no filter.
-   Dark theme:  filter nudges ferris toward the brand orange (--color-lang-rust).
-   ========================================================================== */
+/* --- dark-mode icon tint --- */
+/* LanguageTags.tsx stamps `class="dark-tint"` plus a `--tint` var on icons
+   whose source SVG is pure black. Black reads fine on the light theme, so the
+   filter is applied only under [data-theme="dark"] -- it nudges ferris toward
+   the brand orange (--color-lang-rust). */
 
 [data-theme="dark"] .dark-tint {
   filter: var(--tint, none);

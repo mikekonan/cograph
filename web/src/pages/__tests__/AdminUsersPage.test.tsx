@@ -1,10 +1,10 @@
-import type { AdminUser } from "@/api/users";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { http, HttpResponse } from "msw";
+import { HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
 import { MemoryRouter } from "react-router";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AdminUser } from "@/api/users";
 import AdminUsersPage from "../AdminUsersPage";
 
 const ownerUser: AdminUser = {

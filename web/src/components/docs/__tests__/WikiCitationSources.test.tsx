@@ -1,8 +1,8 @@
-import type { WikiCitation } from "@/api/types";
-import { WikiCitationSources } from "@/components/docs/WikiCitationSources";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
+import type { WikiCitation } from "@/api/types";
+import { WikiCitationSources } from "@/components/docs/WikiCitationSources";
 
 function citation(idx: number, kind: "node" | "repo_doc_chunk" = "node"): WikiCitation {
   return {

@@ -1,6 +1,6 @@
+import { HttpResponse, http } from "msw";
 import type { ApiErrorBody } from "@/api/types";
 import { mockDb } from "@/mocks/state";
-import { http, HttpResponse } from "msw";
 
 function err(code: string, message: string): ApiErrorBody {
   return { error: { code, message, request_id: `req-${Date.now()}` } };

@@ -1,3 +1,13 @@
+import { Code2, FileText, Network, Search as SearchIcon, Sparkles } from "lucide-react";
+import {
+  type ComponentType,
+  type FormEvent,
+  type SVGProps,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import { useSearchParams } from "react-router";
 import type {
   RetrievalGraphNode,
   RetrievalLayer,
@@ -21,16 +31,6 @@ import { useRepos } from "@/hooks/useRepos";
 import { useRetrieve } from "@/hooks/useRetrieve";
 import { buildSourceUrl } from "@/lib/git";
 import { cn } from "@/lib/utils";
-import { Code2, FileText, Network, Search as SearchIcon, Sparkles } from "lucide-react";
-import {
-  type ComponentType,
-  type FormEvent,
-  type SVGProps,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
-import { useSearchParams } from "react-router";
 
 const LAYER_ORDER: RetrievalLayer[] = ["code", "ast_summary", "ast", "repo_doc"];
 

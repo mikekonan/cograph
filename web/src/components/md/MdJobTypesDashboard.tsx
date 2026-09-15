@@ -1,8 +1,8 @@
-import type { MdJobWithCollection } from "@/api/mdCollections";
-import { cn, formatRelativeTime } from "@/lib/utils";
 import { AlertCircle, CheckCircle2, ChevronRight, Clock, Loader2, XCircle } from "lucide-react";
 import { useMemo } from "react";
 import { NavLink } from "react-router";
+import type { MdJobWithCollection } from "@/api/mdCollections";
+import { cn, formatRelativeTime } from "@/lib/utils";
 
 type JobTypeGroup = {
   kind: string;

@@ -1,3 +1,5 @@
+import { AlertCircle, Database, Rocket, Trash2 } from "lucide-react";
+import { useState } from "react";
 import type { Language, RepoStatus } from "@/api/types";
 import { type AstNode, AstTree } from "@/components/shared/AstTree";
 import { CodeBlock } from "@/components/shared/CodeBlock";
@@ -25,8 +27,6 @@ import { TableOfContents, type TocItem } from "@/components/shared/TableOfConten
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
 import { DesignPrimitives } from "@/pages/DesignPrimitives";
-import { AlertCircle, Database, Rocket, Trash2 } from "lucide-react";
-import { useState } from "react";
 
 const semanticColorTokens = [
   "bg",

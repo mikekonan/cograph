@@ -1,5 +1,5 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  type MdCollectionVisibility,
   createMdCollection,
   deleteMdCollection,
   deleteMdDocument,
@@ -10,13 +10,13 @@ import {
   listAllMdJobs,
   listMdCollectionJobs,
   listMdCollections,
+  type MdCollectionVisibility,
   reembedMdCollection,
   retryMdJob,
   searchMdCollection,
   updateMdCollection,
   uploadMdDocumentBatch,
 } from "@/api/mdCollections";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 const collectionsKey = "md-collections";
 const collectionKey = (id: string) => ["md-collection", id];
@@ -167,13 +167,8 @@ export function useAllMdJobs(status?: string, limit = 100) {
 export function useDeleteMdDocument() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({
-      collectionId,
-      documentId,
-    }: {
-      collectionId: string;
-      documentId: string;
-    }) => deleteMdDocument(collectionId, documentId),
+    mutationFn: ({ collectionId, documentId }: { collectionId: string; documentId: string }) =>
+      deleteMdDocument(collectionId, documentId),
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({
         queryKey: collectionKey(variables.collectionId),

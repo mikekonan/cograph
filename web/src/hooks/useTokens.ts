@@ -1,13 +1,13 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   type CreateTokenInput,
-  type TokenCreated,
-  type TokenView,
   createToken,
   listTokens,
   revokeToken,
   rotateToken,
+  type TokenCreated,
+  type TokenView,
 } from "@/api/tokens";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 const TOKENS_KEY = ["me", "tokens"] as const;
 

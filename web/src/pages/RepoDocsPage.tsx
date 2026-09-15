@@ -1,3 +1,6 @@
+import { AlertCircle, BookText, Clock } from "lucide-react";
+import { useEffect, useMemo } from "react";
+import { Navigate, useNavigate, useParams } from "react-router";
 import { ConflictError, NotFoundError } from "@/api/errors";
 import type { DocPage, DocTreeNode } from "@/api/types";
 import { DocSidebar, DocSidebarSkeleton } from "@/components/docs/DocSidebar";
@@ -20,9 +23,6 @@ import { buildSourceUrl } from "@/lib/git";
 import { parseSlugFromParams, repoPath } from "@/lib/repoPath";
 import { isInFlightRepoStatus } from "@/lib/repoStatus";
 import { cn } from "@/lib/utils";
-import { AlertCircle, BookText, Clock } from "lucide-react";
-import { useEffect, useMemo } from "react";
-import { Navigate, useNavigate, useParams } from "react-router";
 
 /**
  * RepoDocsPage — `/repos/:host/:owner/:name/docs` and

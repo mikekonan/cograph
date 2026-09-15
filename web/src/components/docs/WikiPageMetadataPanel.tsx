@@ -1,9 +1,3 @@
-import type { RepoSlug, WikiPage, WikiPageQuality, WikiReaderQuestion } from "@/api/types";
-import { useCheckGraphNodes } from "@/hooks/useGraph";
-import { useRepairWikiCitations } from "@/hooks/useWiki";
-import { buildSourceUrl } from "@/lib/git";
-import { repoPath } from "@/lib/repoPath";
-import { cn } from "@/lib/utils";
 import {
   AlertTriangle,
   BookOpen,
@@ -21,6 +15,12 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { NavLink } from "react-router";
+import type { RepoSlug, WikiPage, WikiPageQuality, WikiReaderQuestion } from "@/api/types";
+import { useCheckGraphNodes } from "@/hooks/useGraph";
+import { useRepairWikiCitations } from "@/hooks/useWiki";
+import { buildSourceUrl } from "@/lib/git";
+import { repoPath } from "@/lib/repoPath";
+import { cn } from "@/lib/utils";
 
 type WikiPageMetadataPanelProps = {
   page: WikiPage;
@@ -156,7 +156,7 @@ function QualityChips({ quality }: { quality: WikiPageQuality }) {
   const unresolved = quality.unresolved_count;
   const lowConfidence = quality.low_confidence_chunk_count;
   return (
-    <div aria-label="Wiki page grounding quality" className="mt-2 flex flex-wrap gap-1.5 text-xs">
+    <ul aria-label="Wiki page grounding quality" className="mt-2 flex flex-wrap gap-1.5 text-xs">
       <Chip
         tone={totalCitations > 0 ? "ok" : "warn"}
         icon={CheckCircle2}
@@ -234,7 +234,7 @@ function QualityChips({ quality }: { quality: WikiPageQuality }) {
           title="Distinct files the agent opened via read_file during the loop"
         />
       ) : null}
-    </div>
+    </ul>
   );
 }
 
@@ -268,7 +268,7 @@ function Chip({
         ? "border-[color:var(--color-border-subtle)] bg-[color:var(--color-bg-subtle)] text-[color:var(--color-fg)]"
         : "border-[color:var(--color-border-subtle)] bg-[color:var(--color-bg-subtle)] text-[color:var(--color-fg-muted)]";
   return (
-    <span
+    <li
       className={cn(
         "inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] border px-2 py-0.5",
         toneClass,
@@ -277,7 +277,7 @@ function Chip({
     >
       <Icon className="h-3.5 w-3.5" aria-hidden />
       {label}
-    </span>
+    </li>
   );
 }
 
@@ -301,13 +301,7 @@ function Group({ title, children }: { title: string; children: React.ReactNode }
  * so a second click after a successful repair is harmless (and the
  * count refreshes on success).
  */
-function StaleCitationsBanner({
-  page,
-  repo,
-}: {
-  page: WikiPage;
-  repo: RepoSlug;
-}) {
+function StaleCitationsBanner({ page, repo }: { page: WikiPage; repo: RepoSlug }) {
   const nodeCitationIds = page.citations.filter((c) => c.kind === "node").map((c) => c.id);
   const checkMutation = useCheckGraphNodes(repo);
   const repairMutation = useRepairWikiCitations(repo, page.slug);

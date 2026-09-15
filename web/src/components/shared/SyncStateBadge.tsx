@@ -1,6 +1,6 @@
+import { Clock, RefreshCw } from "lucide-react";
 import type { Repository } from "@/api/types";
 import { cn } from "@/lib/utils";
-import { Clock, RefreshCw } from "lucide-react";
 
 type SyncStateBadgeProps = {
   state: NonNullable<Repository["sync_state"]>;

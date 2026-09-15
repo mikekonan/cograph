@@ -1,14 +1,14 @@
-import { CodeBlock } from "@/components/shared/CodeBlock";
-import { FileReference, parseFileRef } from "@/components/shared/FileReference";
-import { MermaidDiagram } from "@/components/shared/MermaidDiagram";
-import { buildSourceUrl } from "@/lib/git";
-import { cn } from "@/lib/utils";
 import { Link2 } from "lucide-react";
 import { type ComponentProps, type MouseEvent, useCallback, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
+import { CodeBlock } from "@/components/shared/CodeBlock";
+import { FileReference, parseFileRef } from "@/components/shared/FileReference";
+import { MermaidDiagram } from "@/components/shared/MermaidDiagram";
+import { buildSourceUrl } from "@/lib/git";
+import { cn } from "@/lib/utils";
 
 // Sanitization schema for the rehype-sanitize pass that runs AFTER
 // rehype-raw. Starts from the safe GitHub-flavored default and adds the

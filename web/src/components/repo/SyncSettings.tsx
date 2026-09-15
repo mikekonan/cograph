@@ -1,5 +1,8 @@
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Eye, RefreshCw } from "lucide-react";
+import type { ComponentType, ReactNode, SVGProps } from "react";
 import { apiJson } from "@/api/client";
-import type { RepoVisibility, Repository, SyncSchedule, UpdateRepoRequest } from "@/api/types";
+import type { Repository, RepoVisibility, SyncSchedule, UpdateRepoRequest } from "@/api/types";
 import { RepoVisibilityBadge } from "@/components/repo/RepoVisibilityBadge";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/Select";
 import { useAuth } from "@/hooks/useAuth";
@@ -7,9 +10,6 @@ import { hasAdminAccess } from "@/lib/auth";
 import { repoApiPath } from "@/lib/repoPath";
 import { SYNC_SCHEDULE_OPTIONS, syncScheduleMeta } from "@/lib/syncSchedule";
 import { cn, formatUtcTimestamp } from "@/lib/utils";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Eye, RefreshCw } from "lucide-react";
-import type { ComponentType, ReactNode, SVGProps } from "react";
 
 type SyncSettingsProps = {
   repo: Repository;

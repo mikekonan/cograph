@@ -1,8 +1,7 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   type CreateCredentialInput,
   type CreateGitHostInput,
-  type UpdateCredentialInput,
-  type UpdateGitHostInput,
   createCredential,
   createGitHost,
   deleteCredential,
@@ -11,10 +10,11 @@ import {
   listGitHosts,
   listWebhookDeliveries,
   testCredential,
+  type UpdateCredentialInput,
+  type UpdateGitHostInput,
   updateCredential,
   updateGitHost,
 } from "@/api/gitHosts";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 export const gitHostsQueryKey = ["admin", "git-hosts"] as const;
 export const credentialsQueryKey = (hostId: string) =>
@@ -78,13 +78,8 @@ export function useCreateCredential(hostId: string) {
 export function useUpdateCredential(hostId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({
-      credentialId,
-      input,
-    }: {
-      credentialId: string;
-      input: UpdateCredentialInput;
-    }) => updateCredential(hostId, credentialId, input),
+    mutationFn: ({ credentialId, input }: { credentialId: string; input: UpdateCredentialInput }) =>
+      updateCredential(hostId, credentialId, input),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: credentialsQueryKey(hostId) });
       qc.invalidateQueries({ queryKey: gitHostsQueryKey });

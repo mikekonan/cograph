@@ -1,13 +1,13 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   type AdminUser,
   type CreateUserPayload,
-  type UpdateUserPayload,
   createAdminUser,
   deleteAdminUser,
   listAdminUsers,
+  type UpdateUserPayload,
   updateAdminUser,
 } from "@/api/users";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 const USERS_KEY = ["admin", "users"] as const;
 

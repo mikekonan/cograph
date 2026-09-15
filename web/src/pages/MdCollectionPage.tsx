@@ -1,3 +1,7 @@
+import { useQueryClient } from "@tanstack/react-query";
+import { AlertCircle, ArrowLeft, FileText, FileUp, RefreshCw, Search, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate, useParams } from "react-router";
 import { uploadMdDocumentBatch } from "@/api/mdCollections";
 import { MdCollectionSettings } from "@/components/md/MdCollectionSettings";
 import { MdCollectionVisibilityBadge } from "@/components/md/MdCollectionVisibilityBadge";
@@ -23,10 +27,6 @@ import {
   useReembedMdCollection,
 } from "@/hooks/useMdCollections";
 import { cn, formatRelativeTime } from "@/lib/utils";
-import { useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, ArrowLeft, FileText, FileUp, RefreshCw, Search, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router";
 
 const UPLOAD_BATCH_SIZE = 100;
 
@@ -309,6 +309,9 @@ export default function MdCollectionPage() {
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-fg-muted)]">
               Batch Upload
             </h2>
+            {/* biome-ignore lint/a11y/noStaticElementInteractions: a drop
+                target, not a control -- the keyboard path is the "Browse
+                Files" input below, which does the same upload. */}
             <div
               className={`rounded-lg border-2 border-dashed p-8 text-center transition-colors ${
                 dragOver

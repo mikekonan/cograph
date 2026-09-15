@@ -1,8 +1,8 @@
+import { Clock, type LucideIcon } from "lucide-react";
 import type { RepoStatus } from "@/api/types";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { repoInFlightMessage } from "@/lib/repoStatus";
 import { cn } from "@/lib/utils";
-import { Clock, type LucideIcon } from "lucide-react";
 
 type RepoSurfaceNotReadyProps = {
   status?: RepoStatus;

@@ -1,3 +1,6 @@
+import { AlertCircle } from "lucide-react";
+import { useMemo } from "react";
+import { useNavigate, useParams } from "react-router";
 import { NotFoundError } from "@/api/errors";
 import type { RepoSlug } from "@/api/types";
 import { IndexingTimeline } from "@/components/repo/IndexingTimeline";
@@ -19,9 +22,6 @@ import { buildSourceUrl } from "@/lib/git";
 import { parseSlugFromParams, repoPath } from "@/lib/repoPath";
 import { repoInFlightMessage } from "@/lib/repoStatus";
 import { cn, formatCount } from "@/lib/utils";
-import { AlertCircle } from "lucide-react";
-import { useMemo } from "react";
-import { useNavigate, useParams } from "react-router";
 
 /**
  * RepoOverviewPage — `/repos/:host/:owner/:name`. Default landing tab for a repo.

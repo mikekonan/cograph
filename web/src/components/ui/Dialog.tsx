@@ -1,7 +1,7 @@
-import { cn } from "@/lib/utils";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
-import { type ComponentPropsWithoutRef, type ReactNode, forwardRef } from "react";
+import { type ComponentPropsWithoutRef, forwardRef, type ReactNode } from "react";
+import { cn } from "@/lib/utils";
 
 /**
  * Dialog — modal overlay for confirmations, forms, detail views.

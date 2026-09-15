@@ -1,8 +1,8 @@
+import { useQuery } from "@tanstack/react-query";
 import { apiJson } from "@/api/client";
 import { ApiError, RecoverableError } from "@/api/errors";
 import type { DocPage, DocTreeNode, RepoSlug } from "@/api/types";
 import { repoApiPath } from "@/lib/repoPath";
-import { useQuery } from "@tanstack/react-query";
 
 type DocTreeResponse = { items: DocTreeNode[]; total: number };
 

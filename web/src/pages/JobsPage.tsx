@@ -1,3 +1,24 @@
+import {
+  AlertCircle,
+  Boxes,
+  Brain,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  FileCode2,
+  FileText,
+  GitBranch,
+  Hand,
+  Loader2,
+  RefreshCw,
+  Search,
+  Upload,
+  Webhook,
+  XCircle,
+} from "lucide-react";
+import type { ComponentType, SVGProps } from "react";
+import { useMemo, useState } from "react";
 import type {
   SyncBatchKind,
   SyncBatchSummary,
@@ -22,27 +43,6 @@ import {
 import { useCancelJob, useJobBatches, useJobStats, useJobs, useRetryJob } from "@/hooks/useJobs";
 import { PIPELINE_ORDER } from "@/lib/pipeline";
 import { cn, formatRelativeTime } from "@/lib/utils";
-import {
-  AlertCircle,
-  Boxes,
-  Brain,
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  Clock,
-  FileCode2,
-  FileText,
-  GitBranch,
-  Hand,
-  Loader2,
-  RefreshCw,
-  Search,
-  Upload,
-  Webhook,
-  XCircle,
-} from "lucide-react";
-import type { ComponentType, SVGProps } from "react";
-import { useMemo, useState } from "react";
 
 type JobsBatchFilterKind = "all" | "repo_sync";
 
@@ -543,10 +543,9 @@ function StepRow({
           "inline-flex flex-shrink-0 items-center gap-1 rounded-[var(--radius-sm)] px-1.5 py-0.5 text-2xs font-medium uppercase tracking-wide",
           toneBadge(job.status),
         )}
-        aria-label={`Status: ${tone.label}`}
       >
         <StatusIcon className={cn("h-3 w-3", isRunning && "animate-spin")} aria-hidden="true" />
-        <span className="hidden sm:inline">{tone.label}</span>
+        <span className="sr-only sm:not-sr-only">{tone.label}</span>
       </span>
       {job.status === "error" && (
         <button

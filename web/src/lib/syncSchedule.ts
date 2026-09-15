@@ -1,6 +1,6 @@
-import type { SyncSchedule } from "@/api/types";
 import { Calendar, Check, Clock, Webhook } from "lucide-react";
 import type { ComponentType, SVGProps } from "react";
+import type { SyncSchedule } from "@/api/types";
 
 export type SyncScheduleMeta = {
   value: SyncSchedule;

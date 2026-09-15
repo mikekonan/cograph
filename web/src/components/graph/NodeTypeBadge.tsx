@@ -19,6 +19,7 @@ export function NodeTypeBadge({ type, compact, className }: NodeTypeBadgeProps) 
     return (
       <span
         aria-label={type}
+        role="img"
         className={cn("h-1.5 w-1.5 flex-shrink-0 rounded-full", colorClass.dot, className)}
       />
     );

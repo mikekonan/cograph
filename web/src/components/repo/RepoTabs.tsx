@@ -1,9 +1,9 @@
+import { BookText, FileText, Network } from "lucide-react";
+import { NavLink, useLocation } from "react-router";
 import type { RepoSlug } from "@/api/types";
 import { getNativeDocsSurfaceMode } from "@/lib/docsSurface";
 import { repoPath } from "@/lib/repoPath";
 import { cn } from "@/lib/utils";
-import { BookText, FileText, Network } from "lucide-react";
-import { NavLink, useLocation } from "react-router";
 
 type RepoTabsProps = {
   repo: RepoSlug;

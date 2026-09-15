@@ -1,7 +1,7 @@
-import { Skeleton } from "@/components/shared/Skeleton";
-import { useAuth } from "@/hooks/useAuth";
 import type { ReactNode } from "react";
 import { Navigate, useLocation } from "react-router";
+import { Skeleton } from "@/components/shared/Skeleton";
+import { useAuth } from "@/hooks/useAuth";
 
 /**
  * ProtectedAuthRoute — gates a route on "any authenticated user".

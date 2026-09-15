@@ -1,3 +1,6 @@
+import { FileText, MoreVertical, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { NavLink } from "react-router";
 import type { MdCollection } from "@/api/mdCollections";
 import {
   Dialog,
@@ -13,9 +16,6 @@ import { useAuth } from "@/hooks/useAuth";
 import { useDeleteMdCollection } from "@/hooks/useMdCollections";
 import { hasAdminAccess } from "@/lib/auth";
 import { cn, formatCount, formatRelativeTime } from "@/lib/utils";
-import { FileText, MoreVertical, Trash2 } from "lucide-react";
-import { useState } from "react";
-import { NavLink } from "react-router";
 import { MdCollectionVisibilityBadge } from "./MdCollectionVisibilityBadge";
 
 type MdCollectionCardProps = {

@@ -1,8 +1,8 @@
-import type { WikiTreeNode } from "@/api/types";
-import { DocSidebar } from "@/components/docs/DocSidebar";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
+import type { WikiTreeNode } from "@/api/types";
+import { DocSidebar } from "@/components/docs/DocSidebar";
 
 function node(slug: string, title: string, children: WikiTreeNode[] = []): WikiTreeNode {
   return {

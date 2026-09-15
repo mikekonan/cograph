@@ -1,11 +1,11 @@
-import type { WikiCitation, WikiPage, WikiPageQuality } from "@/api/types";
-import { WikiPageMetadataPanel } from "@/components/docs/WikiPageMetadataPanel";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { http, HttpResponse } from "msw";
+import { HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
 import { MemoryRouter } from "react-router";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import type { WikiCitation, WikiPage, WikiPageQuality } from "@/api/types";
+import { WikiPageMetadataPanel } from "@/components/docs/WikiPageMetadataPanel";
 
 const BASE_QUALITY: WikiPageQuality = {
   code_node_citation_count: 0,
@@ -92,7 +92,7 @@ describe("WikiPageMetadataPanel — agent telemetry chips", () => {
     });
     renderPanel(page);
 
-    const chip = screen.getByText("3 tools called").closest("span");
+    const chip = screen.getByText("3 tools called").closest("li");
     expect(chip).not.toBeNull();
     expect(chip?.getAttribute("title")).toBe("read_node_by_qn ×4 · search_code ×3 · grep ×2");
   });

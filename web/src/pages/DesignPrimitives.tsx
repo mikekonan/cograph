@@ -1,3 +1,5 @@
+import { Copy, HelpCircle, Keyboard, Settings } from "lucide-react";
+import { useState } from "react";
 import { Breadcrumb } from "@/components/ui/Breadcrumb";
 import { Button } from "@/components/ui/Button";
 import {
@@ -22,8 +24,6 @@ import {
 import { Textarea } from "@/components/ui/Textarea";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { cn } from "@/lib/utils";
-import { Copy, HelpCircle, Keyboard, Settings } from "lucide-react";
-import { useState } from "react";
 
 /**
  * /design subsection — Radix-backed primitives. Rendered above the existing

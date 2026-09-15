@@ -21,7 +21,6 @@ export function ProgressBar({ value, message, className }: ProgressBarProps) {
     <div className={cn("flex flex-col gap-1.5", className)}>
       <div
         role="progressbar"
-        tabIndex={0}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={isDeterminate ? clamped : undefined}

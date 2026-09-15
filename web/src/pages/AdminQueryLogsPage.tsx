@@ -1,3 +1,19 @@
+import {
+  AlertCircle,
+  BarChart3,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Coins,
+  DollarSign,
+  Filter,
+  Search,
+  TrendingUp,
+  Users,
+  X,
+} from "lucide-react";
+import { useMemo, useState } from "react";
 import type {
   QueryLogItem,
   QueryLogStatus,
@@ -22,22 +38,6 @@ import {
   useAdminUserUsageStats,
 } from "@/hooks/useQueryLogs";
 import { cn, formatRelativeTime } from "@/lib/utils";
-import {
-  AlertCircle,
-  BarChart3,
-  CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
-  Clock,
-  Coins,
-  DollarSign,
-  Filter,
-  Search,
-  TrendingUp,
-  Users,
-  X,
-} from "lucide-react";
-import { useMemo, useState } from "react";
 
 const PAGE_SIZE = 50;
 
@@ -968,13 +968,7 @@ function SourceBadge({ source }: { source: "rest" | "mcp" }) {
   );
 }
 
-function StatusBadge({
-  status,
-  errorCode,
-}: {
-  status: QueryLogStatus;
-  errorCode: string | null;
-}) {
+function StatusBadge({ status, errorCode }: { status: QueryLogStatus; errorCode: string | null }) {
   if (status === "ok") {
     return (
       <span className="inline-flex items-center gap-1 text-xs text-[color:var(--color-success)]">

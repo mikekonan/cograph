@@ -1,3 +1,6 @@
+import { KeyRound } from "lucide-react";
+import { useState } from "react";
+import { useNavigate } from "react-router";
 import { apiJson } from "@/api/client";
 import { ApiError, ValidationError } from "@/api/errors";
 import type { FieldError } from "@/api/types";
@@ -6,9 +9,6 @@ import { Input } from "@/components/ui/Input";
 import type { User } from "@/contexts/AuthContext";
 import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
-import { KeyRound } from "lucide-react";
-import { useState } from "react";
-import { useNavigate } from "react-router";
 
 type BootstrapResponse = { user: User };
 

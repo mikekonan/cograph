@@ -1,10 +1,10 @@
-import type { RepoSlug } from "@/api/types";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { http, HttpResponse } from "msw";
+import { HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
 import React from "react";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import type { RepoSlug } from "@/api/types";
 import { useDocPage, useDocTree } from "../useDocs";
 
 const server = setupServer();

@@ -1,4 +1,4 @@
-import { type Highlighter, createHighlighter } from "shiki";
+import { createHighlighter, type Highlighter } from "shiki";
 
 /**
  * Shiki highlighter — single lazy-initialised instance.

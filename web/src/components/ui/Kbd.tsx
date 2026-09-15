@@ -1,5 +1,5 @@
-import { cn } from "@/lib/utils";
 import type { HTMLAttributes } from "react";
+import { cn } from "@/lib/utils";
 
 /**
  * Renders a keyboard shortcut chip (e.g. "⌘K", "Shift+Enter").

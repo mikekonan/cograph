@@ -1,6 +1,6 @@
+import { AlertCircle } from "lucide-react";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { cn } from "@/lib/utils";
-import { AlertCircle } from "lucide-react";
 
 type RepoSurfaceErrorProps = {
   message?: string | null;

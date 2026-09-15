@@ -1,3 +1,6 @@
+import { GitBranch, MoreVertical, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { NavLink } from "react-router";
 import type { Repository } from "@/api/types";
 import { RepoVisibilityBadge } from "@/components/repo/RepoVisibilityBadge";
 import { LanguageTags } from "@/components/shared/LanguageTags";
@@ -21,9 +24,6 @@ import { repoPath } from "@/lib/repoPath";
 import { repoInFlightMessage } from "@/lib/repoStatus";
 import { syncScheduleMeta } from "@/lib/syncSchedule";
 import { cn, formatCount, formatRelativeTime, formatUtcTimestamp } from "@/lib/utils";
-import { GitBranch, MoreVertical, Trash2 } from "lucide-react";
-import { useState } from "react";
-import { NavLink } from "react-router";
 
 type RepoCardProps = {
   repo: Repository;

@@ -1,6 +1,6 @@
-import { ThemeProvider } from "@/contexts/ThemeContext";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { ThemeProvider } from "@/contexts/ThemeContext";
 
 import {
   MarkdownRenderer,

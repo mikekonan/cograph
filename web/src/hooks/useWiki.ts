@@ -1,8 +1,8 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiJson } from "@/api/client";
 import { ApiError, RecoverableError } from "@/api/errors";
 import type { DocTreeNode, RepoSlug, WikiPage } from "@/api/types";
 import { repoApiPath } from "@/lib/repoPath";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 type WikiTreeResponse = { items: DocTreeNode[]; total: number };
 

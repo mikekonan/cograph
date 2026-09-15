@@ -1,3 +1,4 @@
+import { HttpResponse, http } from "msw";
 import type {
   IdentityProvider,
   IdentityProviderCreate,
@@ -7,7 +8,6 @@ import type {
 import type { ApiErrorBody } from "@/api/types";
 import { mockAuth, mockDb } from "@/mocks/state";
 import { netDelay } from "@/mocks/utils";
-import { http, HttpResponse } from "msw";
 
 function err(code: string, message: string): ApiErrorBody {
   return { error: { code, message, request_id: `req-${Date.now()}` } };

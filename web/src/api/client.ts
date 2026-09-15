@@ -52,7 +52,7 @@ export function subscribeAuthFailure(listener: AuthFailureListener): () => void 
 }
 
 function notifyAuthFailure(reason: "expired" | "invalid") {
-  authListeners.forEach((l) => l(reason));
+  for (const l of authListeners) l(reason);
 }
 
 // --- main entry point ------------------------------------------------------

@@ -1,9 +1,9 @@
+import { AlertCircle, Check, Clock, Loader2 } from "lucide-react";
 import type { SyncBatchSummary, SyncJob, SyncStep } from "@/api/types";
 import { Skeleton } from "@/components/shared/Skeleton";
 import { formatCost, formatRunDate, formatTokens } from "@/lib/llmUsage";
 import { PIPELINE_ORDER } from "@/lib/pipeline";
 import { cn } from "@/lib/utils";
-import { AlertCircle, Check, Clock, Loader2 } from "lucide-react";
 
 type IndexingTimelineProps = {
   batch: SyncBatchSummary | null;
@@ -160,6 +160,7 @@ export function IndexingTimeline({
           <div
             key={s.job.id}
             aria-label={segmentTitle(s.job, s.durationMs)}
+            role="img"
             title={segmentTitle(s.job, s.durationMs)}
             style={{
               width: `${s.pct}%`,
@@ -169,9 +170,7 @@ export function IndexingTimeline({
               "flex items-center justify-center overflow-hidden px-1.5 text-2xs font-medium whitespace-nowrap",
               statusStyle(s.job),
             )}
-          >
-            <span className="sr-only">{stepCopy(s.job.step).full}</span>
-          </div>
+          />
         ))}
       </div>
 

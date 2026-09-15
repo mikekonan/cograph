@@ -1,9 +1,9 @@
-import { Skeleton } from "@/components/shared/Skeleton";
-import { useTheme } from "@/hooks/useTheme";
-import { type SupportedLanguage, highlightCode, normalizeLang } from "@/lib/shiki";
-import { cn } from "@/lib/utils";
 import { Check, Copy } from "lucide-react";
 import { useEffect, useState } from "react";
+import { Skeleton } from "@/components/shared/Skeleton";
+import { useTheme } from "@/hooks/useTheme";
+import { highlightCode, normalizeLang, type SupportedLanguage } from "@/lib/shiki";
+import { cn } from "@/lib/utils";
 
 type CodeBlockProps = {
   code: string;

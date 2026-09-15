@@ -1,3 +1,4 @@
+import { type ReactNode, useEffect, useId, useState } from "react";
 import { ApiError, ValidationError } from "@/api/errors";
 import type { LLMSecret } from "@/api/types";
 import { Button } from "@/components/ui/Button";
@@ -13,7 +14,6 @@ import {
 } from "@/components/ui/Dialog";
 import { Input } from "@/components/ui/Input";
 import { useCreateAdminSecret, useUpdateAdminSecret } from "@/hooks/useSecrets";
-import { type ReactNode, useEffect, useId, useState } from "react";
 
 interface SecretDialogProps {
   /** When provided, dialog opens in edit mode. Otherwise create mode. */

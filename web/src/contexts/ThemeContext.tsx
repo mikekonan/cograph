@@ -1,4 +1,4 @@
-import { type ReactNode, createContext, useCallback, useEffect, useMemo, useState } from "react";
+import { createContext, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 
 export type ThemeMode = "light" | "dark" | "system";
 export type EffectiveTheme = "light" | "dark";

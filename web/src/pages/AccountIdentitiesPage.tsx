@@ -1,5 +1,7 @@
+import { KeyRound, Link2, Unlink } from "lucide-react";
+import { useMemo, useState } from "react";
 import { ApiError } from "@/api/errors";
-import { type LinkedIdentity, buildLinkStartUrl } from "@/api/identities";
+import { buildLinkStartUrl, type LinkedIdentity } from "@/api/identities";
 import { Skeleton } from "@/components/shared/Skeleton";
 import { StateBoundary } from "@/components/shared/StateBoundary";
 import { Button } from "@/components/ui/Button";
@@ -14,8 +16,6 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import { useMyIdentities, useUnlinkMyIdentity } from "@/hooks/useMyIdentities";
 import { cn } from "@/lib/utils";
-import { KeyRound, Link2, Unlink } from "lucide-react";
-import { useMemo, useState } from "react";
 
 /**
  * AccountIdentitiesPage — `/account/identities`. Lets a user inspect and

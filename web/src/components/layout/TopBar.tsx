@@ -1,12 +1,12 @@
+import { ChevronDown, Moon, Sun } from "lucide-react";
+import { forwardRef, type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { NavLink, useLocation, useNavigate } from "react-router";
 import { Button } from "@/components/ui/Button";
 import type { User } from "@/contexts/AuthContext";
 import { useAuth } from "@/hooks/useAuth";
 import { useTheme } from "@/hooks/useTheme";
 import { hasAdminAccess } from "@/lib/auth";
 import { cn } from "@/lib/utils";
-import { ChevronDown, Moon, Sun } from "lucide-react";
-import { type ReactNode, forwardRef, useEffect, useId, useRef, useState } from "react";
-import { NavLink, useLocation, useNavigate } from "react-router";
 
 /**
  * TopBar — brand + nav + theme toggle + (session controls if authenticated).

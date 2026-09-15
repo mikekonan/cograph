@@ -1,3 +1,4 @@
+import { HttpResponse, http } from "msw";
 import type {
   ApiErrorBody,
   OffsetPage,
@@ -6,9 +7,8 @@ import type {
   SyncStats,
   SyncStep,
 } from "@/api/types";
-import { PIPELINE_ORDER, mockJobsDb, rebuildBatchCounts } from "@/mocks/fixtures/jobs";
+import { mockJobsDb, PIPELINE_ORDER, rebuildBatchCounts } from "@/mocks/fixtures/jobs";
 import { maybeFail, netDelay } from "@/mocks/utils";
-import { http, HttpResponse } from "msw";
 
 type SyncJobUnits = { done: number; total: number; unit: string };
 

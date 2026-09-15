@@ -1,9 +1,9 @@
+import { describe, expect, it } from "vitest";
 import {
-  PRIMARY_NATIVE_DOCS_MIN,
   getNativeDocsActionLabel,
   getNativeDocsSurfaceMode,
+  PRIMARY_NATIVE_DOCS_MIN,
 } from "@/lib/docsSurface";
-import { describe, expect, it } from "vitest";
 
 describe("docsSurface", () => {
   it("classifies none, secondary, and primary native docs corpora deterministically", () => {

@@ -1,7 +1,7 @@
+import { HttpResponse, http } from "msw";
 import type { ApiErrorBody, LLMSecret, SecretUpsertRequest } from "@/api/types";
 import { mockAuth, mockDb } from "@/mocks/state";
 import { maybeFail, netDelay } from "@/mocks/utils";
-import { http, HttpResponse } from "msw";
 
 function err(code: string, message: string): ApiErrorBody {
   return { error: { code, message, request_id: `req-${Date.now()}` } };

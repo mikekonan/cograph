@@ -13,8 +13,8 @@ import type {
   PutRepositoryGrantRequest,
   RepositoryGrant,
   RepositoryGrantListResponse,
-  UUID,
   UpdateGroupRequest,
+  UUID,
 } from "@/api/types";
 
 /**

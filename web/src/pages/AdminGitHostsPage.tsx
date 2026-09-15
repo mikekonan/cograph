@@ -1,3 +1,16 @@
+import {
+  CheckCircle2,
+  Globe,
+  KeyRound,
+  Plus,
+  ShieldAlert,
+  ShieldCheck,
+  ShieldX,
+  Trash2,
+  Webhook,
+  Wifi,
+} from "lucide-react";
+import { useId, useMemo, useState } from "react";
 import type { CredentialTestResult, GitCredentialView, GitHostView } from "@/api/gitHosts";
 import { Skeleton } from "@/components/shared/Skeleton";
 import { StateBoundary } from "@/components/shared/StateBoundary";
@@ -24,19 +37,6 @@ import {
   useWebhookDeliveries,
 } from "@/hooks/useGitHosts";
 import { cn } from "@/lib/utils";
-import {
-  CheckCircle2,
-  Globe,
-  KeyRound,
-  Plus,
-  ShieldAlert,
-  ShieldCheck,
-  ShieldX,
-  Trash2,
-  Webhook,
-  Wifi,
-} from "lucide-react";
-import { useId, useMemo, useState } from "react";
 
 /**
  * AdminGitHostsPage — `/admin/git-hosts`. Owner-managed catalog of git
@@ -262,13 +262,7 @@ function HostDetailPane({ host }: { host: GitHostView }) {
   );
 }
 
-function CredentialRow({
-  hostId,
-  credential,
-}: {
-  hostId: string;
-  credential: GitCredentialView;
-}) {
+function CredentialRow({ hostId, credential }: { hostId: string; credential: GitCredentialView }) {
   const updateCred = useUpdateCredential(hostId);
   const deleteCred = useDeleteCredential(hostId);
   const test = useTestCredential(hostId);
@@ -513,13 +507,7 @@ function CreateHostDialog({
   );
 }
 
-function CreateCredentialDialog({
-  host,
-  onClose,
-}: {
-  host: GitHostView;
-  onClose: () => void;
-}) {
+function CreateCredentialDialog({ host, onClose }: { host: GitHostView; onClose: () => void }) {
   const create = useCreateCredential(host.id);
   const labelId = useId();
   const tokenId = useId();

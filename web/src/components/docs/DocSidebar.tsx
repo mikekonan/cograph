@@ -1,10 +1,10 @@
+import { BookOpenText, ChevronDown, FileText, Folder, Home } from "lucide-react";
+import { type ComponentType, type SVGProps, useCallback, useEffect, useState } from "react";
+import { NavLink } from "react-router";
 import type { DocTreeNodeBase, RepoSlug } from "@/api/types";
 import { Skeleton } from "@/components/shared/Skeleton";
 import { repoPath } from "@/lib/repoPath";
 import { cn } from "@/lib/utils";
-import { BookOpenText, ChevronDown, FileText, Folder, Home } from "lucide-react";
-import { type ComponentType, type SVGProps, useCallback, useEffect, useState } from "react";
-import { NavLink } from "react-router";
 
 type DocSidebarProps = {
   repo: RepoSlug;

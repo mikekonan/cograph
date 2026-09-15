@@ -1,8 +1,8 @@
-import { cn } from "@/lib/utils";
 import * as CollapsiblePrimitive from "@radix-ui/react-collapsible";
 import { ChevronRight } from "lucide-react";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import { forwardRef } from "react";
+import { cn } from "@/lib/utils";
 
 /**
  * Disclosure — collapsible section with a chevron trigger.

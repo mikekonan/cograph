@@ -1,3 +1,5 @@
+import { AlertCircle, CheckCircle2, Plug, Save } from "lucide-react";
+import { useEffect, useState } from "react";
 import { ApiError } from "@/api/errors";
 import { MCP_BRIEFING_MAX_LENGTH } from "@/api/mcpBriefing";
 import { Skeleton } from "@/components/shared/Skeleton";
@@ -5,8 +7,6 @@ import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Textarea";
 import { useMcpBriefing, useUpdateMcpBriefing } from "@/hooks/useMcpBriefing";
 import { formatRelativeTime } from "@/lib/utils";
-import { AlertCircle, CheckCircle2, Plug, Save } from "lucide-react";
-import { useEffect, useState } from "react";
 
 /**
  * AdminMcpPage — `/admin?tab=mcp`.
