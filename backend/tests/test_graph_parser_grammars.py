@@ -9,7 +9,12 @@ DB transaction (2026-06-11, a production reindex). The contract pinned here:
     `languages.py` that are absent from the local cache;
   * `download_missing_grammars()` downloads only what's missing and
     is a no-op when the cache is complete (so the Docker build step
-    and the worker-startup fallback never re-download).
+    and the worker-startup fallback never re-download);
+  * it then builds a parser for each name it downloaded. Since pack 1.17
+    `download` only caches the bundle archive — the grammar is unpacked,
+    and reported by `downloaded_languages`, on the first `get_parser`.
+    Skip that and every later check still says "missing", which is what
+    broke the Docker bake step and CI when the pin moved to 1.17.
 """
 
 from __future__ import annotations
@@ -18,16 +23,20 @@ import backend.app.graph.parser as parser_module
 from backend.app.graph.parser import download_missing_grammars, missing_grammars
 
 
-def _patch_pack(monkeypatch, *, downloaded: list[str]) -> list[list[str]]:
+def _patch_pack(
+    monkeypatch, *, downloaded: list[str]
+) -> tuple[list[list[str]], list[str]]:
     """Stub the tree_sitter_language_pack functions parser.py imports
-    lazily. Returns the recorder list that captures download() calls."""
+    lazily. Returns the recorders for download() and get_parser() calls."""
     calls: list[list[str]] = []
+    parsed: list[str] = []
 
     import tree_sitter_language_pack as pack
 
     monkeypatch.setattr(pack, "downloaded_languages", lambda: list(downloaded))
     monkeypatch.setattr(pack, "download", lambda names: calls.append(list(names)))
-    return calls
+    monkeypatch.setattr(pack, "get_parser", lambda name: parsed.append(name))
+    return calls, parsed
 
 
 # The full grammar set: one per language plus the `tsx` extension override
@@ -46,7 +55,7 @@ def test_missing_grammars_empty_when_cache_complete(monkeypatch) -> None:
 
 
 def test_download_missing_grammars_downloads_only_the_gap(monkeypatch) -> None:
-    calls = _patch_pack(
+    calls, _ = _patch_pack(
         monkeypatch, downloaded=["python", "typescript", "tsx", "javascript"]
     )
     download_missing_grammars()
@@ -54,9 +63,19 @@ def test_download_missing_grammars_downloads_only_the_gap(monkeypatch) -> None:
 
 
 def test_download_missing_grammars_noop_when_cache_complete(monkeypatch) -> None:
-    calls = _patch_pack(monkeypatch, downloaded=list(_ALL_GRAMMARS))
+    calls, parsed = _patch_pack(monkeypatch, downloaded=list(_ALL_GRAMMARS))
     download_missing_grammars()
     assert calls == []
+    assert parsed == []
+
+
+def test_download_missing_grammars_unpacks_what_it_downloaded(monkeypatch) -> None:
+    # The archive `download` leaves behind is not a usable grammar and does not
+    # count as downloaded until a parser is built from it. Without this the
+    # Dockerfile's own `assert not missing_grammars()` fails on a clean cache.
+    _, parsed = _patch_pack(monkeypatch, downloaded=["python", "typescript"])
+    download_missing_grammars()
+    assert parsed == ["go", "javascript", "tsx"]
 
 
 def test_parser_module_exports_are_wired() -> None:
