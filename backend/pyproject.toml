@@ -42,9 +42,14 @@ dependencies = [
   "arq>=0.26",
   "gitpython>=3.1",
   "tree-sitter>=0.24",
-  # 1.6.3 changed the Python wheel layout and dropped the
-  # `tree_sitter_language_pack` module our parser imports.
-  "tree-sitter-language-pack==1.6.2",
+  # Still pinned exactly, for the same reason it was pinned at 1.6.2: 1.6.3
+  # changed the Python wheel layout and dropped the `tree_sitter_language_pack`
+  # module our parser imports, and a release is free to do that again. 1.17.0
+  # restores the module (`get_parser`, `downloaded_languages`, `download` all
+  # import) and every grammar we walk still parses to the same node types --
+  # which is what the extractor suites assert, so they are the check to run when
+  # this line moves, not the fact that the package installs.
+  "tree-sitter-language-pack==1.17.0",
   "PyYAML>=6.0",
   "uvicorn[standard]>=0.52.1",
   "uvicorn-worker>=0.3",
