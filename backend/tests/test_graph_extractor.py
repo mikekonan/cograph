@@ -484,7 +484,7 @@ def test_graph_extractor_separates_go_module_from_same_package_function_in_sibli
     """Module node from `callback.go` and `func callback` declared in a
     sibling file (`responses.go`) of the same package must end up in
     disjoint QN namespaces. Same-package cross-file module-vs-symbol
-    collision was the third Go-collision class hit on svc/runner.
+    collision was the third Go-collision class hit on a real service repo.
     """
     callback_source = """package acmepay
 
