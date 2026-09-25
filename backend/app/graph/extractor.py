@@ -9,6 +9,7 @@ from tree_sitter import Node
 
 from backend.app.graph.languages import GraphLanguage
 from backend.app.graph.parser import ParsedFile
+from backend.app.graph.ts_resolve import TsScope
 
 
 class GraphNodeType(StrEnum):
@@ -40,8 +41,8 @@ _GO_MODULE_QN_SUFFIX = "#module"
 EXTRACTOR_VERSIONS: dict[GraphLanguage, int] = {
     GraphLanguage.PYTHON: 1,
     GraphLanguage.GO: 1,
-    GraphLanguage.TYPESCRIPT: 1,
-    GraphLanguage.JAVASCRIPT: 1,
+    GraphLanguage.TYPESCRIPT: 2,
+    GraphLanguage.JAVASCRIPT: 2,
 }
 
 
@@ -95,6 +96,7 @@ class GraphExtractor:
         parsed_file: ParsedFile,
         *,
         go_module_path: str | None = None,
+        ts_scope: TsScope | None = None,
     ) -> ExtractedGraph:
         if parsed_file.language is GraphLanguage.PYTHON:
             extracted = _extract_python_graph(parsed_file)
@@ -110,7 +112,7 @@ class GraphExtractor:
             # One walker for both: the typescript/tsx grammars are supersets
             # of javascript, so TS-only constructs simply never appear in JS
             # trees.
-            extracted = _extract_typescript_graph(parsed_file)
+            extracted = _extract_typescript_graph(parsed_file, ts_scope)
         else:
             raise ValueError(f"Unsupported graph language: {parsed_file.language}")
 
@@ -1297,7 +1299,9 @@ _TS_FUNCTION_DECL_TYPES = frozenset(
 )
 
 
-def _extract_typescript_graph(parsed_file: ParsedFile) -> ExtractedGraph:
+def _extract_typescript_graph(
+    parsed_file: ParsedFile, ts_scope: TsScope | None = None
+) -> ExtractedGraph:
     module_name = _ts_module_qualified_name(parsed_file)
     _source_byte_len = len(parsed_file.source_bytes)
     nodes: list[ExtractedNode] = [
@@ -1332,7 +1336,9 @@ def _extract_typescript_graph(parsed_file: ParsedFile) -> ExtractedGraph:
             if source is not None:
                 # Re-export barrel: `export { x } from "./foo"` — an import
                 # edge, exactly like a plain import.
-                edges.extend(_extract_ts_import_edges(parsed_file, module_name, child))
+                edges.extend(
+                    _extract_ts_import_edges(parsed_file, module_name, child, ts_scope)
+                )
                 continue
             default_export = any(
                 not sub.is_named and sub.type == "default" for sub in child.children
@@ -1381,7 +1387,7 @@ def _extract_typescript_graph(parsed_file: ParsedFile) -> ExtractedGraph:
 
         if declaration.type == "import_statement":
             edges.extend(
-                _extract_ts_import_edges(parsed_file, module_name, declaration)
+                _extract_ts_import_edges(parsed_file, module_name, declaration, ts_scope)
             )
             continue
 
@@ -1466,6 +1472,7 @@ def _extract_typescript_graph(parsed_file: ParsedFile) -> ExtractedGraph:
                 exported=exported,
                 default_export=default_export,
                 deferred_exports=deferred_exports,
+                ts_scope=ts_scope,
             )
             nodes.extend(declarator_nodes)
             edges.extend(declarator_edges)
@@ -1790,6 +1797,7 @@ def _extract_ts_var_declarators(
     exported: bool,
     default_export: bool,
     deferred_exports: set[str],
+    ts_scope: TsScope | None = None,
 ) -> tuple[list[ExtractedNode], list[ExtractedEdge]]:
     nodes: list[ExtractedNode] = []
     edges: list[ExtractedEdge] = []
@@ -1847,7 +1855,7 @@ def _extract_ts_var_declarators(
         require_target = _ts_require_specifier(parsed_file, value)
         if require_target is not None:
             # `const dep = require("./dep")` — an import, not a value.
-            canonical = _ts_resolve_specifier(parsed_file, require_target)
+            canonical = _ts_resolve_specifier(parsed_file, require_target, ts_scope)
             edges.append(
                 ExtractedEdge(
                     edge_type=GraphEdgeType.IMPORTS,
@@ -1887,6 +1895,7 @@ def _extract_ts_import_edges(
     parsed_file: ParsedFile,
     module_name: str,
     import_node: Node,
+    ts_scope: TsScope | None = None,
 ) -> list[ExtractedEdge]:
     source = import_node.child_by_field_name("source")
     if source is None:
@@ -1894,7 +1903,7 @@ def _extract_ts_import_edges(
     specifier = _ts_string_text(parsed_file, source)
     if not specifier:
         return []
-    canonical_module = _ts_resolve_specifier(parsed_file, specifier)
+    canonical_module = _ts_resolve_specifier(parsed_file, specifier, ts_scope)
 
     targets: list[str] = []
     clauses = [
@@ -1985,6 +1994,10 @@ def _extract_ts_call_edges(
         node = stack.pop()
         if node.type == "call_expression":
             function_expr = node.child_by_field_name("function")
+            # `await f<T>(x)`: the typescript grammar puts the `await` inside
+            # the callee.
+            if function_expr is not None and function_expr.type == "await_expression":
+                function_expr = next(iter(function_expr.named_children), None)
             if function_expr is not None:
                 callee = _symbol_text(parsed_file, function_expr)
                 if callee and callee != "require":
@@ -1995,6 +2008,22 @@ def _extract_ts_call_edges(
                             target=callee,
                         )
                     )
+        elif node.type in ("jsx_opening_element", "jsx_self_closing_element"):
+            # `<Button/>` renders a component: a call in all but syntax.
+            # Lowercase `<div>` is a DOM tag, `<ns:tag>` an XML name, and a
+            # fragment `<>` has no name at all.
+            tag = node.child_by_field_name("name")
+            if tag is not None and (
+                tag.type == "member_expression"
+                or (tag.type == "identifier" and _node_text(parsed_file, tag)[:1].isupper())
+            ):
+                edges.append(
+                    ExtractedEdge(
+                        edge_type=GraphEdgeType.CALLS,
+                        source=qualified_name,
+                        target=_symbol_text(parsed_file, tag),
+                    )
+                )
         elif node.type == "new_expression":
             constructor = node.child_by_field_name("constructor")
             if constructor is not None:
@@ -2118,17 +2147,24 @@ def _ts_module_qualified_name(parsed_file: ParsedFile) -> str:
     return ".".join(parts) if parts else parsed_file.path.stem
 
 
-def _ts_resolve_specifier(parsed_file: ParsedFile, specifier: str) -> str:
+def _ts_resolve_specifier(
+    parsed_file: ParsedFile, specifier: str, ts_scope: TsScope | None = None
+) -> str:
     """Canonicalize an import specifier to the dotted-QN namespace.
 
     Relative specifiers resolve against the importing file's directory so
-    the builder can match them to module QNs; bare specifiers (npm packages,
-    node builtins) pass through dotted — external, unresolved, like Python's
-    stdlib imports.
+    the builder can match them to module QNs, and so do bare ones the
+    tsconfig maps into the checkout (`@/ui/Button`). Other bare specifiers
+    (npm packages, node builtins) pass through dotted — external,
+    unresolved, like Python's stdlib imports.
     """
-    if not specifier.startswith("."):
-        return specifier.removeprefix("node:").replace("/", ".")
-    raw_parts = (*parsed_file.path.parent.parts, *specifier.split("/"))
+    if specifier.startswith("."):
+        raw_parts = (*parsed_file.path.parent.parts, *specifier.split("/"))
+    else:
+        mapped = ts_scope.map(specifier) if ts_scope is not None else None
+        if mapped is None:
+            return specifier.removeprefix("node:").replace("/", ".")
+        raw_parts = tuple(mapped.split("/"))
     resolved: list[str] = []
     for part in raw_parts:
         if part in ("", "."):

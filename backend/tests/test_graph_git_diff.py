@@ -312,3 +312,54 @@ async def test_stale_extractor_stamp_reextracts_once_and_keeps_node_ids(
     assert nodes["a"].node_metadata["extractor_stamp"] == "99"
 
     assert (await reindex()).processed_files == 0
+
+
+async def test_tsconfig_change_reextracts_only_the_files_it_covers(db_session, tmp_path):
+    checkout = tmp_path / "checkout"
+    _init_git_repo(checkout)
+    (checkout / "a.py").write_text("def a() -> int:\n    return 1\n", "utf-8")
+    (checkout / "app").mkdir()
+    (checkout / "app" / "b.ts").write_text(
+        'import { c } from "@/c";\nexport function b() { return c(); }\n', "utf-8"
+    )
+    (checkout / "app" / "c.ts").write_text("export function c() { return 1; }\n", "utf-8")
+    (checkout / "shared").mkdir()
+    (checkout / "shared" / "d.ts").write_text("export function d() { return 2; }\n", "utf-8")
+    first = _commit_all(checkout, "initial")
+
+    repository = await _create_repo(db_session)
+    service = GraphIngestService()
+    await service.ingest_checkout(
+        session=db_session,
+        repository_id=repository.id,
+        checkout_path=checkout,
+        commit_sha=first,
+    )
+    await db_session.commit()
+    nodes = await _nodes_by_qn(db_session, repository.id)
+    assert not nodes["app.b.b"].callees
+
+    (checkout / "app" / "tsconfig.json").write_text(
+        '{"compilerOptions": {"paths": {"@/*": ["./*"]}}}', "utf-8"
+    )
+    second = _commit_all(checkout, "alias")
+
+    async def sync(last_commit: str):
+        result = await service.ingest_checkout(
+            session=db_session,
+            repository_id=repository.id,
+            checkout_path=checkout,
+            last_commit=last_commit,
+            commit_sha=second,
+        )
+        await db_session.commit()
+        return result
+
+    # a.py and shared/d.ts sit outside app/tsconfig.json: untouched.
+    result = await sync(first)
+    assert result.processed_files == 2
+    assert sorted(result.replaced_files) == ["app/b.ts", "app/c.ts"]
+    nodes = await _nodes_by_qn(db_session, repository.id)
+    assert str(nodes["app.c.c"].id) in nodes["app.b.b"].callees
+
+    assert (await sync(second)).processed_files == 0

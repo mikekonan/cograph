@@ -939,7 +939,8 @@ async def test_graph_ingest_indexes_ts_app_fixture_repo_shape(
     assert nodes["src.legacy.util.internalOnly"].node_metadata["exported"] is False
     assert nodes["src.legacy.util.normalize"].language == "javascript"
 
-    # Call resolution: `this.audit` and the cross-file TS→JS relative import.
+    # Call resolution: `this.audit` and the cross-file TS→JS import through
+    # the tsconfig `@/*` alias.
     login = nodes["src.services.userService.UserService.login"]
     assert str(nodes["src.services.userService.UserService.audit"].id) in login.callees
     assert str(nodes["src.legacy.util.normalize"].id) in login.callees

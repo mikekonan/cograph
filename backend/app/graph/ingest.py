@@ -35,6 +35,7 @@ from backend.app.graph.go_variants import (
 from backend.app.graph.languages import GraphLanguage, detect_graph_language
 from backend.app.graph.parser import GraphParser
 from backend.app.graph.temporal import collect_node_temporal_metadata
+from backend.app.graph.ts_resolve import TsConfig, load_ts_config, ts_scope_for
 from backend.app.models.code_edge import CodeEdge
 from backend.app.models.code_node import CodeNode
 from backend.app.models.enums import CodeNodeType
@@ -155,6 +156,9 @@ class GraphIngestService:
         root_path = Path(checkout_path).resolve()
         go_module_path = await asyncio.to_thread(_detect_go_module_path, root_path)
         go_profile = await asyncio.to_thread(resolve_go_index_profile, root_path)
+        ts_config = await asyncio.to_thread(
+            load_ts_config, root_path, _JS_TS_SKIP_DIR_NAMES
+        )
 
         git_changes: list[GitFileChange] | None = None
         if not force_full and last_commit and (root_path / ".git").exists():
@@ -187,6 +191,7 @@ class GraphIngestService:
                 commit_sha=commit_sha,
                 go_module_path=go_module_path,
                 go_profile=go_profile,
+                ts_config=ts_config,
             )
         else:
             result = await self._ingest_full_walk(
@@ -196,6 +201,7 @@ class GraphIngestService:
                 commit_sha=commit_sha,
                 go_module_path=go_module_path,
                 go_profile=go_profile,
+                ts_config=ts_config,
             )
 
         duration_s = time.monotonic() - start
@@ -233,6 +239,7 @@ class GraphIngestService:
         commit_sha: str | None,
         go_module_path: str | None,
         go_profile: GoIndexProfile,
+        ts_config: TsConfig | None = None,
     ) -> GraphIngestResult:
         source_files = await asyncio.to_thread(self._discover_source_files, root_path)
         non_go_files = tuple(
@@ -324,7 +331,8 @@ class GraphIngestService:
             content_hash = _content_hash(source_text)
             posix_path = relative_path.as_posix()
             if existing_module_hashes.get(posix_path) == content_hash and (
-                existing_module_stamps.get(posix_path) == _module_stamp(relative_path)
+                existing_module_stamps.get(posix_path)
+                == _module_stamp(relative_path, ts_config)
             ):
                 continue
             build_result = await self._parse_and_persist(
@@ -337,6 +345,7 @@ class GraphIngestService:
                 go_module_path=go_module_path,
                 go_profile=None,
                 cache=cache,
+                ts_config=ts_config,
             )
             inserted_nodes += build_result.inserted_nodes
             replaced_files.extend(build_result.replaced_files)
@@ -359,7 +368,7 @@ class GraphIngestService:
                 if existing_module_hashes.get(selected_file.relative_path)
                 != selected_file.content_hash
                 or existing_module_stamps.get(selected_file.relative_path)
-                != _module_stamp(Path(selected_file.relative_path))
+                != _module_stamp(Path(selected_file.relative_path), ts_config)
             ]
             if not changed_selected_files:
                 continue
@@ -418,6 +427,7 @@ class GraphIngestService:
         commit_sha: str | None,
         go_module_path: str | None,
         go_profile: GoIndexProfile,
+        ts_config: TsConfig | None = None,
     ) -> GraphIngestResult:
         existing_module_hashes, existing_module_stamps = await _load_module_state(
             session, repository_id
@@ -428,7 +438,7 @@ class GraphIngestService:
         # ponytail: a file that keeps failing its savepoint keeps its old stamp
         # and escalates every sync — a walk per sync, not a re-parse of all.
         if any(_touches_root_go_mod(change) for change in git_changes) or any(
-            stamp != _module_stamp(Path(file_path))
+            stamp != _module_stamp(Path(file_path), ts_config)
             for file_path, stamp in existing_module_stamps.items()
         ):
             return await self._ingest_full_walk(
@@ -438,6 +448,7 @@ class GraphIngestService:
                 commit_sha=commit_sha,
                 go_module_path=go_module_path,
                 go_profile=go_profile,
+                ts_config=ts_config,
             )
 
         existing_go_paths_by_package: dict[str, set[str]] = defaultdict(set)
@@ -645,6 +656,7 @@ class GraphIngestService:
                 commit_sha=commit_sha,
                 go_module_path=go_module_path,
                 go_profile=None,
+                ts_config=ts_config,
             )
             inserted_nodes += build_result.inserted_nodes
             replaced_files.extend(build_result.replaced_files)
@@ -739,12 +751,14 @@ class GraphIngestService:
         go_module_path: str | None,
         go_profile: GoIndexProfile | None,
         cache: GraphIngestCache | None = None,
+        ts_config: TsConfig | None = None,
     ):
         extracted_graph = await self._parse_source_graph(
             relative_path=relative_path,
             source_text=source_text,
             go_module_path=go_module_path,
             go_profile=go_profile,
+            ts_config=ts_config,
         )
         return await self._persist_preparsed_graph(
             session=session,
@@ -763,6 +777,7 @@ class GraphIngestService:
         source_text: str,
         go_module_path: str | None,
         go_profile: GoIndexProfile | None,
+        ts_config: TsConfig | None = None,
     ) -> ExtractedGraph:
         parsed_file = await asyncio.to_thread(
             self._parser.parse_source,
@@ -773,8 +788,9 @@ class GraphIngestService:
             self._extractor.extract,
             parsed_file,
             go_module_path=go_module_path,
+            ts_scope=ts_scope_for(ts_config, relative_path),
         )
-        stamp = _module_stamp(relative_path)
+        stamp = _module_stamp(relative_path, ts_config)
         for node in extracted_graph.nodes:
             if node.node_type is GraphNodeType.MODULE:
                 node.metadata = {**node.metadata, "extractor_stamp": stamp}
@@ -1158,9 +1174,20 @@ def _content_hash(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
-def _module_stamp(relative_path: Path) -> str | None:
+def _module_stamp(relative_path: Path, ts_config: TsConfig | None) -> str | None:
+    """Extractor version, plus the path-mapping rules a TS/JS file sees.
+
+    Editing a tsconfig's `paths` changes where that file's imports land, so
+    it re-extracts exactly the files under that config.
+    """
     language = detect_graph_language(relative_path)
-    return None if language is None else str(EXTRACTOR_VERSIONS[language])
+    if language is None:
+        return None
+    stamp = str(EXTRACTOR_VERSIONS[language])
+    scope = (
+        ts_scope_for(ts_config, relative_path) if language in _JS_TS_LANGUAGES else None
+    )
+    return stamp if scope is None else f"{stamp}:{scope.fingerprint}"
 
 
 async def _load_module_state(

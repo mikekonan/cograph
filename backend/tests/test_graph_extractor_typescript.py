@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from backend.app.graph.extractor import GraphEdgeType, GraphExtractor, GraphNodeType
 from backend.app.graph.parser import GraphParser
+from backend.app.graph.ts_resolve import TsScope
 
 
 def _extract(file_path: str, source_text: str):
@@ -387,3 +388,45 @@ module.exports = exports = f;
 """
     _, nodes, _ = _extract("lib/chain.js", source_text)
     assert nodes["lib.chain.f"].metadata["exported"] is True
+
+
+def test_jsx_components_and_awaited_generic_calls_are_call_edges():
+    source_text = """\
+export async function Page() {
+  const user = await api.get<User>("/me");
+  return (
+    <Card.Header>
+      <Button label={user.name} />
+      <div />
+      <svg:rect />
+      <></>
+    </Card.Header>
+  );
+}
+"""
+    _, _, edges = _extract("src/Page.tsx", source_text)
+    calls = {target for edge_type, _, target in edges if edge_type is GraphEdgeType.CALLS}
+    assert calls == {"api.get", "Card.Header", "Button"}
+
+
+def test_bare_import_resolves_through_ts_scope():
+    scope = TsScope(
+        base_url="src",
+        paths=(("@/*", "src/*"),),
+        base_entries=frozenset({"ui"}),
+        fingerprint="",
+    )
+    parsed = GraphParser().parse_source(
+        file_path="src/pages/Home.tsx",
+        source_text='import { A } from "@/ui/A.js";\n'
+        'import { B } from "ui";\n'
+        'import { useState } from "react";\n'
+        'const legacy = require("@/legacy");\n',
+    )
+    extracted = GraphExtractor().extract(parsed, ts_scope=scope)
+    assert {edge.target for edge in extracted.edges} == {
+        "src.ui.A.A",
+        "src.ui.B",
+        "react.useState",
+        "src.legacy as legacy",
+    }
