@@ -414,7 +414,6 @@ def test_bare_import_resolves_through_ts_scope():
         base_url="src",
         paths=(("@/*", "src/*"),),
         base_entries=frozenset({"ui"}),
-        fingerprint="",
     )
     parsed = GraphParser().parse_source(
         file_path="src/pages/Home.tsx",

@@ -41,8 +41,8 @@ _GO_MODULE_QN_SUFFIX = "#module"
 EXTRACTOR_VERSIONS: dict[GraphLanguage, int] = {
     GraphLanguage.PYTHON: 1,
     GraphLanguage.GO: 1,
-    GraphLanguage.TYPESCRIPT: 2,
-    GraphLanguage.JAVASCRIPT: 2,
+    GraphLanguage.TYPESCRIPT: 3,
+    GraphLanguage.JAVASCRIPT: 3,
 }
 
 
