@@ -1,0 +1,7 @@
+{
+  // JSONC, as tsc writes it: comments and trailing commas are legal.
+  "compilerOptions": {
+    "strict": true,
+    "paths": { "@/*": ["./src/*"] },
+  },
+}

@@ -1,4 +1,4 @@
-import { normalize } from "../legacy/util";
+import { normalize } from "@/legacy/util";
 
 export const MAX_RETRIES = 3;
 
