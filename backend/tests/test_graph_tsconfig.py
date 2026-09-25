@@ -8,9 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from backend.app.graph.ingest import _JS_TS_SKIP_DIR_NAMES as _SKIP
 from backend.app.graph.ts_resolve import load_ts_config, ts_scope_for
-
-_SKIP = frozenset({"node_modules"})
 
 
 def _write(root: Path, relative: str, text: str) -> None:
@@ -67,3 +66,52 @@ def test_base_url_through_extends_maps_only_existing_entries(tmp_path):
     assert scope.map("api") == "src/api"
     assert scope.map("react") is None
     assert set(config) == {"."}
+
+
+def test_workspace_packages_resolve_to_their_source(tmp_path):
+    _write(
+        tmp_path,
+        "packages/ui/package.json",
+        """{"name": "@acme/ui", "exports": {
+            ".": {"types": "./index.d.ts", "default": "./index.js"},
+            "./button": "./src/button.tsx",
+            "./icons/*": {"import": "./dist/icons/*.js", "types": "./src/icons/*.ts"},
+            "./internal": "./dist/internal.js"
+        }}""",
+    )
+    for relative in ("index.d.ts", "index.js", "src/button.tsx", "src/icons/add.ts"):
+        _write(tmp_path, f"packages/ui/{relative}", "export {};\n")
+    # `exports` only names build output; the source entry is what we index.
+    _write(tmp_path, "packages/core/package.json", '{"name": "@acme/core", "exports": "./dist/index.js"}')
+    _write(tmp_path, "packages/core/dist/index.js", "")
+    _write(tmp_path, "packages/core/src/index.ts", "export {};\n")
+    # No `exports`: `main` is build output, subpaths map straight through.
+    _write(tmp_path, "packages/legacy/package.json", '{"name": "legacy-utils", "main": "dist/index.js"}')
+    _write(tmp_path, "packages/legacy/index.js", "")
+    # Two manifests claim one name: ambiguous, stays external.
+    _write(tmp_path, "packages/a/package.json", '{"name": "@acme/dup"}')
+    _write(tmp_path, "examples/a/package.json", '{"name": "@acme/dup"}')
+    _write(tmp_path, "node_modules/react/package.json", '{"name": "react", "main": "index.js"}')
+    _write(tmp_path, "node_modules/react/index.js", "")
+    # `paths` outranks a workspace package, as in the compiler.
+    _write(tmp_path, "app/tsconfig.json", '{"compilerOptions": {"paths": {"@acme/core": ["./shim.ts"]}}}')
+
+    config = load_ts_config(tmp_path, _SKIP)
+
+    root = ts_scope_for(config, "tools/build.ts")
+    assert root is not None
+    assert root.map("@acme/ui") == "packages/ui/index.js"
+    assert root.map("@acme/ui/button") == "packages/ui/src/button.tsx"
+    assert root.map("@acme/ui/icons/add") == "packages/ui/src/icons/add.ts"
+    assert root.map("@acme/ui/internal") is None
+    assert root.map("@acme/core") == "packages/core/src/index.ts"
+    assert root.map("@acme/core/util") is None
+    assert root.map("legacy-utils") == "packages/legacy/index.js"
+    assert root.map("legacy-utils/fp/pad") == "packages/legacy/fp/pad"
+    assert root.map("@acme/dup") is None
+    assert root.map("react") is None
+
+    app = ts_scope_for(config, "app/main.ts")
+    assert app is not None
+    assert app.map("@acme/core") == "app/shim.ts"
+    assert app.map("@acme/ui/button") == "packages/ui/src/button.tsx"
