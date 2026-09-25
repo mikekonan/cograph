@@ -18,7 +18,12 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from backend.app.graph._chunking import chunked
 from backend.app.graph.builder import GraphBuilder, GraphBuildResult
-from backend.app.graph.extractor import ExtractedGraph, GraphExtractor, GraphNodeType
+from backend.app.graph.extractor import (
+    EXTRACTOR_VERSIONS,
+    ExtractedGraph,
+    GraphExtractor,
+    GraphNodeType,
+)
 from backend.app.graph.ingest_cache import GraphIngestCache
 from backend.app.graph.go_variants import (
     GoBuildVariantConflictError,
@@ -263,17 +268,9 @@ class GraphIngestService:
             )
         )
 
-        existing_module_hashes = {
-            file_path: content_hash
-            for file_path, content_hash in (
-                await session.execute(
-                    select(CodeNode.file_path, CodeNode.content_hash).where(
-                        CodeNode.repository_id == repository_id,
-                        CodeNode.node_type == CodeNodeType.MODULE,
-                    )
-                )
-            ).all()
-        }
+        existing_module_hashes, existing_module_stamps = await _load_module_state(
+            session, repository_id
+        )
 
         await self._prune_missing_files(
             session=session,
@@ -325,7 +322,10 @@ class GraphIngestService:
                 source_file.read_text, encoding="utf-8"
             )
             content_hash = _content_hash(source_text)
-            if existing_module_hashes.get(relative_path.as_posix()) == content_hash:
+            posix_path = relative_path.as_posix()
+            if existing_module_hashes.get(posix_path) == content_hash and (
+                existing_module_stamps.get(posix_path) == _module_stamp(relative_path)
+            ):
                 continue
             build_result = await self._parse_and_persist(
                 session=session,
@@ -358,6 +358,8 @@ class GraphIngestService:
                 for selected_file in package.selected_files
                 if existing_module_hashes.get(selected_file.relative_path)
                 != selected_file.content_hash
+                or existing_module_stamps.get(selected_file.relative_path)
+                != _module_stamp(Path(selected_file.relative_path))
             ]
             if not changed_selected_files:
                 continue
@@ -417,7 +419,18 @@ class GraphIngestService:
         go_module_path: str | None,
         go_profile: GoIndexProfile,
     ) -> GraphIngestResult:
-        if any(_touches_root_go_mod(change) for change in git_changes):
+        existing_module_hashes, existing_module_stamps = await _load_module_state(
+            session, repository_id
+        )
+        # A stale stamp means the extractor changed under an indexed file. The
+        # full walk re-parses only files whose hash or stamp differs, so past
+        # this point every stamp is current and hashes alone decide.
+        # ponytail: a file that keeps failing its savepoint keeps its old stamp
+        # and escalates every sync — a walk per sync, not a re-parse of all.
+        if any(_touches_root_go_mod(change) for change in git_changes) or any(
+            stamp != _module_stamp(Path(file_path))
+            for file_path, stamp in existing_module_stamps.items()
+        ):
             return await self._ingest_full_walk(
                 session=session,
                 repository_id=repository_id,
@@ -427,17 +440,6 @@ class GraphIngestService:
                 go_profile=go_profile,
             )
 
-        existing_module_hashes = {
-            file_path: content_hash
-            for file_path, content_hash in (
-                await session.execute(
-                    select(CodeNode.file_path, CodeNode.content_hash).where(
-                        CodeNode.repository_id == repository_id,
-                        CodeNode.node_type == CodeNodeType.MODULE,
-                    )
-                )
-            ).all()
-        }
         existing_go_paths_by_package: dict[str, set[str]] = defaultdict(set)
         for file_path in existing_module_hashes:
             if Path(file_path).suffix != ".go":
@@ -772,6 +774,10 @@ class GraphIngestService:
             parsed_file,
             go_module_path=go_module_path,
         )
+        stamp = _module_stamp(relative_path)
+        for node in extracted_graph.nodes:
+            if node.node_type is GraphNodeType.MODULE:
+                node.metadata = {**node.metadata, "extractor_stamp": stamp}
         if parsed_file.language is GraphLanguage.GO and go_profile is not None:
             for node in extracted_graph.nodes:
                 node.metadata = {
@@ -1150,3 +1156,30 @@ def _detect_go_module_path(root_path: Path) -> str | None:
 
 def _content_hash(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _module_stamp(relative_path: Path) -> str | None:
+    language = detect_graph_language(relative_path)
+    return None if language is None else str(EXTRACTOR_VERSIONS[language])
+
+
+async def _load_module_state(
+    session: AsyncSession, repository_id: UUID
+) -> tuple[dict[str, str], dict[str, str | None]]:
+    """Per-file content hash and extractor stamp, read off the MODULE rows."""
+    rows = (
+        await session.execute(
+            select(
+                CodeNode.file_path,
+                CodeNode.content_hash,
+                CodeNode.node_metadata["extractor_stamp"].as_string(),
+            ).where(
+                CodeNode.repository_id == repository_id,
+                CodeNode.node_type == CodeNodeType.MODULE,
+            )
+        )
+    ).all()
+    return (
+        {file_path: content_hash for file_path, content_hash, _ in rows},
+        {file_path: stamp for file_path, _, stamp in rows},
+    )

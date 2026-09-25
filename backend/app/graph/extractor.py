@@ -34,6 +34,16 @@ class GraphEdgeType(StrEnum):
 _SIGNATURE_TRUNCATION_LENGTH = 120
 _GO_MODULE_QN_SUFFIX = "#module"
 
+# Bump a language when its extraction output changes: ingest stamps every
+# MODULE node with this and re-extracts any file whose stamp is stale, even
+# when its text has not changed.
+EXTRACTOR_VERSIONS: dict[GraphLanguage, int] = {
+    GraphLanguage.PYTHON: 1,
+    GraphLanguage.GO: 1,
+    GraphLanguage.TYPESCRIPT: 1,
+    GraphLanguage.JAVASCRIPT: 1,
+}
+
 
 @dataclass(slots=True, kw_only=True)
 class ExtractedNode:

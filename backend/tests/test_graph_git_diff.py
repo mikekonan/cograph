@@ -8,7 +8,9 @@ import pytest
 from sqlalchemy import select
 
 from backend.app.graph import ingest as ingest_module
+from backend.app.graph.extractor import EXTRACTOR_VERSIONS
 from backend.app.graph.ingest import GraphIngestService
+from backend.app.graph.languages import GraphLanguage
 from backend.app.models.code_node import CodeNode
 from backend.app.models.enums import RepositoryStatus, SyncSchedule
 from backend.app.models.repository import Repository
@@ -264,3 +266,49 @@ async def test_git_diff_mode_falls_back_to_full_walk_on_unknown_commit(
     nodes = await _nodes_by_qn(db_session, repository.id)
     assert "alpha" in nodes
     assert "alpha.alpha" in nodes
+
+
+async def test_stale_extractor_stamp_reextracts_once_and_keeps_node_ids(
+    db_session, tmp_path, monkeypatch
+):
+    checkout = tmp_path / "checkout"
+    _init_git_repo(checkout)
+    (checkout / "a.py").write_text("def a() -> int:\n    return 1\n", "utf-8")
+    (checkout / "b.ts").write_text("export function b() { return 2; }\n", "utf-8")
+    head = _commit_all(checkout, "initial")
+
+    repository = await _create_repo(db_session)
+    service = GraphIngestService()
+    await service.ingest_checkout(
+        session=db_session,
+        repository_id=repository.id,
+        checkout_path=checkout,
+        commit_sha=head,
+    )
+    await db_session.commit()
+    ids_before = {
+        qn: node.id for qn, node in (await _nodes_by_qn(db_session, repository.id)).items()
+    }
+
+    # A manual reindex of an unchanged HEAD: the git diff is empty, so only
+    # the stale stamp can make it re-extract anything.
+    async def reindex():
+        result = await service.ingest_checkout(
+            session=db_session,
+            repository_id=repository.id,
+            checkout_path=checkout,
+            last_commit=head,
+            commit_sha=head,
+        )
+        await db_session.commit()
+        return result
+
+    monkeypatch.setitem(EXTRACTOR_VERSIONS, GraphLanguage.PYTHON, 99)
+    result = await reindex()
+    assert result.processed_files == 1
+    assert result.replaced_files == ("a.py",)
+    nodes = await _nodes_by_qn(db_session, repository.id)
+    assert {qn: node.id for qn, node in nodes.items()} == ids_before
+    assert nodes["a"].node_metadata["extractor_stamp"] == "99"
+
+    assert (await reindex()).processed_files == 0
