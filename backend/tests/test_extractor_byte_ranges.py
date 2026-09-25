@@ -77,3 +77,13 @@ def test_empty_init_module_has_none_byte_range():
     module_node = next(node for node in extracted.nodes)
     assert module_node.start_byte is None
     assert module_node.end_byte is None
+
+
+def test_line_numbers_past_256_are_exact():
+    # tree-sitter 0.26.0 returns garbage rows past line 256 (py-tree-sitter#472),
+    # on the first parse and in every grammar. pyproject excludes that release;
+    # this is the check to run when the tree-sitter line moves.
+    source_text = "".join(f"def f{i}():\n    return {i}\n" for i in range(200))
+    extracted, _ = _extract(source_text)
+    start_lines = {node.name: node.start_line for node in extracted.nodes}
+    assert [start_lines[f"f{i}"] for i in range(200)] == list(range(1, 400, 2))

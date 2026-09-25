@@ -38,7 +38,10 @@ updates:
         # helpers changed shape after 1.6, so the bump needs the loader
         # rewritten — grouped, it fails that assert and takes ten harmless
         # bumps down with it. Ungrouped, it arrives as its own pull request,
-        # which is what a change requiring code deserves.
+        # which is what a change requiring code deserves. tree-sitter itself
+        # is ungrouped too: pyproject excludes 0.26.0 (wrong line numbers past
+        # line 256), and test_line_numbers_past_256_are_exact is what a new
+        # release has to pass.
         exclude-patterns:
           - "tree-sitter*"
         update-types:

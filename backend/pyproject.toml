@@ -41,7 +41,12 @@ dependencies = [
   "bcrypt>=5.0",
   "arq>=0.26",
   "gitpython>=3.1",
-  "tree-sitter>=0.24",
+  # 0.26.0's Point.row getter hands back a borrowed reference
+  # (py-tree-sitter#472): every row past 256 comes back as garbage, and the
+  # heap corruption behind it segfaults the worker on long files. Fixed
+  # upstream, not yet released. tests/test_extractor_byte_ranges.py
+  # (test_line_numbers_past_256_are_exact) is the check when this line moves.
+  "tree-sitter>=0.24,!=0.26.0",
   # Still pinned exactly, for the same reason it was pinned at 1.6.2: 1.6.3
   # changed the Python wheel layout and dropped the `tree_sitter_language_pack`
   # module our parser imports, and a release is free to do that again. 1.17.0
