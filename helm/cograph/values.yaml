@@ -2,6 +2,8 @@ nameOverride: ""
 fullnameOverride: ""
 
 imagePullSecrets: []
+# Pod affinity for every pod of the release, e.g. to keep it off a node.
+affinity: {}
 
 images:
   backend:
