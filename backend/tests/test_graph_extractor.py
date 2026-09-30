@@ -486,11 +486,11 @@ def test_graph_extractor_separates_go_module_from_same_package_function_in_sibli
     disjoint QN namespaces. Same-package cross-file module-vs-symbol
     collision was the third Go-collision class hit on a real service repo.
     """
-    callback_source = """package acmepay
+    callback_source = """package parcelco
 
 type CallbackOperation struct{}
 """
-    responses_source = """package acmepay
+    responses_source = """package parcelco
 
 func callback() string { return "ok" }
 """
@@ -498,18 +498,18 @@ func callback() string { return "ok" }
     extractor = GraphExtractor()
 
     parsed_callback = parser.parse_source(
-        file_path="domain/payments/acmepay/callback.go",
+        file_path="domain/shipping/parcelco/callback.go",
         source_text=callback_source,
     )
     parsed_responses = parser.parse_source(
-        file_path="domain/payments/acmepay/responses.go",
+        file_path="domain/shipping/parcelco/responses.go",
         source_text=responses_source,
     )
 
     cb_nodes = {n.qualified_name for n in extractor.extract(parsed_callback).nodes}
     rs_nodes = {n.qualified_name for n in extractor.extract(parsed_responses).nodes}
 
-    pkg = "domain.payments.acmepay"
+    pkg = "domain.shipping.parcelco"
     assert f"{pkg}.callback#module" in cb_nodes
     assert f"{pkg}.callback" in rs_nodes
     # The unsuffixed `<pkg>.callback` from the module node was the

@@ -50,8 +50,8 @@ def test_default_briefing_is_used_when_content_is_blank_whitespace() -> None:
 
 
 def test_operator_briefing_overrides_default() -> None:
-    text = _render_with_default_settings("Team: payments. Glossary: acquirer = X.")
-    assert "Team: payments" in text
+    text = _render_with_default_settings("Team: shipping. Glossary: carrier = X.")
+    assert "Team: shipping" in text
     assert "hasn't been customised yet" not in text
 
 
@@ -130,7 +130,7 @@ def test_briefing_is_truncated_when_oversized() -> None:
 
 @pytest.mark.asyncio
 async def test_refresh_cached_instructions_reads_db(db_session) -> None:
-    db_session.add(McpOperatorBriefing(id=1, content="Custom team payments rules"))
+    db_session.add(McpOperatorBriefing(id=1, content="Custom team shipping rules"))
     await db_session.commit()
     # Sanity-check the row materialised so the failure mode if refresh
     # silently sees nothing is "wrong test", not "wrong production code".
@@ -139,12 +139,12 @@ async def test_refresh_cached_instructions_reads_db(db_session) -> None:
             select(McpOperatorBriefing).where(McpOperatorBriefing.id == 1)
         )
     ).scalar_one()
-    assert row.content == "Custom team payments rules"
+    assert row.content == "Custom team shipping rules"
 
     rendered = await refresh_cached_instructions(
         db_session, settings=get_settings()
     )
-    assert "Custom team payments rules" in rendered
+    assert "Custom team shipping rules" in rendered
     # The cache must hold the same text the function returned — that's
     # what MCPServer's `instructions` property will read on next initialize.
     assert get_cached_instructions() == rendered

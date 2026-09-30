@@ -117,23 +117,23 @@ treat it as a router you can call multiple times in one question, not
 a one-shot. A question that mixes two concepts almost always spans
 two source sets:
 
-* "How does the checkout validate billing addresses?" — route once for
-  `"checkout billing address validation"`, then route again for
+* "How does the order service validate shipping addresses?" — route once for
+  `"order shipping address validation"`, then route again for
   `"address normalisation"` or `"country code lookup"` if the first
   pass missed the data source.
-* "Where do we handle 3DS challenges and how is the merchant routing
-  decided?" — route for `"3DS challenge flow"` AND for `"merchant
+* "Where do we handle OTP challenges and how is the carrier routing
+  decided?" — route for `"OTP challenge flow"` AND for `"carrier
   routing rules"`. Two separate route calls, two candidate sets, then
   ladder through each.
-* "What does `acquirer` mean in the payment system?" — route for
-  `"acquirer glossary definition"` (likely a collection) AND for
-  `"acquirer routing implementation"` (likely a service repo).
-* "Tell me about AcmePay" — route(`"AcmePay"`) returns runner at 1.0 and
+* "What does `carrier` mean in the shipping system?" — route for
+  `"carrier glossary definition"` (likely a collection) AND for
+  `"carrier routing implementation"` (likely a service repo).
+* "Tell me about ParcelCo" — route(`"ParcelCo"`) returns dispatch at 1.0 and
   collections that are weak/fallback only (the entity name does not
   appear lexically in any wiki body). Hard-rule #2 fires: re-route
-  with `"payment provider integration architecture"` to find the
-  cross-cutting PRD / ADR, then re-route with `"acquirer terminal
-  contract"` to pick up the shared abstraction that runner implements
+  with `"shipping provider integration architecture"` to find the
+  cross-cutting PRD / ADR, then re-route with `"carrier rate card
+  contract"` to pick up the shared abstraction that dispatch implements
   one specific case of. Three routes, then synthesise.
 
 The rule of thumb: every distinct domain term or sub-question in the
@@ -213,8 +213,8 @@ source from several angles before deciding what it does or does not
 contain:
 
 * a paraphrase (different verbs / synonyms)
-* the user's domain term plus a likely code term ("acquirer routing" →
-  also try "terminal selection", "merchant binding", "payment provider
+* the user's domain term plus a likely code term ("carrier routing" →
+  also try "rate card selection", "customer binding", "shipping provider
   lookup")
 * the bare noun ("idempotency") and the verb form ("idempotent request")
 * the inverse / failure mode ("session expiry" → also "session refresh",

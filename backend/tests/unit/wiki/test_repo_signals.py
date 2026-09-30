@@ -3,7 +3,7 @@
 Three fixture-driven scenarios cover the canonical cases:
   - `go-oas3`-shape: CLI code generator with `internal/validator/`
     regression scaffolding that must NOT promote to a wiki page.
-  - `ledger`-shape: Go service with `cmd/`, `internal/domain`,
+  - `catalog`-shape: Go service with `cmd/`, `internal/domain`,
     `internal/repo` layers — domain layer should reach `supporting`,
     cmd should reach `public`.
   - small-library-shape: exported package, no `cmd/`. Must not get
@@ -239,31 +239,31 @@ def test_go_oas3_internal_validator_filtered_from_public_api():
 
 
 # ---------------------------------------------------------------------------
-# Fixture: ledger-shape (Go service)
+# Fixture: catalog-shape (Go service)
 # ---------------------------------------------------------------------------
 
 
-def _ledger_fixture() -> RepoContext:
+def _catalog_fixture() -> RepoContext:
     file_tree = [
         _file("README.md", language="markdown"),
         _file("go.mod"),
-        _file("cmd/ledger/main.go"),
+        _file("cmd/catalog/main.go"),
         _file("internal/api/router.go"),
         _file("internal/api/router_test.go"),
-        _file("internal/domain/account/account.go"),
-        _file("internal/domain/account/account_test.go"),
-        _file("internal/domain/posting/posting.go"),
-        _file("internal/domain/posting/posting_test.go"),
-        _file("internal/repo/postgres/posting.go"),
+        _file("internal/domain/product/product.go"),
+        _file("internal/domain/product/product_test.go"),
+        _file("internal/domain/stock/stock.go"),
+        _file("internal/domain/stock/stock_test.go"),
+        _file("internal/repo/postgres/stock.go"),
         _file("internal/events/consumer.go"),
         _file("docs/architecture.md", language="markdown"),
     ]
     public_api: list[PublicApiEntry] = []
     readme = (
-        "# ledger\n\n"
-        "Tracks merchant balances and double-entry postings.\n\n"
+        "# catalog\n\n"
+        "Tracks product listings and stock levels.\n\n"
         "## Run\n\n"
-        "Set `HTTP_PORT` and `BROKER_URL`, then `go run ./cmd/ledger`.\n"
+        "Set `HTTP_PORT` and `BROKER_URL`, then `go run ./cmd/catalog`.\n"
     )
     return _make_context(
         file_tree=file_tree,
@@ -272,22 +272,22 @@ def _ledger_fixture() -> RepoContext:
     )
 
 
-def test_ledger_cmd_is_public():
-    signals = build_repo_signals(_ledger_fixture())
+def test_catalog_cmd_is_public():
+    signals = build_repo_signals(_catalog_fixture())
     cmd = next(
-        c for c in signals.topic_candidates if c.normalized_key == "cmd:ledger"
+        c for c in signals.topic_candidates if c.normalized_key == "cmd:catalog"
     )
     assert cmd.salience_tier == SalienceTier.PUBLIC
 
 
-def test_ledger_internal_layers_not_test_scaffolding():
+def test_catalog_internal_layers_not_test_scaffolding():
     """Service repos store production logic under `internal/`; we must
     NOT collapse those to test_scaffolding."""
-    signals = build_repo_signals(_ledger_fixture())
+    signals = build_repo_signals(_catalog_fixture())
     # internal/api/router.go has a sibling _test.go but the cluster
     # contains real production code. With test-paired demotion it goes
     # below the supporting bar, but should not be test_scaffolding.
-    domain_account = next(
+    domain_product = next(
         c
         for c in signals.topic_candidates
         if c.normalized_key == "internal:domain"
@@ -297,8 +297,8 @@ def test_ledger_internal_layers_not_test_scaffolding():
     # Either internal or supporting — both are acceptable. The point is
     # the cluster contains real production code that S4 may surface in
     # an Architecture section even if no dedicated page is allocated.
-    assert domain_account.salience_tier != SalienceTier.PUBLIC
-    assert "path_under_internal_dir" in domain_account.demotion_reasons
+    assert domain_product.salience_tier != SalienceTier.PUBLIC
+    assert "path_under_internal_dir" in domain_product.demotion_reasons
 
 
 # ---------------------------------------------------------------------------
@@ -543,7 +543,7 @@ def test_topic_candidate_id_is_normalized():
 
 
 def test_evidence_paths_are_non_test_only_when_mixed():
-    signals = build_repo_signals(_ledger_fixture())
+    signals = build_repo_signals(_catalog_fixture())
     api = next(
         c for c in signals.topic_candidates if c.normalized_key == "internal:api"
     )

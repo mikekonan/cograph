@@ -145,7 +145,7 @@ async def test_admin_query_logs_substring_filter(client, db_session, settings):
     alice = await _make_user(db_session, email="alice@example.com")
 
     await _seed_row(db_session, user_id=alice.id, query_text="how does auth work")
-    await _seed_row(db_session, user_id=alice.id, query_text="payment flow")
+    await _seed_row(db_session, user_id=alice.id, query_text="shipping flow")
     await _seed_row(db_session, user_id=alice.id, query_text="AUTH middleware")
 
     await _authenticate(client, settings, admin)

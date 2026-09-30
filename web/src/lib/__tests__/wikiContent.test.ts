@@ -53,8 +53,8 @@ describe("normalizeWikiMarkdown — blockquote-as-code repair", () => {
 
 describe("normalizeWikiMarkdown — malformed inline backtick collapse", () => {
   it("rewrites ```Identifier``` (3+3) to `Identifier` in prose", () => {
-    const md = "The ```MerchantID``` type wraps the merchant identifier.";
-    expect(normalizeWikiMarkdown(md)).toBe("The `MerchantID` type wraps the merchant identifier.");
+    const md = "The ```CustomerID``` type wraps the customer identifier.";
+    expect(normalizeWikiMarkdown(md)).toBe("The `CustomerID` type wraps the customer identifier.");
   });
 
   it("rewrites `Identifier``` (1+3 asymmetric) to `Identifier`", () => {

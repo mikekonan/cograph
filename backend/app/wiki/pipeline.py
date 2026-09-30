@@ -2212,8 +2212,8 @@ _MERMAID_QUOTED_LABEL_RE = re.compile(
     r'(?P<open>(?<![\[\{])[\[\{])"(?P<text>[^"\n]+)"(?P<close>[\]\}](?![\]\}]))'
 )
 # camelCase boundary: split before an uppercase letter that's followed
-# by a lowercase letter (so `MerchantID` → `Merchant`,`ID` not
-# `M`,`erchant`,`I`,`D`). Also splits before an uppercase letter that
+# by a lowercase letter (so `CustomerID` → `Customer`,`ID` not
+# `C`,`ustomer`,`I`,`D`). Also splits before an uppercase letter that
 # follows a lowercase letter (the typical word boundary).
 _CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z])(?=[A-Z])|(?=[A-Z][a-z])")
 
@@ -2327,7 +2327,7 @@ def _wrap_one_label(contents: str, open_b: str, close_b: str) -> str:
 def _wrap_long_mermaid_labels(body: str) -> str:
     """Wrap node labels inside flowchart/graph fences with `<br/>` so
     long single-line labels (`processSubscriptionRenewal`,
-    `domain.MerchantID`) don't overflow their node box at narrow viewports.
+    `domain.CustomerID`) don't overflow their node box at narrow viewports.
 
     No-op on non-flowchart diagrams (class, sequence, ER, etc.) — those
     use different label containers that don't benefit from `<br/>` and

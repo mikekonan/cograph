@@ -55,7 +55,7 @@ async def _seed_pat_user(db_session) -> tuple[User, str]:
 
 _PAGE_CONTENT = (
     "# Overview\n"
-    "A payment platform.\n"
+    "A shipping platform.\n"
     "## Overview\n"
     "It orchestrates many providers behind one API.\n"
     "## Architecture\n"

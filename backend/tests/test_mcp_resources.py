@@ -71,7 +71,7 @@ async def test_briefing_resource_returns_default_when_empty(app, db_session) -> 
 @pytest.mark.asyncio
 async def test_briefing_resource_reflects_admin_edit(app, db_session) -> None:
     db_session.add(
-        McpOperatorBriefing(id=1, content="Payments team: ask before currency changes.")
+        McpOperatorBriefing(id=1, content="Shipping team: ask before carrier changes.")
     )
     await db_session.commit()
 
@@ -79,7 +79,7 @@ async def test_briefing_resource_reflects_admin_edit(app, db_session) -> None:
     result = await server.read_resource("cograph://briefing")
     payload = json.loads(_content_str(result))
     assert payload["is_default"] is False
-    assert "Payments team" in payload["content"]
+    assert "Shipping team" in payload["content"]
     assert payload["updated_at"] is not None
 
 
@@ -108,8 +108,8 @@ async def test_my_context_lists_public_repo_and_collection(app, db_session) -> N
     repo = Repository(
         host="github.com",
         owner="acme",
-        name="payments",
-        git_url="https://github.com/acme/payments.git",
+        name="shipping",
+        git_url="https://github.com/acme/shipping.git",
         branch="main",
         status=RepositoryStatus.READY,
         visibility=RepositoryVisibility.PUBLIC,
@@ -138,14 +138,14 @@ async def test_my_context_lists_public_repo_and_collection(app, db_session) -> N
     payload = json.loads(_content_str(result))
 
     repo_slugs = [item["slug"] for item in payload["repositories"]["items"]]
-    assert "github.com/acme/payments" in repo_slugs
+    assert "github.com/acme/shipping" in repo_slugs
     # A repo without any generated wiki must surface wiki_total: 0 so the
     # agent can see the Wiki-FIRST rule (Step 1 in the playbook) does NOT apply
     # to it. Absence of the field would force the agent to guess.
     repo_entry = next(
         item
         for item in payload["repositories"]["items"]
-        if item["slug"] == "github.com/acme/payments"
+        if item["slug"] == "github.com/acme/shipping"
     )
     assert repo_entry["wiki_total"] == 0
 
@@ -209,8 +209,8 @@ async def test_wiki_tree_resource_serves_compacted_wiki(app, db_session) -> None
     repo = Repository(
         host="github.com",
         owner="acme",
-        name="keystore",
-        git_url="https://github.com/acme/keystore.git",
+        name="searchindex",
+        git_url="https://github.com/acme/searchindex.git",
         branch="main",
         status=RepositoryStatus.READY,
         visibility=RepositoryVisibility.PUBLIC,
@@ -227,7 +227,7 @@ async def test_wiki_tree_resource_serves_compacted_wiki(app, db_session) -> None
             sort_order=0,
             content=(
                 "# Overview\n"
-                "A key-management service.\n"
+                "A search-index service.\n"
                 "```go\n"
                 "func main() {}\n"
                 "```\n"
@@ -242,14 +242,14 @@ async def test_wiki_tree_resource_serves_compacted_wiki(app, db_session) -> None
     await db_session.commit()
 
     server = await _get_mcp_server(app)
-    result = await server.read_resource("cograph://repo/github.com/acme/keystore/wiki")
+    result = await server.read_resource("cograph://repo/github.com/acme/searchindex/wiki")
     payload = json.loads(_content_str(result))
 
     assert payload["total"] == 1
     assert "compact" in payload
     entry = payload["compact"][0]
     assert entry["slug"] == "index"
-    assert entry["lead"] == "A key-management service."
+    assert entry["lead"] == "A search-index service."
     assert "func main" not in entry["lead"]  # code fence stripped
     assert entry["sections"] == ["What it does"]
     assert entry["covers_questions"] == ["use-cases"]
@@ -273,8 +273,8 @@ async def test_wiki_page_resource_is_not_served_over_mcp(app, db_session) -> Non
     repo = Repository(
         host="github.com",
         owner="acme",
-        name="keystore",
-        git_url="https://github.com/acme/keystore.git",
+        name="searchindex",
+        git_url="https://github.com/acme/searchindex.git",
         branch="main",
         status=RepositoryStatus.READY,
         visibility=RepositoryVisibility.PUBLIC,
@@ -299,7 +299,7 @@ async def test_wiki_page_resource_is_not_served_over_mcp(app, db_session) -> Non
 
     server = await _get_mcp_server(app)
     with pytest.raises(Exception):
-        await server.read_resource("cograph://repo/github.com/acme/keystore/wiki/index")
+        await server.read_resource("cograph://repo/github.com/acme/searchindex/wiki/index")
 
 
 @pytest.mark.asyncio
@@ -311,8 +311,8 @@ async def test_graph_resources_are_not_served_over_mcp(app, db_session) -> None:
     repo = Repository(
         host="github.com",
         owner="acme",
-        name="keystore",
-        git_url="https://github.com/acme/keystore.git",
+        name="searchindex",
+        git_url="https://github.com/acme/searchindex.git",
         branch="main",
         status=RepositoryStatus.READY,
         visibility=RepositoryVisibility.PUBLIC,
@@ -322,9 +322,9 @@ async def test_graph_resources_are_not_served_over_mcp(app, db_session) -> None:
 
     server = await _get_mcp_server(app)
     with pytest.raises(Exception):
-        await server.read_resource("cograph://repo/github.com/acme/keystore/graph")
+        await server.read_resource("cograph://repo/github.com/acme/searchindex/graph")
     with pytest.raises(Exception):
         await server.read_resource(
-            "cograph://repo/github.com/acme/keystore/graph/node/"
+            "cograph://repo/github.com/acme/searchindex/graph/node/"
             "00000000-0000-0000-0000-000000000000"
         )

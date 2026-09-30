@@ -457,9 +457,9 @@ def test_sanitize_mermaid_truncates_at_three_lines_and_injects_title():
     a `title=''` HTML attribute on a wrapping `<span>` so the reader can
     hover to recover the elided suffix."""
     # 7 dotted segments → 7 tokens. With an 18-char target line and the
-    # `pkg.A.subPkg.MerchantBillingAddressNormaliser.helper.bar.baz` shape,
+    # `pkg.A.subPkg.CustomerBillingAddressNormaliser.helper.bar.baz` shape,
     # the wrapper produces more than 3 lines and the cap kicks in.
-    long = "domain.payments.merchants.MerchantBillingAddressNormaliser.helper.normalise.foo"
+    long = "domain.shipping.customers.CustomerBillingAddressNormaliser.helper.normalise.foo"
     md = f"```mermaid\nflowchart LR\n  N[{long}] --> X[ok]\n```"
     out = sanitize_mermaid_in_markdown(md)
     # The wrapping `<span title='...'>` carries the FULL label.
@@ -475,7 +475,7 @@ def test_sanitize_mermaid_truncation_is_idempotent():
     """A second sanitize pass on a truncated label must be a no-op —
     the existing `<br/>`-bearing text guards the wrap function so we
     don't gain a nested `<span>` or extra `<br/>` tokens."""
-    long = "domain.payments.merchants.MerchantBillingAddressNormaliser.helper.normalise.foo"
+    long = "domain.shipping.customers.CustomerBillingAddressNormaliser.helper.normalise.foo"
     md = f"```mermaid\nflowchart LR\n  N[{long}] --> X[ok]\n```"
     once = sanitize_mermaid_in_markdown(md)
     twice = sanitize_mermaid_in_markdown(once)
