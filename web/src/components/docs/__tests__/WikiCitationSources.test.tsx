@@ -90,8 +90,8 @@ describe("WikiCitationSources — Q4: cap + disclosure", () => {
     const nodeCite: WikiCitation = {
       id: "11111111-1111-4111-9111-111111111111",
       kind: "node",
-      label: "domain.MerchantID",
-      file_path: "domain/merchant.go",
+      label: "domain.CustomerID",
+      file_path: "domain/customer.go",
       start_line: 10,
       end_line: 20,
       heading_path: [],

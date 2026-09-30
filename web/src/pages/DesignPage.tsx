@@ -243,7 +243,7 @@ const tocItems: TocItem[] = [
     level: 1,
     children: [
       { id: "auth", label: "Auth", level: 2 },
-      { id: "payments", label: "Payments", level: 2 },
+      { id: "shipping", label: "Shipping", level: 2 },
       { id: "billing", label: "Billing", level: 2 },
     ],
   },
@@ -338,7 +338,7 @@ const sampleJobs: Job[] = [
   },
   {
     id: "j-2",
-    source: "docs/payments-overview.md",
+    source: "docs/shipping-overview.md",
     target: "wiki.example.com/spaces/ENG/pages/12346",
     status: "success",
     progress: 100,
@@ -725,7 +725,7 @@ LIMIT 50;`}
           </div>
           <EmptyState
             variant="compact"
-            title='No results for "payment"'
+            title='No results for "shipping"'
             description="Try clearing filters or using a different search term."
             action={
               <Button variant="ghost" size="sm">

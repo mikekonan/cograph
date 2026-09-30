@@ -44,7 +44,7 @@ from backend.app.models.repository import Repository
 from backend.app.rag.source_router import route_sources
 
 
-_PRIVATE_SLUG_PARTS = ("github.com", "acme", "secret-payments")
+_PRIVATE_SLUG_PARTS = ("github.com", "acme", "secret-shipping")
 
 
 def _services(app) -> MCPServices:
@@ -120,7 +120,7 @@ async def test_repositories_payload_hides_private_repo_from_anon(
         limit=100,
     )
     slugs = [item["slug"] for item in payload["items"]]  # type: ignore[index]
-    assert "github.com/acme/secret-payments" not in slugs, payload
+    assert "github.com/acme/secret-shipping" not in slugs, payload
 
 
 @pytest.mark.asyncio
@@ -195,13 +195,13 @@ async def test_route_sources_does_not_surface_private_repo(
     await _seed_private_repo(db_session)
     hits = await route_sources(
         db_session,
-        query="secret payments",
+        query="secret shipping",
         current_user=None,
         settings=settings,
         top_k=10,
     )
     assert all(
-        h.label != "github.com/acme/secret-payments" for h in hits
+        h.label != "github.com/acme/secret-shipping" for h in hits
     ), hits
 
 

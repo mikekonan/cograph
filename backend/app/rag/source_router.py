@@ -13,13 +13,13 @@ no field for code (just slug + README); v2 (2026-05-19, 03c09da) added a
 module-level symbol corpus and dropped the divide-by-three normalisation;
 v3 (this commit) adds:
 
-  1. IDF weighting — generic tokens like 'payment' / 'integration' get a
+  1. IDF weighting — generic tokens like 'shipping' / 'integration' get a
      low df-derived weight, so a multi-token query like
-     `"AcmePay payment provider integration"` no longer scores all four
-     payment-domain repos at 0.75 just for matching 3 of 4 generic tokens.
+     `"ParcelCo shipping provider integration"` no longer scores all four
+     shipping-domain repos at 0.75 just for matching 3 of 4 generic tokens.
   2. Body indexing for collections via `md_chunks.content_tsv` (the existing
      GIN-indexed tsvector built by migration `2a54ef01f78c`). A glossary
-     document mentioning "AcmePay" only in body text — not headings — now
+     document mentioning "ParcelCo" only in body text — not headings — now
      surfaces with score ≥ 0.5.
   3. Structural always-include for collections: every `route()` call
      returns up to `top_k` collections, even if their score is 0. Below
@@ -150,9 +150,9 @@ def _tokenise(query: str) -> list[str]:
 
 def _matches_in(tokens: set[str], text: str) -> set[str]:
     """Return the subset of `tokens` that appear as a substring in `text`
-    (case-insensitive). Substring match — not whole-word — so `acmepay` hits
-    inside `domain.payments.acmepay.terminal`, and a slug fragment like
-    `runner` hits inside `git.example.com/svc/runner`.
+    (case-insensitive). Substring match — not whole-word — so `parcelco` hits
+    inside `domain.shipping.parcelco.rate_card`, and a slug fragment like
+    `dispatch` hits inside `git.example.com/team/dispatch`.
 
     Scoring lives in `_combine_score`; this is just the field-level
     matcher."""
@@ -249,8 +249,8 @@ async def _load_symbol_corpus(
     / methods: each file typically has dozens, the names repeat, and adding
     them would balloon the corpus to 50× the size with marginal new
     information. The substring search in `_matches_in` matches a
-    token like `acmepay` against any qualified_name fragment it appears in,
-    so the module rows alone are enough to surface `domain.payments.acmepay.*`.
+    token like `parcelco` against any qualified_name fragment it appears in,
+    so the module rows alone are enough to surface `domain.shipping.parcelco.*`.
 
     Rows per repo are capped at `_SYMBOL_CORPUS_PER_REPO_CAP` — sorted by
     `qualified_name` for determinism (alphabetical hits the prefix tree of
@@ -400,7 +400,7 @@ async def _route_repositories(
         )
         # Cross-field df: a token counts once per repo regardless of which
         # field it surfaced in. Counting per-field would double-count
-        # 'payment' against repos that mention it in both README and
+        # 'shipping' against repos that mention it in both README and
         # symbols, biasing idf low for those tokens.
         for tok in slug_matched | readme_matched | symbol_matched:
             df_map[tok] = df_map.get(tok, 0) + 1

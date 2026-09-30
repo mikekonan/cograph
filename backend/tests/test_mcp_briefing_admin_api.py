@@ -102,12 +102,12 @@ async def test_patch_briefing_updates_content_and_attribution(
 
     response = await client.patch(
         "/api/admin/mcp/briefing",
-        json={"content": "## Team payments\nGlossary: acquirer = …"},
+        json={"content": "## Team shipping\nGlossary: carrier = …"},
         headers={"x-csrf-token": _TEST_CSRF},
     )
     assert response.status_code == 200
     body = response.json()
-    assert "## Team payments" in body["content"]
+    assert "## Team shipping" in body["content"]
     assert body["updated_by_user_id"] == str(admin.id)
     assert body["updated_by_email"] == "admin@example.com"
 

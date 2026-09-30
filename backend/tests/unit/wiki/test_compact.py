@@ -12,22 +12,22 @@ from backend.app.wiki.compact import (
 
 def test_extract_lead_gathers_brief_and_overview_prose() -> None:
     content = (
-        "# Key Management Service\n"
+        "# Search Index Service\n"
         "\n"
-        "A merchant-scoped key-management service.\n"
-        "It centralises key lifecycle and crypto.\n"
+        "A tenant-scoped search-index service.\n"
+        "It centralises index lifecycle and ranking.\n"
         "\n"
         "## Overview\n"
-        "It rotates keys per merchant and audits every access.\n"
+        "It rebuilds indexes per tenant and audits every query.\n"
     )
     lead = extract_lead(content)
     # The one-line brief under the H1 AND the Overview prose are both in: the
     # heading line is dropped, the substantive prose it introduces is not. The
     # old behaviour stopped at `## Overview` and lost the overview entirely.
     assert lead == (
-        "A merchant-scoped key-management service. "
-        "It centralises key lifecycle and crypto. "
-        "It rotates keys per merchant and audits every access."
+        "A tenant-scoped search-index service. "
+        "It centralises index lifecycle and ranking. "
+        "It rebuilds indexes per tenant and audits every query."
     )
     assert "Overview" not in lead  # heading text itself never appears
 

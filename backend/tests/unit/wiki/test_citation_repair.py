@@ -26,8 +26,8 @@ def test_repair_markdown_upgrades_uuid_form_url_to_slug_form() -> None:
     repo_id = UUID("ae5c6624-90f3-4fbd-ae96-525b84f61b84")
     node_id = UUID("019de76b-191c-7f70-825c-97abd7684777")
     content = (
-        "MerchantID is exposed as `domain.MerchantID` "
-        f"[`domain.MerchantID`](/repos/{repo_id}/graph?node={node_id}).\n"
+        "CustomerID is exposed as `domain.CustomerID` "
+        f"[`domain.CustomerID`](/repos/{repo_id}/graph?node={node_id}).\n"
     )
 
     result = repair_markdown(
@@ -36,14 +36,14 @@ def test_repair_markdown_upgrades_uuid_form_url_to_slug_form() -> None:
             {
                 "id": str(node_id),
                 "kind": "node",
-                "label": "MerchantID",
-                "file_path": "domain/merchant.go",
+                "label": "CustomerID",
+                "file_path": "domain/customer.go",
             }
         ],
         repository_id=repo_id,
         repo_slug=_slug(),
         existing_node_ids={node_id},
-        qn_to_node_id={"domain.MerchantID": node_id},
+        qn_to_node_id={"domain.CustomerID": node_id},
     )
 
     assert result.url_format_upgraded == 1

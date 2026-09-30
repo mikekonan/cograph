@@ -45,8 +45,8 @@ EMBED_MODEL = "fake-embed-v1"
 
 def _overview() -> RepoOverview:
     return RepoOverview(
-        one_line="Payment event processor.",
-        long_description="Consumes payment events and routes them downstream.",
+        one_line="Shipping event processor.",
+        long_description="Consumes shipping events and routes them downstream.",
     )
 
 
@@ -258,7 +258,7 @@ async def _retrieve_bundle(
         return await retriever.for_page(
             session=session,
             repository_id=repository_id,
-            purpose="How the service processes payment events",
+            purpose="How the service processes shipping events",
             sources_hint=["svc.alpha", "svc.py"],
         )
 

@@ -154,8 +154,8 @@ async def test_route_returns_no_results_for_stopwords_only(db_session, settings)
         db_session,
         host="github.com",
         owner="acme",
-        name="payments",
-        readme="# Payments service\n\nHandles checkout and routing.",
+        name="shipping",
+        readme="# Shipping service\n\nHandles orders and routing.",
     )
     hits = await route_sources(
         db_session,
@@ -170,17 +170,17 @@ async def test_route_returns_no_results_for_stopwords_only(db_session, settings)
 @pytest.mark.asyncio
 async def test_route_matches_slug_token(db_session, settings) -> None:
     await _make_public_repo(
-        db_session, host="github.com", owner="acme", name="payments-api"
+        db_session, host="github.com", owner="acme", name="shipping-api"
     )
     hits = await route_sources(
         db_session,
-        query="where does payments live",
+        query="where does shipping live",
         current_user=None,
         settings=settings,
         top_k=3,
     )
-    assert any("payments-api" in h.label for h in hits)
-    hit = next(h for h in hits if "payments-api" in h.label)
+    assert any("shipping-api" in h.label for h in hits)
+    hit = next(h for h in hits if "shipping-api" in h.label)
     assert hit.kind == "repository"
     assert 0.0 <= hit.score <= 1.0
     assert hit.why  # never empty
@@ -193,19 +193,19 @@ async def test_route_score_in_unit_interval(db_session, settings) -> None:
         db_session,
         host="github.com",
         owner="acme",
-        name="payments",
-        readme="# Payments\nAcquirer routing and 3DS lookups happen here.",
+        name="shipping",
+        readme="# Shipping\nCarrier routing and OTP lookups happen here.",
     )
     await _make_public_repo(
         db_session,
         host="github.com",
         owner="acme",
-        name="ledger",
-        readme="# Ledger\nLedger, settlements, payouts.",
+        name="catalog",
+        readme="# Catalog\nCatalog, listings, stock levels.",
     )
     hits = await route_sources(
         db_session,
-        query="payments acquirer routing",
+        query="shipping carrier routing",
         current_user=None,
         settings=settings,
         top_k=3,
@@ -223,8 +223,8 @@ async def test_route_respects_repository_acl(db_session, settings) -> None:
     private_repo = Repository(
         host="github.com",
         owner="acme",
-        name="secret-payments",
-        git_url="https://github.com/acme/secret-payments.git",
+        name="secret-shipping",
+        git_url="https://github.com/acme/secret-shipping.git",
         branch="main",
         status=RepositoryStatus.READY,
         visibility=RepositoryVisibility.ADMIN_ONLY,
@@ -234,13 +234,13 @@ async def test_route_respects_repository_acl(db_session, settings) -> None:
 
     anon_hits = await route_sources(
         db_session,
-        query="secret payments routing",
+        query="secret shipping routing",
         current_user=None,
         settings=settings,
         top_k=3,
     )
     # Anonymous callers must not learn about private repos via the router.
-    assert all("secret-payments" not in h.label for h in anon_hits), anon_hits
+    assert all("secret-shipping" not in h.label for h in anon_hits), anon_hits
 
 
 @pytest.mark.asyncio
@@ -299,16 +299,16 @@ async def test_route_matches_collection_title_and_headings(db_session, settings)
     await _make_collection(
         db_session,
         name="Engineering glossary",
-        description="Domain terms and acronyms for the payments team.",
+        description="Domain terms and acronyms for the shipping team.",
         owner=admin,
         heading_tree=[
-            {"text": "Acquirer", "level": 2},
-            {"text": "Issuer", "level": 2},
+            {"text": "Carrier", "level": 2},
+            {"text": "Consignee", "level": 2},
         ],
     )
     hits = await route_sources(
         db_session,
-        query="what does acquirer mean",
+        query="what does carrier mean",
         current_user=None,
         settings=settings,
         top_k=3,
@@ -316,54 +316,50 @@ async def test_route_matches_collection_title_and_headings(db_session, settings)
     coll_hits = [h for h in hits if h.kind == "collection"]
     assert coll_hits, hits
     assert coll_hits[0].label == "Engineering glossary"
-    assert "acquirer" in coll_hits[0].why.lower()
+    assert "carrier" in coll_hits[0].why.lower()
 
 
 @pytest.mark.asyncio
 async def test_route_finds_provider_only_in_code_symbols(
     db_session, settings
 ) -> None:
-    """Reproducer for the 'AcmePay' incident (2026-05-19): the agent in chat
-    mode asked Cograph about a payment provider whose name lives ONLY in
-    code paths (`domain/payments/acmepay/terminal.go`, qualified_name
-    `domain.payments.acmepay.terminal`). The router-then-fan-out playbook
-    requires that the right repo come back with score ≥ 0.5 — anything
-    less and the agent treats the hit as ignorable noise.
+    """A provider whose name lives ONLY in code paths
+    (`domain/shipping/parcelco/rate_card.go`, qualified_name
+    `domain.shipping.parcelco.rate_card`) must still route to its repo with
+    score ≥ 0.5. The router-then-fan-out playbook treats anything less as
+    ignorable noise.
 
-    Before the fix: score was 0.167 (router only saw slug + README, neither
-    of which mentions AcmePay). Runner's README describes the runner
-    mechanics in the abstract; the provider lives entirely in code.
-
-    After the fix: the router also indexes module-level qualified_name and
-    file_path tokens, and the formula normalises so single-source full
-    coverage = 1.0 (was 0.333 before)."""
-    runner = await _make_public_repo(
+    Slug + README alone score 0.167 here: the dispatch README describes the
+    service in the abstract and names no provider. The router also indexes
+    module-level qualified_name and file_path tokens, and the formula
+    normalises so single-source full coverage = 1.0."""
+    dispatch = await _make_public_repo(
         db_session,
         host="git.example.com",
-        owner="svc",
-        name="runner",
-        # Realistic README shape: runner is described as an abstract runner;
+        owner="team",
+        name="dispatch",
+        # Realistic README shape: dispatch is described in the abstract;
         # zero providers named here. All provider mentions live in code.
         readme=(
-            "# Runner\n\nIntegration runner. Adapts the internal payment "
-            "flow to provider-specific terminals.\n"
+            "# Dispatch\n\nIntegration dispatcher. Adapts the internal shipping "
+            "flow to provider-specific rate cards.\n"
         ),
     )
     # Module-level code nodes — the indexer produces exactly one per Go
     # file. These are the chunky structural-skeleton rows the router will
     # pull as a routing signal.
-    for fname in ("terminal", "builder_card", "process_error", "dictionary"):
+    for fname in ("rate_card", "builder_label", "process_error", "dictionary"):
         db_session.add(
             CodeNode(
-                repository_id=runner.id,
-                file_path=f"domain/payments/acmepay/{fname}.go",
-                qualified_name=f"domain.payments.acmepay.{fname}#module",
+                repository_id=dispatch.id,
+                file_path=f"domain/shipping/parcelco/{fname}.go",
+                qualified_name=f"domain.shipping.parcelco.{fname}#module",
                 name=fname,
                 language="go",
                 node_type=CodeNodeType.MODULE,
                 start_line=1,
                 end_line=100,
-                content=f"package acmepay // {fname}\n",
+                content=f"package parcelco // {fname}\n",
                 content_hash="x" * 64,
             )
         )
@@ -371,26 +367,26 @@ async def test_route_finds_provider_only_in_code_symbols(
 
     hits = await route_sources(
         db_session,
-        query="AcmePay payment provider integration",
+        query="ParcelCo shipping provider integration",
         current_user=None,
         settings=settings,
         top_k=3,
     )
     repo_hits = [h for h in hits if h.kind == "repository"]
-    runner_hit = next((h for h in repo_hits if "runner" in h.label), None)
-    assert runner_hit is not None, (
-        f"router lost runner entirely — symbol-name match for 'acmepay' is the "
+    dispatch_hit = next((h for h in repo_hits if "dispatch" in h.label), None)
+    assert dispatch_hit is not None, (
+        f"router lost dispatch entirely — symbol-name match for 'parcelco' is the "
         f"single strongest signal we have; got: {repo_hits}"
     )
-    assert runner_hit.score >= 0.5, (
-        f"router should be ≥0.5 confident when 'acmepay' appears in 4 module "
-        f"qualified_names; got {runner_hit.score:.3f}. The playbook treats "
+    assert dispatch_hit.score >= 0.5, (
+        f"router should be ≥0.5 confident when 'parcelco' appears in 4 module "
+        f"qualified_names; got {dispatch_hit.score:.3f}. The playbook treats "
         f"<0.5 as ignorable, so this is the user-visible 'agent gave up' "
         f"threshold."
     )
-    assert "symbol" in runner_hit.why.lower() or "code" in runner_hit.why.lower(), (
+    assert "symbol" in dispatch_hit.why.lower() or "code" in dispatch_hit.why.lower(), (
         f"why should announce the symbol-name match so the agent's debug "
-        f"trail can explain WHERE the match came from; got: {runner_hit.why!r}"
+        f"trail can explain WHERE the match came from; got: {dispatch_hit.why!r}"
     )
 
 
@@ -436,82 +432,82 @@ async def test_route_does_not_regress_readme_only_matches(
 
 
 @pytest.mark.asyncio
-async def test_route_does_not_overrate_generic_payment_repos(
+async def test_route_does_not_overrate_generic_shipping_repos(
     db_session, settings
 ) -> None:
-    """IDF reproducer: the 03c09da-era formula scored every payment-domain
-    repo at 0.75 on a query like 'AcmePay payment provider integration' (4
-    tokens, 3 generic shared across many repos, 1 unique to runner). The
+    """IDF check: the 03c09da-era formula scored every shipping-domain
+    repo at 0.75 on a query like 'ParcelCo shipping provider integration' (4
+    tokens, 3 generic shared across many repos, 1 unique to dispatch). The
     playbook's USE-ALL ≥ 0.7 rule then forced the agent to fan out into 5
-    payment repos when only runner actually contained 'acmepay'.
+    shipping repos when only dispatch actually contained 'parcelco'.
 
     Router v3 uses IDF to dampen the 3 generic tokens to near-zero weight
-    while the unique 'acmepay' token carries almost all the discrimination.
-    The expected outcome: runner ≥ 0.85, the generic-payment repos drop
+    while the unique 'parcelco' token carries almost all the discrimination.
+    The expected outcome: dispatch ≥ 0.85, the generic shipping repos drop
     below 0.5 (out of USE-ALL territory)."""
-    runner = await _make_public_repo(
+    dispatch = await _make_public_repo(
         db_session,
         host="git.example.com",
-        owner="svc",
-        name="runner",
+        owner="team",
+        name="dispatch",
         readme=(
-            "# Runner\n\nIntegration runner. Adapts the internal payment "
-            "flow to provider-specific terminals.\n"
+            "# Dispatch\n\nIntegration dispatcher. Adapts the internal shipping "
+            "flow to provider-specific rate cards.\n"
         ),
     )
-    # Runner gets acmepay symbols (the discriminator).
-    for fname in ("terminal", "builder_card", "process_error", "dictionary"):
+    # Dispatch gets parcelco symbols (the discriminator).
+    for fname in ("rate_card", "builder_label", "process_error", "dictionary"):
         db_session.add(
             CodeNode(
-                repository_id=runner.id,
-                file_path=f"domain/payments/acmepay/{fname}.go",
-                qualified_name=f"domain.payments.acmepay.{fname}#module",
+                repository_id=dispatch.id,
+                file_path=f"domain/shipping/parcelco/{fname}.go",
+                qualified_name=f"domain.shipping.parcelco.{fname}#module",
                 name=fname,
                 language="go",
                 node_type=CodeNodeType.MODULE,
                 start_line=1,
                 end_line=100,
-                content=f"package acmepay // {fname}\n",
+                content=f"package parcelco // {fname}\n",
                 content_hash="x" * 64,
             )
         )
 
-    # Three generic payment-domain repos. They each mention 'payment',
-    # 'provider', 'integration' in their README — none mention 'acmepay'.
-    for slug in ("api", "gateway", "ledger"):
+    # Three generic shipping-domain repos. They each mention 'shipping',
+    # 'provider', 'integration' in their README — none mention 'parcelco'.
+    for slug in ("api", "storefront", "catalog"):
         await _make_public_repo(
             db_session,
             host="git.example.com",
-            owner="svc",
+            owner="team",
             name=slug,
             readme=(
-                f"# {slug}\n\nGeneric payment provider integration service. "
-                "Handles routing and reconciliation."
+                f"# {slug}\n\nGeneric shipping provider integration service. "
+                "Handles routing and tracking."
             ),
         )
     await db_session.commit()
 
     hits = await route_sources(
         db_session,
-        query="AcmePay payment provider integration",
+        query="ParcelCo shipping provider integration",
         current_user=None,
         settings=settings,
         top_k=5,
     )
     repo_hits = [h for h in hits if h.kind == "repository"]
-    runner_hit = next((h for h in repo_hits if "runner" in h.label), None)
-    assert runner_hit is not None, repo_hits
-    assert runner_hit.score >= 0.85, (
-        f"runner uniquely contains 'acmepay' (df=1) — IDF should put it at "
-        f"≥0.85, not {runner_hit.score:.3f}. If this drops below 0.85, the "
+    dispatch_hit = next((h for h in repo_hits if "dispatch" in h.label), None)
+    assert dispatch_hit is not None, repo_hits
+    assert dispatch_hit.score >= 0.85, (
+        f"dispatch uniquely contains 'parcelco' (df=1) — IDF should put it at "
+        f"≥0.85, not {dispatch_hit.score:.3f}. If this drops below 0.85, the "
         f"IDF formula stopped weighting rare tokens above generic ones."
     )
-    for noisy in ("api", "gateway", "ledger"):
+    for noisy in ("api", "storefront", "catalog"):
         hit = next((h for h in repo_hits if h.label.endswith(noisy)), None)
         if hit is None:
             continue
         assert hit.score < 0.5, (
-            f"{noisy} matches only generic 'payment/provider/integration' — "
+            f"{noisy} matches only generic 'shipping/provider/integration' — "
             f"IDF must push it under 0.5 (out of USE-ALL bucket). Got "
             f"{hit.score:.3f}. Without this discrimination the agent fans "
             f"out into 5 irrelevant repos."
@@ -522,9 +518,9 @@ async def test_route_does_not_overrate_generic_payment_repos(
 async def test_route_collection_finds_entity_in_body(
     db_session, settings
 ) -> None:
-    """Body-via-tsvector reproducer: a Confluence-mirror collection whose
-    'AcmePay' mention lives in document body text (NOT in title, NOT in
-    headings) must surface for `route("AcmePay")`. Pre-fix the router only
+    """Body-via-tsvector check: a wiki-mirror collection whose
+    'ParcelCo' mention lives in document body text (NOT in title, NOT in
+    headings) must surface for `route("ParcelCo")`. Pre-fix the router only
     inspected `heading_tree[*]["text"]` so the entity stayed invisible.
 
     On Postgres this goes through `md_chunks.content_tsv @@
@@ -536,31 +532,31 @@ async def test_route_collection_finds_entity_in_body(
     )
     coll = await _make_collection(
         db_session,
-        name="Payment Glossary",
+        name="Shipping Glossary",
         description="Domain terms.",
         owner=admin,
         heading_tree=[
             {"text": "Overview", "level": 1},
-            {"text": "Acquirers", "level": 2},
+            {"text": "Carriers", "level": 2},
         ],
     )
     # Replace the placeholder doc with one whose body explicitly names
-    # AcmePay (and NOT in title or headings).
+    # ParcelCo (and NOT in title or headings).
     db_session.add(
         MdDocument(
             collection_id=coll.id,
-            source_key="acquirers/acmepay-overview.md",
-            title="Acquirer notes",
+            source_key="carriers/parcelco-overview.md",
+            title="Carrier notes",
             content=(
-                "# Acquirer notes\n\n"
-                "AcmePay is an external acquirer providing card payment "
-                "terminals and 3DS handshakes. See the integration runner "
+                "# Carrier notes\n\n"
+                "ParcelCo is an external carrier providing parcel delivery "
+                "rate cards and OTP handshakes. See the integration dispatcher "
                 "for the provider-specific contract."
             ),
             content_hash="z" * 64,
             bytes=200,
             heading_tree=[
-                {"text": "Acquirer notes", "level": 1},
+                {"text": "Carrier notes", "level": 1},
             ],
         )
     )
@@ -568,15 +564,15 @@ async def test_route_collection_finds_entity_in_body(
 
     hits = await route_sources(
         db_session,
-        query="AcmePay",
+        query="ParcelCo",
         current_user=None,
         settings=settings,
         top_k=3,
     )
     coll_hits = [h for h in hits if h.kind == "collection"]
-    coll_hit = next((c for c in coll_hits if c.label == "Payment Glossary"), None)
+    coll_hit = next((c for c in coll_hits if c.label == "Shipping Glossary"), None)
     assert coll_hit is not None, (
-        f"collection with 'AcmePay' in body must surface even when title and "
+        f"collection with 'ParcelCo' in body must surface even when title and "
         f"headings don't mention it; got: {coll_hits}"
     )
     assert coll_hit.score >= 0.5, (
@@ -613,7 +609,7 @@ async def test_route_always_returns_top_collection_even_without_lexical_match(
             collection_id=coll.id,
             source_key="webpack-tips.md",
             title="Webpack tips",
-            content="# Webpack tips\n\nNothing to see here about payments.",
+            content="# Webpack tips\n\nNothing to see here about shipping.",
             content_hash="w" * 64,
             bytes=80,
             heading_tree=[{"text": "Webpack tips", "level": 1}],
@@ -623,7 +619,7 @@ async def test_route_always_returns_top_collection_even_without_lexical_match(
 
     hits = await route_sources(
         db_session,
-        query="AcmePay",
+        query="ParcelCo",
         current_user=None,
         settings=settings,
         top_k=3,
@@ -656,15 +652,15 @@ async def test_route_rest_returns_payload_shape(client, db_session) -> None:
         db_session,
         host="github.com",
         owner="acme",
-        name="payments",
-        readme="# Payments\nAcquirer routing logic.",
+        name="shipping",
+        readme="# Shipping\nCarrier routing logic.",
     )
     response = await client.post(
-        "/api/route", json={"query": "acquirer routing", "top_k": 3}
+        "/api/route", json={"query": "carrier routing", "top_k": 3}
     )
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["query"] == "acquirer routing"
+    assert body["query"] == "carrier routing"
     assert isinstance(body["repositories"], list)
     assert isinstance(body["collections"], list)
     for hit in body["repositories"] + body["collections"]:
@@ -681,6 +677,6 @@ async def test_route_rest_rejects_empty_query(client) -> None:
 @pytest.mark.asyncio
 async def test_route_rest_rejects_invalid_top_k(client) -> None:
     response = await client.post(
-        "/api/route", json={"query": "payments", "top_k": 99}
+        "/api/route", json={"query": "shipping", "top_k": 99}
     )
     assert response.status_code == 422

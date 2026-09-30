@@ -111,12 +111,12 @@ export default function AdminMcpPage() {
               spellCheck={false}
               className="font-mono text-sm leading-relaxed"
               placeholder={
-                "This Cograph deployment serves the payments team.\n\n" +
+                "This Cograph deployment serves the shipping team.\n\n" +
                 "Glossary:\n" +
-                "  - acquirer: the bank that routes the merchant's card transactions.\n" +
-                "  - terminal: the merchant↔acquirer binding used by runner.\n\n" +
-                "When asked about routing or fallback, search ledger AND " +
-                "gateway in parallel; both own pieces of the flow."
+                "  - carrier: the company that delivers the customer's parcels.\n" +
+                "  - rate card: the customer↔carrier price table used by dispatch.\n\n" +
+                "When asked about routing or fallback, search catalog AND " +
+                "storefront in parallel; both own pieces of the flow."
               }
             />
             <div className="flex items-center justify-between text-xs">
