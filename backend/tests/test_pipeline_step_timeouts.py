@@ -135,6 +135,17 @@ async def test_embed_step_timeout_marks_run_with_step_timeout_error(
     )).scalars().all()
     assert any(job.step is SyncStep.EMBED for job in failed_jobs)
 
+    # Steps after the failed one never ran: cancelled, not left queued.
+    batch_id = next(job.batch_id for job in failed_jobs if job.step is SyncStep.EMBED)
+    jobs = (await db_session.execute(
+        __import__("sqlalchemy").select(SyncJob).where(SyncJob.batch_id == batch_id)
+    )).scalars().all()
+    assert SyncJobStatus.QUEUED not in {job.status for job in jobs}
+    assert {job.step for job in jobs if job.status is SyncJobStatus.CANCELLED} >= {
+        SyncStep.GENERATE_SUMMARIES,
+        SyncStep.GENERATE_WIKI,
+    }
+
 
 async def test_embed_step_under_timeout_succeeds(db_session, tmp_path):
     """Generous timeout + instant service → SUCCESS, no STEP_TIMEOUT."""
