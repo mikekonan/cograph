@@ -13,7 +13,7 @@ from backend.app.wiki.schemas import PagePlan, PageSpec, ReaderQuestion
 
 
 def test_unknown_covers_question_is_dropped_not_fatal():
-    """The exact prod failure: a hallucinated slug on one page.
+    """The original failure: a hallucinated slug on one page.
 
     Before the fix, `model_validate_json` raised a `ValidationError` for
     the unknown enum value and `plan_pages` died. Now the unknown slug is
@@ -21,7 +21,7 @@ def test_unknown_covers_question_is_dropped_not_fatal():
     """
     raw = (
         '{"pages": ['
-        '{"slug": "index", "title": "Merchant Registry Service", "purpose": "x",'
+        '{"slug": "index", "title": "Example Service", "purpose": "x",'
         ' "covers_questions": ["use-cases", "how-to-run", "public-api",'
         ' "dependencies", "configuration"]},'
         '{"slug": "operations", "title": "Operations", "purpose": "y",'
