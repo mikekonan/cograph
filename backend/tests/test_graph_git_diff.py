@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import subprocess
 from datetime import UTC
 from pathlib import Path
@@ -8,9 +9,10 @@ import pytest
 from sqlalchemy import select
 
 from backend.app.graph import ingest as ingest_module
-from backend.app.graph.extractor import EXTRACTOR_VERSIONS
+from backend.app.graph.extractor import EXTRACTOR_VERSIONS, compute_symbol_key
 from backend.app.graph.ingest import GraphIngestService
 from backend.app.graph.languages import GraphLanguage
+from backend.app.models.code_edge import CodeEdge
 from backend.app.models.code_node import CodeNode
 from backend.app.models.enums import RepositoryStatus, SyncSchedule
 from backend.app.models.repository import Repository
@@ -363,3 +365,240 @@ async def test_tsconfig_change_reextracts_only_the_files_it_covers(db_session, t
     assert str(nodes["app.c.c"].id) in nodes["app.b.b"].callees
 
     assert (await sync(second)).processed_files == 0
+
+
+async def test_restamp_of_a_renamed_go_module_keeps_its_children(
+    db_session, tmp_path, caplog
+):
+    checkout = tmp_path / "checkout"
+    _init_git_repo(checkout)
+    (checkout / "go.mod").write_text("module example.com/app\n\ngo 1.22\n", "utf-8")
+    (checkout / "main.go").write_text(
+        "package main\n\ntype T struct{}\n\nfunc main() { T{}.Run() }\n", "utf-8"
+    )
+    (checkout / "run.go").write_text("package main\n\nfunc (T) Run() {}\n", "utf-8")
+    head = _commit_all(checkout, "initial")
+
+    repository = await _create_repo(db_session)
+    service = GraphIngestService()
+    await service.ingest_checkout(
+        session=db_session,
+        repository_id=repository.id,
+        checkout_path=checkout,
+        commit_sha=head,
+    )
+    await db_session.commit()
+    ids_before = {
+        qn: node.id for qn, node in (await _nodes_by_qn(db_session, repository.id)).items()
+    }
+
+    # Rows written by an older extractor: the module had no `#module`
+    # suffix, so its symbol_key no longer matches, and it carries no stamp.
+    module = (await _nodes_by_qn(db_session, repository.id))["main#module"]
+    module.qualified_name = "main"
+    module.symbol_key = compute_symbol_key(
+        language=GraphLanguage.GO, qualified_name="main", signature=module.signature
+    )
+    module.node_metadata = {
+        k: v for k, v in module.node_metadata.items() if k != "extractor_stamp"
+    }
+    await db_session.commit()
+
+    with caplog.at_level(logging.WARNING, logger="backend.app.graph.ingest"):
+        result = await service.ingest_checkout(
+            session=db_session,
+            repository_id=repository.id,
+            checkout_path=checkout,
+            last_commit=head,
+            commit_sha=head,
+        )
+        await db_session.commit()
+
+    assert result.replaced_files == ("main.go",)
+    assert not [r for r in caplog.records if "persist_graph" in r.getMessage()]
+    nodes = await _nodes_by_qn(db_session, repository.id)
+    assert {qn: node.id for qn, node in nodes.items()} == ids_before
+    assert nodes["main.T.Run"].parent_id == nodes["main.T"].id
+
+
+async def test_class_header_change_keeps_its_methods(db_session, tmp_path, caplog):
+    checkout = tmp_path / "checkout"
+    _init_git_repo(checkout)
+    source = "export class B {}\nexport class A%s {\n  m() { return 1; }\n}\n"
+    (checkout / "a.ts").write_text(source % "", "utf-8")
+    first = _commit_all(checkout, "initial")
+
+    repository = await _create_repo(db_session)
+    service = GraphIngestService()
+    await service.ingest_checkout(
+        session=db_session,
+        repository_id=repository.id,
+        checkout_path=checkout,
+        commit_sha=first,
+    )
+    await db_session.commit()
+    method_id = (await _nodes_by_qn(db_session, repository.id))["a.A.m"].id
+
+    # A TS class signature is its header, so a new base rotates its key.
+    (checkout / "a.ts").write_text(source % " extends B", "utf-8")
+    second = _commit_all(checkout, "inherit")
+    with caplog.at_level(logging.WARNING, logger="backend.app.graph.ingest"):
+        await service.ingest_checkout(
+            session=db_session,
+            repository_id=repository.id,
+            checkout_path=checkout,
+            last_commit=first,
+            commit_sha=second,
+        )
+        await db_session.commit()
+
+    assert not [r for r in caplog.records if "persist_graph" in r.getMessage()]
+    nodes = await _nodes_by_qn(db_session, repository.id)
+    assert nodes["a.A.m"].id == method_id
+    assert nodes["a.A.m"].parent_id == nodes["a.A"].id
+
+
+@pytest.mark.parametrize("full_walk", [False, True])
+async def test_deleting_a_go_type_file_keeps_methods_in_other_files(
+    db_session, tmp_path, full_walk
+):
+    checkout = tmp_path / "checkout"
+    _init_git_repo(checkout)
+    (checkout / "go.mod").write_text("module example.com/app\n\ngo 1.22\n", "utf-8")
+    (checkout / "t.go").write_text("package main\n\ntype T struct{}\n", "utf-8")
+    (checkout / "run.go").write_text("package main\n\nfunc (T) Run() {}\n", "utf-8")
+    first = _commit_all(checkout, "initial")
+
+    repository = await _create_repo(db_session)
+    service = GraphIngestService()
+    await service.ingest_checkout(
+        session=db_session,
+        repository_id=repository.id,
+        checkout_path=checkout,
+        commit_sha=first,
+    )
+    await db_session.commit()
+    run_id = (await _nodes_by_qn(db_session, repository.id))["main.T.Run"].id
+
+    (checkout / "t.go").unlink()
+    if full_walk:  # a root go.mod change escalates to the full walk and its prune
+        (checkout / "go.mod").write_text("module example.com/app\n\ngo 1.23\n", "utf-8")
+    second = _commit_all(checkout, "drop the type")
+    await service.ingest_checkout(
+        session=db_session,
+        repository_id=repository.id,
+        checkout_path=checkout,
+        last_commit=first,
+        commit_sha=second,
+    )
+    await db_session.commit()
+
+    nodes = await _nodes_by_qn(db_session, repository.id)
+    assert "main.T" not in nodes
+    assert nodes["main.T.Run"].id == run_id
+    assert nodes["main.T.Run"].parent_id is None
+
+
+async def test_full_walk_keeps_committed_files_when_it_dies(
+    db_session, tmp_path, monkeypatch
+):
+    checkout = tmp_path / "checkout"
+    _init_git_repo(checkout)
+    for name in "abcdef":
+        (checkout / f"{name}.py").write_text(f"def {name}() -> int:\n    return 1\n", "utf-8")
+    head = _commit_all(checkout, "initial")
+
+    repository = await _create_repo(db_session)
+    service = GraphIngestService()
+    monkeypatch.setattr(ingest_module, "_PARSE_COMMIT_EVERY", 2)
+    persist = service._parse_and_persist
+
+    async def dies_on_e(**kwargs):
+        if kwargs["relative_path"].name == "e.py":
+            raise RuntimeError("step timeout")
+        return await persist(**kwargs)
+
+    monkeypatch.setattr(service, "_parse_and_persist", dies_on_e)
+    with pytest.raises(RuntimeError):
+        await service.ingest_checkout(
+            session=db_session,
+            repository_id=repository.id,
+            checkout_path=checkout,
+            commit_sha=head,
+        )
+    await db_session.rollback()
+    assert {"a", "b", "c", "d"} <= set(await _nodes_by_qn(db_session, repository.id))
+
+    # A failed sync does not advance last_commit, so the retry walks again.
+    monkeypatch.setattr(service, "_parse_and_persist", persist)
+    result = await service.ingest_checkout(
+        session=db_session,
+        repository_id=repository.id,
+        checkout_path=checkout,
+        commit_sha=head,
+    )
+    await db_session.commit()
+    assert result.replaced_files == ("e.py", "f.py")
+
+
+async def test_callers_arrays_match_the_edges_after_every_sync(db_session, tmp_path):
+    checkout = tmp_path / "checkout"
+    _init_git_repo(checkout)
+    repository = await _create_repo(db_session)
+    service = GraphIngestService()
+    files = {
+        "hub.py": "def h1() -> int:\n    return 1\n\n\ndef h2() -> int:\n    return 2\n",
+        "a.py": "from hub import h1, h2\n\n\ndef a1() -> int:\n    return h1() + h2()\n",
+        "b.py": (
+            "from hub import h1\n\n\ndef b1() -> int:\n    return h1()\n\n\n"
+            "def b2() -> int:\n    return h1()\n"
+        ),
+        "c.py": "from hub import h2\n\n\ndef c1() -> int:\n    return h2()\n",
+    }
+    steps = [
+        {},
+        {"a.py": "from hub import h1\n\n\ndef a1() -> int:\n    return h1()\n"},
+        {"b.py": "from hub import h1\n\n\ndef b1() -> int:\n    return h1()\n"},
+        {"c.py": None},
+        {"hub.py": "def h1() -> int:\n    return 1\n"},
+        {"hub.py": files["hub.py"]},
+        # The only caller of h1 in its file is deleted, not rewritten.
+        {"a.py": "def a3() -> int:\n    return 3\n"},
+    ]
+    last = None
+    for step, change in enumerate(steps):
+        files.update(change)
+        for name, text in files.items():
+            if text is None:
+                (checkout / name).unlink(missing_ok=True)
+            else:
+                (checkout / name).write_text(text, "utf-8")
+        head = _commit_all(checkout, f"step {step}")
+        await service.ingest_checkout(
+            session=db_session,
+            repository_id=repository.id,
+            checkout_path=checkout,
+            last_commit=last,
+            commit_sha=head,
+        )
+        await db_session.commit()
+        last = head
+
+        edges = (
+            await db_session.execute(
+                select(CodeEdge.source_node_id, CodeEdge.target_node_id).where(
+                    CodeEdge.repository_id == repository.id,
+                    CodeEdge.edge_type == "calls",
+                    CodeEdge.target_node_id.is_not(None),
+                )
+            )
+        ).all()
+        nodes = await _nodes_by_qn(db_session, repository.id)
+        assert nodes["hub.h1"].callers, step
+        for node in nodes.values():
+            assert sorted(node.callees) == sorted(
+                str(t) for s, t in edges if s == node.id
+            ), (step, node.qualified_name)
+            assert sorted(node.callers) == sorted(
+                str(s) for s, t in edges if t == node.id
+            ), (step, node.qualified_name)

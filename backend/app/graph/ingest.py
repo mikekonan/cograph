@@ -17,7 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
 
 from backend.app.graph._chunking import chunked
-from backend.app.graph.builder import GraphBuilder, GraphBuildResult
+from backend.app.graph.builder import (
+    GraphBuilder,
+    GraphBuildResult,
+    detach_surviving_children,
+)
 from backend.app.graph.extractor import (
     EXTRACTOR_VERSIONS,
     ExtractedGraph,
@@ -49,6 +53,9 @@ _SHA_PATTERN = re.compile(r"^[0-9a-fA-F]{7,64}$")
 # 10k-file monorepos (≈200 lines per parse) while still giving
 # users a heartbeat every few seconds in practice.
 _PROGRESS_LOG_EVERY = 50
+# The full walk commits every N files, so a step timeout or a crash keeps
+# the files already stamped and the next sync resumes where this one died.
+_PARSE_COMMIT_EVERY = 200
 
 
 def _log_ingest_progress(
@@ -74,6 +81,26 @@ def _log_ingest_progress(
             "files_total": total,
             "current_file": current_file,
         },
+    )
+
+
+async def _delete_source_file(
+    session: AsyncSession, repository_id: UUID, file_path: str
+) -> None:
+    # Its code_nodes go with it through the source_file_id cascade.
+    await detach_surviving_children(
+        session,
+        repository_id=repository_id,
+        doomed_ids=select(CodeNode.id).where(
+            CodeNode.repository_id == repository_id,
+            CodeNode.file_path == file_path,
+        ),
+    )
+    await session.execute(
+        delete(SourceFile).where(
+            SourceFile.repository_id == repository_id,
+            SourceFile.file_path == file_path,
+        )
     )
 
 
@@ -301,6 +328,17 @@ class GraphIngestService:
                 ).all()
             )
         )
+        # Before the first periodic commit: once the prune is committed a
+        # rerun sees no pruned files, and the rebuild would never happen.
+        # Each file persisted below refreshes the arrays of the nodes it
+        # touches.
+        if pruned_files:
+            await self._builder.rebuild_relationships(
+                session=session,
+                repository_id=repository_id,
+                cache=cache,
+            )
+        await session.commit()
 
         inserted_nodes = 0
         replaced_files: list[str] = []
@@ -352,6 +390,8 @@ class GraphIngestService:
             resolved_calls += build_result.resolved_calls
             unresolved_calls += build_result.unresolved_calls
             processed_files += 1
+            if processed_files % _PARSE_COMMIT_EVERY == 0:
+                await session.commit()
             if processed_files % _PROGRESS_LOG_EVERY == 0:
                 _log_ingest_progress(
                     repository_id=repository_id,
@@ -393,6 +433,8 @@ class GraphIngestService:
                 resolved_calls += build_result.resolved_calls
                 unresolved_calls += build_result.unresolved_calls
                 processed_files += 1
+                if processed_files % _PARSE_COMMIT_EVERY == 0:
+                    await session.commit()
                 if processed_files % _PROGRESS_LOG_EVERY == 0:
                     _log_ingest_progress(
                         repository_id=repository_id,
@@ -401,13 +443,6 @@ class GraphIngestService:
                         total=total_files,
                         current_file=selected_file.relative_path,
                     )
-
-        if pruned_files:
-            await self._builder.rebuild_relationships(
-                session=session,
-                repository_id=repository_id,
-                cache=cache,
-            )
 
         return GraphIngestResult(
             processed_files=processed_files,
@@ -435,8 +470,8 @@ class GraphIngestService:
         # A stale stamp means the extractor changed under an indexed file. The
         # full walk re-parses only files whose hash or stamp differs, so past
         # this point every stamp is current and hashes alone decide.
-        # ponytail: a file that keeps failing its savepoint keeps its old stamp
-        # and escalates every sync — a walk per sync, not a re-parse of all.
+        # A file that keeps failing its savepoint keeps its old stamp and
+        # escalates every sync — a walk per sync, not a re-parse of all.
         if any(_touches_root_go_mod(change) for change in git_changes) or any(
             stamp != _module_stamp(Path(file_path), ts_config)
             for file_path, stamp in existing_module_stamps.items()
@@ -550,12 +585,7 @@ class GraphIngestService:
                 file_path=doomed_path,
             )
             delete_peer_ids.update(peers)
-            await session.execute(
-                delete(SourceFile).where(
-                    SourceFile.repository_id == repository_id,
-                    SourceFile.file_path == doomed_path,
-                )
-            )
+            await _delete_source_file(session, repository_id, doomed_path)
 
         go_package_selections = await asyncio.to_thread(
             _select_go_packages_from_keys,
@@ -594,12 +624,7 @@ class GraphIngestService:
                     file_path=stale_path,
                 )
                 delete_peer_ids.update(peers)
-                await session.execute(
-                    delete(SourceFile).where(
-                        SourceFile.repository_id == repository_id,
-                        SourceFile.file_path == stale_path,
-                    )
-                )
+                await _delete_source_file(session, repository_id, stale_path)
 
         for package in packages_by_key.values():
             changed_selected_files = [
@@ -935,6 +960,14 @@ class GraphIngestService:
         present_paths: tuple[str, ...],
     ) -> None:
         if present_paths:
+            await detach_surviving_children(
+                session,
+                repository_id=repository_id,
+                doomed_ids=select(CodeNode.id).where(
+                    CodeNode.repository_id == repository_id,
+                    CodeNode.file_path.not_in(present_paths),
+                ),
+            )
             await session.execute(
                 delete(SourceFile).where(
                     SourceFile.repository_id == repository_id,

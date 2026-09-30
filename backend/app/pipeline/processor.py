@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -705,8 +705,24 @@ class RepoSyncProcessor:
         batch = await session.get(SyncBatch, batch_id)
         if batch is None:
             return
+        finished_at = datetime.now(UTC)
         batch.status = SyncJobStatus.ERROR
-        batch.finished_at = datetime.now(UTC)
+        batch.finished_at = finished_at
+        # The steps after the failed one never run; left QUEUED they read
+        # as a sync that is still waiting.
+        await session.execute(
+            update(SyncJob)
+            .where(
+                SyncJob.batch_id == batch_id,
+                SyncJob.status.in_((SyncJobStatus.QUEUED, SyncJobStatus.RUNNING)),
+            )
+            .values(
+                status=SyncJobStatus.CANCELLED,
+                finished_at=finished_at,
+                error_code="upstream_failed",
+                error_msg="Not run: an earlier step failed.",
+            )
+        )
         await session.commit()
 
     # ------------------------------------------------------------------

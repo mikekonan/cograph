@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import hashlib
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import Select, delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.graph._chunking import chunked
@@ -90,10 +91,21 @@ class GraphBuilder:
             for node in existing_nodes_for_files
             if node.symbol_key
         }
+        # A file has one module node. When the extractor renames it (an old
+        # Go module qn had no `#module` suffix), the key misses — reuse the
+        # row anyway so its id, embedding and wiki citations survive.
+        extracted_keys = {(node.file_path, node.symbol_key) for node in deduped_nodes}
+        orphan_module_by_file: dict[str, CodeNode] = {
+            node.file_path: node
+            for node in existing_nodes_for_files
+            if node.node_type is CodeNodeType.MODULE
+            and (node.file_path, node.symbol_key) not in extracted_keys
+        }
 
         nodes_by_qualified_name: dict[str, CodeNode] = {}
         preserved_node_ids: list[UUID] = []
         replaced_or_removed_qns: set[str] = set()
+        renamed_non_module = False
         kept_existing_ids: set[UUID] = set()
         pending_inserts: list[tuple[ExtractedNode, str, UUID]] = []
 
@@ -101,6 +113,8 @@ class GraphBuilder:
             symbol_key = extracted_node.symbol_key
             key = (extracted_node.file_path, symbol_key)
             existing = existing_by_key.get(key)
+            if existing is None and extracted_node.node_type is GraphNodeType.MODULE:
+                existing = orphan_module_by_file.pop(extracted_node.file_path, None)
             content_hash = _content_hash(extracted_node.content)
             content_changed = existing is None or existing.content_hash != content_hash
             source_file_id = source_file_id_by_path[extracted_node.file_path]
@@ -114,7 +128,13 @@ class GraphBuilder:
 
             if existing is not None:
                 old_qualified_name = existing.qualified_name
+                if (
+                    old_qualified_name != extracted_node.qualified_name
+                    and extracted_node.node_type is not GraphNodeType.MODULE
+                ):
+                    renamed_non_module = True
                 existing.qualified_name = extracted_node.qualified_name
+                existing.symbol_key = extracted_node.symbol_key
                 existing.node_type = _to_model_node_type(extracted_node.node_type)
                 existing.name = extracted_node.name
                 existing.language = extracted_node.language.value
@@ -146,9 +166,14 @@ class GraphBuilder:
 
             pending_inserts.append((extracted_node, content_hash, source_file_id))
 
-        for existing in existing_nodes_for_files:
-            if existing.id in kept_existing_ids:
-                continue
+        doomed_nodes = [
+            node for node in existing_nodes_for_files if node.id not in kept_existing_ids
+        ]
+        doomed_ids = {node.id for node in doomed_nodes}
+        await detach_surviving_children(
+            session, repository_id=repository_id, doomed_ids=list(doomed_ids)
+        )
+        for existing in doomed_nodes:
             replaced_or_removed_qns.add(existing.qualified_name)
             await session.delete(existing)
             if cache is not None:
@@ -300,8 +325,25 @@ class GraphBuilder:
             node_by_id = cache.node_by_id
             nodes_by_qn_full = cache.nodes_by_qn
             module_nodes_by_file_path = cache.module_nodes_by_file_path
+        # A method's parent is the node named by its qn minus the last part,
+        # never a module. Methods of other files can move only when this call
+        # adds, drops or renames a non-module node; else this file's methods
+        # are enough. Such a file still re-links every method, O(repo nodes);
+        # a cache index of methods by parent qn would remove that.
+        parents_may_move = (
+            renamed_non_module
+            or any(
+                node.node_type is not GraphNodeType.MODULE
+                for node, _, _ in pending_inserts
+            )
+            or any(node.node_type is not CodeNodeType.MODULE for node in doomed_nodes)
+        )
         _refresh_method_parents(
-            repository_nodes=repository_nodes,
+            repository_nodes=(
+                repository_nodes
+                if parents_may_move
+                else list(nodes_by_qualified_name.values())
+            ),
             nodes_by_qualified_name=nodes_by_qn_full,
         )
 
@@ -368,6 +410,7 @@ class GraphBuilder:
         )
         source_nodes_to_refresh_unresolved: set[UUID] = set()
         peers_from_reresolved: set[UUID] = set()
+        reresolved_target_ids: set[UUID] = set()
         if affected_qualified_names:
             candidate_edges = list(
                 (
@@ -396,6 +439,7 @@ class GraphBuilder:
                 if resolved_target is not None:
                     edge.target_node_id = resolved_target.id
                     if edge.edge_type == GraphEdgeType.CALLS.value:
+                        reresolved_target_ids.add(resolved_target.id)
                         source_nodes_to_refresh_unresolved.add(source_node.id)
                         # A previously-dangling CALLS edge just got bound to
                         # a real target. The accumulated per-file deltas
@@ -455,11 +499,19 @@ class GraphBuilder:
         )
         touched_ids.discard(None)  # type: ignore[arg-type]
 
+        # Every edge this call changed starts or ends at a node of this file,
+        # at a re-resolved target, or at a deleted node. Those get a full
+        # rebuild; the other touched nodes (hub callees above all) only
+        # swap their entries for them.
+        rebuilt_ids = {node.id for node in nodes_by_qualified_name.values()}
+        rebuilt_ids.update(reresolved_target_ids)
         await self._rebuild_back_compat_arrays(
             session=session,
             repository_id=repository_id,
             repository_nodes=repository_nodes,
-            touched_ids=touched_ids,
+            touched_ids=rebuilt_ids,
+            peer_ids=touched_ids - rebuilt_ids,
+            dropped_ids=doomed_ids,
         )
 
         for source_qn, unresolved_targets in unresolved_by_source_qn.items():
@@ -599,7 +651,17 @@ class GraphBuilder:
         repository_id: UUID,
         repository_nodes: list[CodeNode] | None = None,
         touched_ids: set[UUID] | None = None,
+        peer_ids: set[UUID] | frozenset[UUID] = frozenset(),
+        dropped_ids: set[UUID] | frozenset[UUID] = frozenset(),
     ) -> None:
+        """Rewrite `callers`/`callees` from the CALLS edges.
+
+        `touched_ids` (all nodes when None) are rebuilt from every edge that
+        touches them. `peer_ids` keep their arrays and only swap the entries
+        for `touched_ids` and `dropped_ids`, so a hub callee costs its edges to
+        the touched nodes, not all of its edges. That is exact only when
+        every changed edge starts or ends in `touched_ids` or `dropped_ids`.
+        """
         if repository_nodes is None:
             repository_nodes = list(
                 (
@@ -615,26 +677,27 @@ class GraphBuilder:
             # and by the delete-only incremental branch.
             nodes_to_reset = repository_nodes
         else:
+            if not touched_ids:
+                return
             nodes_to_reset = [
-                node for node in repository_nodes if node.id in touched_ids
+                node_by_id[node_id] for node_id in touched_ids if node_id in node_by_id
             ]
 
-        for node in nodes_to_reset:
-            node.callers = []
-            node.callees = []
-
+        # Id pairs, not ORM rows: loading CodeEdge objects dominated the walk.
+        base_filter = (
+            CodeEdge.repository_id == repository_id,
+            CodeEdge.edge_type == GraphEdgeType.CALLS.value,
+            CodeEdge.target_node_id.is_not(None),
+        )
+        pairs: Iterable[tuple[UUID, UUID]]
         if touched_ids is None:
-            call_edges = list(
-                (
-                    await session.scalars(
-                        select(CodeEdge).where(
-                            CodeEdge.repository_id == repository_id,
-                            CodeEdge.edge_type == GraphEdgeType.CALLS.value,
-                            CodeEdge.target_node_id.is_not(None),
-                        )
+            pairs = (
+                await session.execute(
+                    select(CodeEdge.source_node_id, CodeEdge.target_node_id).where(
+                        *base_filter
                     )
-                ).all()
-            )
+                )
+            ).all()
         else:
             # Query only edges touching the affected id set. Peers outside that
             # set keep their arrays intact, so we avoid O(repo) UPDATEs. Chunked
@@ -645,55 +708,64 @@ class GraphBuilder:
             # separate chunked sweeps and dedupe by edge.id (Postgres expands
             # IN-OR into one statement, so a combined-OR rewrite wouldn't fit
             # either even after chunking one side).
-            if not touched_ids:
-                return
-            edges_by_id: dict[UUID, CodeEdge] = {}
-            base_filter = (
-                CodeEdge.repository_id == repository_id,
-                CodeEdge.edge_type == GraphEdgeType.CALLS.value,
-                CodeEdge.target_node_id.is_not(None),
-            )
+            edges_by_id: dict[UUID, tuple[UUID, UUID]] = {}
             for batch in chunked(touched_ids):
-                rows = (
-                    await session.scalars(
-                        select(CodeEdge).where(
-                            *base_filter,
-                            CodeEdge.source_node_id.in_(batch),
-                        )
+                for column in (CodeEdge.source_node_id, CodeEdge.target_node_id):
+                    rows = await session.execute(
+                        select(
+                            CodeEdge.id, CodeEdge.source_node_id, CodeEdge.target_node_id
+                        ).where(*base_filter, column.in_(batch))
                     )
-                ).all()
-                for edge in rows:
-                    edges_by_id[edge.id] = edge
-                rows = (
-                    await session.scalars(
-                        select(CodeEdge).where(
-                            *base_filter,
-                            CodeEdge.target_node_id.in_(batch),
-                        )
-                    )
-                ).all()
-                for edge in rows:
-                    edges_by_id[edge.id] = edge
-            call_edges = list(edges_by_id.values())
-        touched_set = touched_ids if touched_ids is not None else None
-        for edge in call_edges:
-            source_node = node_by_id.get(edge.source_node_id)
-            target_node = (
-                node_by_id.get(edge.target_node_id) if edge.target_node_id else None
-            )
-            if source_node is None or target_node is None:
+                    for edge_id, source_id, target_id in rows:
+                        edges_by_id[edge_id] = (source_id, target_id)
+            pairs = edges_by_id.values()
+
+        # dicts as ordered sets: edge order, first occurrence wins.
+        peers = [node_by_id[node_id] for node_id in peer_ids if node_id in node_by_id]
+        callees: dict[UUID, dict[str, None]] = {
+            n.id: {} for n in (*nodes_to_reset, *peers)
+        }
+        callers: dict[UUID, dict[str, None]] = {
+            n.id: {} for n in (*nodes_to_reset, *peers)
+        }
+        for source_id, target_id in pairs:
+            if source_id not in node_by_id or target_id not in node_by_id:
                 continue
-            # When scoped, only rewrite the side that was reset. The untouched
-            # peer keeps whatever it had — its UUID-list invariant is preserved
-            # because we didn't change any of its edges.
-            if touched_set is None or source_node.id in touched_set:
-                source_node.callees = _appended_unique(
-                    source_node.callees, str(target_node.id)
-                )
-            if touched_set is None or target_node.id in touched_set:
-                target_node.callers = _appended_unique(
-                    target_node.callers, str(source_node.id)
-                )
+            # A node outside both sets keeps whatever it had — its UUID-list
+            # invariant is preserved because none of its edges changed.
+            if source_id in callees:
+                callees[source_id][str(target_id)] = None
+            if target_id in callers:
+                callers[target_id][str(source_id)] = None
+
+        for node in nodes_to_reset:
+            _assign_if_changed(node, "callees", list(callees[node.id]))
+            _assign_if_changed(node, "callers", list(callers[node.id]))
+        stale = {str(node_id) for node_id in (*(touched_ids or ()), *dropped_ids)}
+        for node in peers:
+            _assign_if_changed(
+                node, "callees", _swapped(node.callees, stale, callees[node.id])
+            )
+            _assign_if_changed(
+                node, "callers", _swapped(node.callers, stale, callers[node.id])
+            )
+
+
+def _swapped(current: list[str], stale: set[str], fresh: dict[str, None]) -> list[str]:
+    """Drop `stale` entries that are not in `fresh`, append new `fresh` ones.
+
+    Surviving entries keep their position, so a peer whose edges came back
+    unchanged gets an identical list and no UPDATE.
+    """
+    kept = [item for item in current if item not in stale or item in fresh]
+    present = set(kept)
+    return kept + [item for item in fresh if item not in present]
+
+
+def _assign_if_changed(node: CodeNode, attribute: str, value: list[str]) -> None:
+    # Skipping equal lists keeps an unchanged hub out of the flush.
+    if getattr(node, attribute) != value:
+        setattr(node, attribute, value)
 
 
 def _dedupe_nodes_by_qualified_name(nodes):
@@ -910,13 +982,6 @@ def _group_extracted_edges(
     return grouped
 
 
-def _appended_unique(items: list[str], value: str) -> list[str]:
-    updated = list(items)
-    if value not in updated:
-        updated.append(value)
-    return updated
-
-
 def _set_metadata_list(
     metadata: dict[str, object],
     key: str,
@@ -950,6 +1015,33 @@ def _without_metadata_key(metadata: dict[str, object], key: str) -> dict[str, ob
     return updated
 
 
+async def detach_surviving_children(
+    session: AsyncSession,
+    *,
+    repository_id: UUID,
+    doomed_ids: list[UUID] | Select[tuple[UUID]],
+) -> None:
+    """Clear `parent_id` on every child of the nodes about to be deleted.
+
+    `code_nodes.parent_id` is ON DELETE CASCADE, so deleting a parent
+    silently deletes its children too — a kept node of the same file, or a
+    Go method whose receiver type lives in another file. The ORM still
+    holds those rows and the next flush fails on them. Callers re-parent
+    what survives (the parent pass, `_refresh_method_parents`).
+    """
+    batches = [doomed_ids] if isinstance(doomed_ids, Select) else chunked(doomed_ids)
+    for batch in batches:
+        await session.execute(
+            update(CodeNode)
+            .where(
+                CodeNode.repository_id == repository_id,
+                CodeNode.parent_id.in_(batch),
+            )
+            .values(parent_id=None)
+            .execution_options(synchronize_session="fetch")
+        )
+
+
 def _refresh_method_parents(
     *,
     repository_nodes: list[CodeNode],
@@ -960,7 +1052,11 @@ def _refresh_method_parents(
             continue
         parent_qualified_name, _, _ = node.qualified_name.rpartition(".")
         parent_node = nodes_by_qualified_name.get(parent_qualified_name)
-        node.parent_id = parent_node.id if parent_node is not None else None
+        parent_id = parent_node.id if parent_node is not None else None
+        # A same-value set still dirties the row, and every later flush
+        # walks every dirty method in the repo.
+        if node.parent_id != parent_id:
+            node.parent_id = parent_id
 
 
 def _is_go_builtin(name: str) -> bool:
