@@ -35,6 +35,11 @@ class GraphEdgeType(StrEnum):
 _SIGNATURE_TRUNCATION_LENGTH = 120
 _GO_MODULE_QN_SUFFIX = "#module"
 
+# Postgres cannot index a btree key over ~2.7KB, and edge targets are
+# indexed. Real qualified names stay far below this; a longer target is
+# expression text (a call chain with its arguments) that never names a node.
+_MAX_EDGE_TARGET_BYTES = 1024
+
 # Bump a language when its extraction output changes: ingest stamps every
 # MODULE node with this and re-extracts any file whose stamp is stale, even
 # when its text has not changed.
@@ -125,6 +130,11 @@ class GraphExtractor:
                 )
             node.role = _infer_role(node)
 
+        extracted.edges = [
+            edge
+            for edge in extracted.edges
+            if len(edge.target.encode()) <= _MAX_EDGE_TARGET_BYTES
+        ]
         return extracted
 
 

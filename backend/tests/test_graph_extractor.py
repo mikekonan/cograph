@@ -535,3 +535,22 @@ type Bar struct{}
     module_nodes = [n for n in extracted.nodes if n.node_type is GraphNodeType.MODULE]
     assert len(module_nodes) == 1
     assert module_nodes[0].qualified_name.endswith("#module")
+
+
+def test_graph_extractor_drops_edge_targets_too_long_to_index():
+    """A builder chain's callee text carries every earlier link's arguments.
+    Postgres cannot index such a target, and it never names a node."""
+    links = "".join(f'.\n\t\tBind("{"x" * 40}", {i})' for i in range(60))
+    source_text = f"""package mapping
+
+func Build() {{
+    New(){links}
+    helper()
+}}
+"""
+    parsed = GraphParser().parse_source(file_path="mapping/build.go", source_text=source_text)
+
+    targets = [e.target for e in GraphExtractor().extract(parsed).edges]
+
+    assert "helper" in targets
+    assert max(len(t.encode()) for t in targets) <= 1024
