@@ -9,6 +9,7 @@ from uuid import UUID
 from arq import create_pool
 from arq import cron
 from arq.connections import RedisSettings
+from arq.constants import in_progress_key_prefix
 
 from backend.app.config import Settings, get_settings
 from backend.app.db.session import SessionManager
@@ -200,12 +201,29 @@ async def _ensure_grammars_available() -> None:
     logger.info("Tree-sitter grammars downloaded: %s", ", ".join(missing))
 
 
+async def _clear_orphaned_in_progress_keys(redis: Any) -> None:
+    # A pod killed mid-job leaves `arq:in-progress:<job>` alive for about
+    # job_timeout; the stale sweep trusts it and never reaps the run. With
+    # one worker (the chart default) any such key at startup belongs to a
+    # dead pod. Deleting it lets arq fail the job (max_tries=1) and the sweep
+    # reap the run. With 2+ workers this also fails a live worker's jobs:
+    # key ownership per worker id is needed before raising worker replicas.
+    keys = [key async for key in redis.scan_iter(match=in_progress_key_prefix + "*")]
+    if keys:
+        await redis.delete(*keys)
+        logger.warning("Cleared %d orphaned arq in-progress keys", len(keys))
+
+
 async def worker_startup(ctx: dict) -> None:
     # arq only configures its own `arq` logger; the `backend.*` tree stays
     # at WARNING with no handler, which silently swallows the per-stage
     # INFO logs the wiki pipeline emits. Install a stream handler for the
     # `backend` root so `docker logs` shows real-time stage progress.
     _configure_backend_logging()
+
+    redis = ctx.get("redis")
+    if redis is not None:
+        await _clear_orphaned_in_progress_keys(redis)
 
     await _ensure_grammars_available()
 

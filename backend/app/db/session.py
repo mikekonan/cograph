@@ -36,6 +36,15 @@ class SessionManager:
                 # on the largest monorepos).
                 cursor = dbapi_connection.cursor()
                 cursor.execute("SET statement_timeout = '300s'")
+                # A client whose socket dies silently (node network fault,
+                # killed pod) otherwise leaves its session holding row locks
+                # for the OS keepalive default of ~2h11m. Probe after 60s idle
+                # so the server drops it in ~2min. Not
+                # idle_in_transaction_session_timeout: the wiki step keeps a
+                # read transaction open for the whole page-writing stage.
+                cursor.execute("SET tcp_keepalives_idle = 60")
+                cursor.execute("SET tcp_keepalives_interval = 10")
+                cursor.execute("SET tcp_keepalives_count = 6")
                 cursor.close()
 
     @property

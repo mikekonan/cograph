@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from fnmatch import fnmatch
 from unittest.mock import patch
 
 import pytest
@@ -22,6 +23,7 @@ from backend.app.models.md_collection import MdCollection, MdJob
 from backend.app.models.repo_sync_run import RepoSyncRun
 from backend.app.models.repository import Repository
 from backend.app.pipeline.worker import (
+    _clear_orphaned_in_progress_keys,
     _sweep_stale_md_jobs,
     run_repo_sync,
     worker_shutdown,
@@ -206,3 +208,27 @@ async def test_sweep_stale_md_jobs_requeues_embed_and_marks_upload_error(
         async with session_manager.engine.begin() as connection:
             await connection.run_sync(Base.metadata.drop_all)
         await session_manager.dispose()
+
+
+class _FakeRedisKeys:
+    def __init__(self, keys: set[str]) -> None:
+        self.keys = keys
+
+    async def scan_iter(self, match: str):
+        for key in sorted(self.keys):
+            if fnmatch(key, match):
+                yield key
+
+    async def delete(self, *keys: str) -> None:
+        self.keys.difference_update(keys)
+
+
+@pytest.mark.asyncio
+async def test_startup_clears_only_in_progress_keys():
+    redis = _FakeRedisKeys(
+        {"arq:in-progress:a", "arq:in-progress:b", "arq:job:a", "arq:queue"}
+    )
+
+    await _clear_orphaned_in_progress_keys(redis)
+
+    assert redis.keys == {"arq:job:a", "arq:queue"}
