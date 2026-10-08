@@ -26,6 +26,7 @@ class CodeNode(CreatedAtMixin, Base):
         Index("uq_code_nodes_repo_qualified_name", "repository_id", "qualified_name", unique=True),
         Index("idx_code_nodes_source_file", "repository_id", "source_file_id"),
         Index("idx_code_nodes_symbol_key", "repository_id", "symbol_key"),
+        Index("idx_code_nodes_repo_name", "repository_id", "name"),
         Index(
             "idx_code_nodes_role",
             "repository_id",
