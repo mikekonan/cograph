@@ -54,7 +54,7 @@ dependencies = [
   # import) and every grammar we walk still parses to the same node types --
   # which is what the extractor suites assert, so they are the check to run when
   # this line moves, not the fact that the package installs.
-  "tree-sitter-language-pack==1.17.0",
+  "tree-sitter-language-pack==1.20.0",
   "PyYAML>=6.0",
   "uvicorn[standard]>=0.52.1",
   "uvicorn-worker>=0.3",
