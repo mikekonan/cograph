@@ -64,6 +64,8 @@ class MdCollectionDetail:
     description: str | None
     owner_id: UUID | None
     visibility: str
+    source_repository_id: UUID | None
+    source_path: str | None
     documents: MdDocumentsPageResult
     created_at: datetime
     updated_at: datetime
@@ -192,6 +194,8 @@ class MdQueryService:
             description=collection.description,
             owner_id=collection.owner_id,
             visibility=collection.visibility.value,
+            source_repository_id=collection.source_repository_id,
+            source_path=collection.source_path,
             documents=MdDocumentsPageResult(
                 items=[
                     MdDocumentListItem(

@@ -19,9 +19,12 @@ from backend.app.graph.go_variants import (
     GoBuildVariantConflictError,
 )
 from backend.app.llm.code_embedder import CodeEmbedderService, EmbedResult
+from backend.app.llm.md_chunk_embedder import MdChunkEmbedderService
 from backend.app.llm.repo_document_embedder import RepoDocumentEmbedderService
 from backend.app.llm.summary_generator import SummaryGenerator, SummaryResult
 from backend.app.llm.usage import LlmUsageTally, llm_stage, rollup_stages
+from backend.app.md_rag.indexer import MdIndexer
+from backend.app.md_rag.link_resolver import MdLinkResolver
 from backend.app.models.enums import (
     RepoSyncRunStatus,
     RepoSyncTriggerKind,
@@ -32,6 +35,7 @@ from backend.app.models.enums import (
     SyncJobStatus,
     SyncStep,
 )
+from backend.app.models.md_collection import MdCollection
 from backend.app.models.repo_sync_run import RepoSyncRun
 from backend.app.models.repository import Repository
 from backend.app.models.sync_batch import SyncBatch
@@ -123,6 +127,7 @@ class RepoSyncProcessor:
         repo_document_indexer: RepoDocumentIndexer | None = None,
         code_embedder_service: CodeEmbedderService | None = None,
         repo_document_embedder_service: RepoDocumentEmbedderService | None = None,
+        md_chunk_embedder_service: MdChunkEmbedderService | None = None,
         summary_generator: SummaryGenerator | None = None,
         wiki_generator: LLMWikiGenerator | None = None,
         timeouts: PipelineTimeoutsSettings | None = None,
@@ -133,6 +138,7 @@ class RepoSyncProcessor:
         # None means the service is disabled; the step is marked skipped.
         self._code_embedder_service = code_embedder_service
         self._repo_document_embedder_service = repo_document_embedder_service
+        self._md_chunk_embedder_service = md_chunk_embedder_service
         self._summary_generator = summary_generator
         self._wiki_generator = wiki_generator
         # Defaults match the prod yaml — keeps the tests / CLI working
@@ -323,11 +329,23 @@ class RepoSyncProcessor:
             repo_docs_job = _get_job(SyncStep.INDEX_REPO_DOCS)
             running_job_id = repo_docs_job.id if repo_docs_job is not None else None
             await self._start_step(session, repo_docs_job)
+            # Collections that mirror a folder of this repository. Plain
+            # tuples: the step commits and would expire ORM rows.
+            mirrors = [
+                (row.id, row.source_path)
+                for row in await session.execute(
+                    select(MdCollection.id, MdCollection.source_path).where(
+                        MdCollection.source_repository_id == repository_id,
+                        MdCollection.source_path.is_not(None),
+                    )
+                )
+            ]
             repo_documents = await _run_step_with_timeout(
-                self._repo_document_indexer.index_checkout(
+                self._index_docs(
                     session=session,
                     repository_id=repository_id,
                     checkout_path=checkout_path,
+                    mirrors=mirrors,
                 ),
                 timeout_seconds=self._timeouts.index_repo_docs_seconds,
                 step=SyncStep.INDEX_REPO_DOCS,
@@ -351,9 +369,10 @@ class RepoSyncProcessor:
             if self._repo_document_embedder_service is not None:
                 with llm_stage("embed.repo_docs"):
                     repo_doc_embed_result = await _run_step_with_timeout(
-                        self._repo_document_embedder_service.embed_repository(
+                        self._embed_docs(
                             session=session,
                             repository_id=repository_id,
+                            collection_ids=[cid for cid, _ in mirrors],
                         ),
                         timeout_seconds=self._timeouts.embed_repo_docs_seconds,
                         step=SyncStep.EMBED_REPO_DOCS,
@@ -588,6 +607,62 @@ class RepoSyncProcessor:
         await session.flush()
         await session.commit()
         return batch, jobs
+
+    async def _index_docs(
+        self,
+        *,
+        session: AsyncSession,
+        repository_id: UUID,
+        checkout_path: str | Path,
+        mirrors: list[tuple[UUID, str]],
+    ) -> RepoDocumentIndexResult:
+        # A mirrored folder belongs to its collection, not to the repo docs.
+        result = await self._repo_document_indexer.index_checkout(
+            session=session,
+            repository_id=repository_id,
+            checkout_path=checkout_path,
+            excluded_prefixes=tuple(folder for _, folder in mirrors),
+        )
+        for collection_id, folder in mirrors:
+            changed = await MdIndexer().mirror_folder(
+                session=session,
+                collection_id=collection_id,
+                checkout_root=Path(checkout_path),
+                folder=folder,
+            )
+            if changed:
+                await MdLinkResolver().resolve_collection(
+                    session=session, collection_id=collection_id
+                )
+        return result
+
+    async def _embed_docs(
+        self,
+        *,
+        session: AsyncSession,
+        repository_id: UUID,
+        collection_ids: list[UUID],
+    ) -> EmbedResult:
+        assert self._repo_document_embedder_service is not None
+        result = await self._repo_document_embedder_service.embed_repository(
+            session=session,
+            repository_id=repository_id,
+        )
+        # Embedded here rather than through the md_rag queue: a failure in a
+        # later step must not leave mirrored chunks without vectors, since the
+        # next run sees the files unchanged and would not enqueue them again.
+        if self._md_chunk_embedder_service is None:
+            return result
+        for collection_id in collection_ids:
+            md = await self._md_chunk_embedder_service.embed_collection(
+                session=session, collection_id=collection_id
+            )
+            result = EmbedResult(
+                embedded_nodes=result.embedded_nodes + md.embedded_nodes,
+                skipped_nodes=result.skipped_nodes + md.skipped_nodes,
+                model=result.model,
+            )
+        return result
 
     async def _start_step(self, session: AsyncSession, job: SyncJob | None) -> None:
         if job is None:

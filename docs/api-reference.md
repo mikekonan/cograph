@@ -632,6 +632,8 @@ Rejects unknown fields.
 | `name` | string | no | — |
 | `description` | string | no | — |
 | `visibility` | `private` \| `public` \| `admin_only` | no | — |
+| `source_repository_id` | uuid | no | — |
+| `source_path` | string | no | — |
 
 ### UpdateRepositoryRequest
 

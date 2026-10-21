@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import logging
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path, PurePosixPath
 from uuid import UUID
 
 from sqlalchemy import delete, func, select
@@ -14,6 +17,12 @@ from backend.app.md_rag.chunker import MdChunker
 from backend.app.md_rag.parser import MarkdownParser, ParsedMarkdown
 from backend.app.models.md_collection import MdChunk, MdDocument, MdLink
 from backend.app.models.enums import MdLinkType
+from backend.app.repo_docs.discover import _has_ignored_parent
+
+logger = logging.getLogger(__name__)
+
+MAX_MD_DOCUMENT_BYTES = 10 * 1024 * 1024
+_MIRRORED_SUFFIXES = {".md", ".mdx"}
 
 
 @dataclass(slots=True, kw_only=True)
@@ -172,6 +181,53 @@ class MdIndexer:
             unchanged_documents=unchanged_documents,
         )
 
+    async def mirror_folder(
+        self,
+        *,
+        session: AsyncSession,
+        collection_id: UUID,
+        checkout_root: Path,
+        folder: str,
+    ) -> int:
+        """Make the collection match the markdown under `folder` of a checkout.
+
+        Source keys are paths relative to `folder`. Unchanged files are
+        skipped by hash; documents whose file is gone are deleted. A missing
+        folder leaves the collection untouched, so a bad binding or a renamed
+        folder never wipes it. Returns how many documents were written or
+        deleted.
+        """
+        files = await asyncio.to_thread(_read_folder_markdown, checkout_root, folder)
+        if files is None:
+            return 0
+        existing = dict(
+            (
+                await session.execute(
+                    select(MdDocument.source_key, MdDocument.content_hash).where(
+                        MdDocument.collection_id == collection_id
+                    )
+                )
+            ).all()
+        )
+        changed = [
+            MdDocumentInput(source_key=key, content=content)
+            for key, content in files.items()
+            if existing.get(key) != _content_hash(content)
+        ]
+        if changed:
+            await self.upsert_documents(
+                session=session, collection_id=collection_id, documents=changed
+            )
+        gone = sorted(set(existing) - set(files))
+        if gone:
+            await session.execute(
+                delete(MdDocument).where(
+                    MdDocument.collection_id == collection_id,
+                    MdDocument.source_key.in_(gone),
+                )
+            )
+        return len(changed) + len(gone)
+
     async def _replace_chunks(
         self,
         *,
@@ -229,6 +285,35 @@ class MdIndexer:
                 )
             )
         session.add_all(rows)
+
+
+def _read_folder_markdown(checkout_root: Path, folder: str) -> dict[str, str] | None:
+    root = checkout_root.resolve()
+    base = (root / folder).resolve()
+    if not base.is_dir() or not base.is_relative_to(root):
+        logger.warning(
+            "Mirrored folder is missing or outside the checkout; collection left as is",
+            extra={"folder": folder},
+        )
+        return None
+    files: dict[str, str] = {}
+    for path in sorted(base.rglob("*")):
+        if path.suffix.lower() not in _MIRRORED_SUFFIXES or not path.is_file():
+            continue
+        # A symlink may point outside the checkout; never read through it.
+        if not path.resolve().is_relative_to(root):
+            continue
+        relative = PurePosixPath(path.relative_to(base).as_posix())
+        if _has_ignored_parent(relative):
+            continue
+        if path.stat().st_size > MAX_MD_DOCUMENT_BYTES:
+            logger.warning(
+                "Skipping oversized markdown file in mirrored folder",
+                extra={"folder": folder, "path": relative.as_posix()},
+            )
+            continue
+        files[relative.as_posix()] = path.read_text(encoding="utf-8", errors="replace")
+    return files
 
 
 def _content_hash(content: str) -> str:

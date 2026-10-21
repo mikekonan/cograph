@@ -110,7 +110,13 @@ def classify_repo_document(
 
 
 class RepoDocumentDiscoverer:
-    def discover(self, root_path: Path) -> tuple[Path, ...]:
+    def discover(
+        self,
+        root_path: Path,
+        excluded_prefixes: tuple[str, ...] = (),
+    ) -> tuple[Path, ...]:
+        """`excluded_prefixes` are checkout-relative folders mirrored into a
+        markdown collection instead (see MdIndexer.mirror_folder)."""
         if not root_path.exists():
             raise FileNotFoundError(f"Checkout path not found: {root_path}")
         if not root_path.is_dir():
@@ -122,6 +128,10 @@ class RepoDocumentDiscoverer:
                 for path in root_path.rglob("*")
                 if path.is_file()
                 and not _has_ignored_parent(path.relative_to(root_path))
+                and not any(
+                    path.relative_to(root_path).is_relative_to(prefix)
+                    for prefix in excluded_prefixes
+                )
                 and classify_repo_document(path.relative_to(root_path).as_posix())
                 is not None
             )

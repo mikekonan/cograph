@@ -15,6 +15,7 @@ from backend.app.config import Settings, get_settings
 from backend.app.db.session import SessionManager
 from backend.app.graph.parser import download_missing_grammars, missing_grammars
 from backend.app.llm.code_embedder import CodeEmbedderService
+from backend.app.llm.md_chunk_embedder import MdChunkEmbedderService
 from backend.app.llm.runtime_providers import (
     build_runtime_providers,
     resolve_runtime_provider_assignments,
@@ -71,6 +72,10 @@ async def _build_processor(
         providers.embed_provider,
         batch_size=settings.embedding.batch_size,
     )
+    md_chunk_embedder_service = MdChunkEmbedderService(
+        providers.embed_provider,
+        batch_size=settings.embedding.batch_size,
+    )
     if providers.completion_provider is not None:
         from backend.app.llm.summary_generator import SummaryGenerator
 
@@ -115,6 +120,7 @@ async def _build_processor(
     return RepoSyncProcessor(
         code_embedder_service=code_embedder_service,
         repo_document_embedder_service=repo_doc_embedder_service,
+        md_chunk_embedder_service=md_chunk_embedder_service,
         summary_generator=summary_generator,
         wiki_generator=wiki_generator,
         timeouts=settings.pipeline_timeouts,

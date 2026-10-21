@@ -3,14 +3,21 @@
 from __future__ import annotations
 
 import hashlib
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
 from backend.app.core.auth import TokenType, create_token
-from backend.app.models.enums import MdJobKind, MdJobStatus, UserRole
+from backend.app.models.enums import (
+    MdJobKind,
+    MdJobStatus,
+    RepositoryStatus,
+    SyncSchedule,
+    UserRole,
+)
 from backend.app.models.md_collection import MdCollection, MdJob
 from backend.app.models.personal_access_token import PersonalAccessToken
+from backend.app.models.repository import Repository
 from backend.app.models.user import User
 
 _TEST_CSRF = "csrf-token"
@@ -1268,3 +1275,54 @@ async def test_batch_upload_rejects_upload_job_id_from_other_collection(
 
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "FORBIDDEN"
+
+
+async def test_update_collection_binds_repository_folder(
+    client, settings, user, collection, db_session
+):
+    repo = Repository(
+        host="example.com",
+        git_url="git@example.com:acme/docs.git",
+        name="docs",
+        owner="acme",
+        branch="main",
+        status=RepositoryStatus.READY,
+        sync_schedule=SyncSchedule.MANUAL,
+    )
+    admin = User(
+        email="admin@test.com", password_hash="secret", name="Admin", role=UserRole.ADMIN
+    )
+    db_session.add_all([repo, admin])
+    await db_session.commit()
+    url = f"/api/md-collections/{collection.id}"
+    headers = {"X-CSRF-Token": _TEST_CSRF}
+    bind = {"source_repository_id": str(repo.id), "source_path": "docs/"}
+
+    # Owning the collection is not enough: readers of a collection are not
+    # necessarily readers of the repository.
+    await _auth_user(client, settings, user)
+    assert (await client.patch(url, json=bind, headers=headers)).status_code == 403
+
+    await _auth_user(client, settings, admin)
+    for bad in (
+        {"source_path": "docs"},
+        {"source_repository_id": str(repo.id), "source_path": None},
+        {**bind, "source_path": "../x"},
+        {**bind, "source_path": "/x"},
+        {**bind, "source_path": "."},
+    ):
+        response = await client.patch(url, json=bad, headers=headers)
+        assert response.status_code == 422, bad
+    unknown = {**bind, "source_repository_id": str(uuid4())}
+    assert (await client.patch(url, json=unknown, headers=headers)).status_code == 404
+
+    response = await client.patch(url, json=bind, headers=headers)
+    assert response.status_code == 200
+    assert response.json()["source_repository_id"] == str(repo.id)
+    assert response.json()["source_path"] == "docs"
+
+    unbind = {"source_repository_id": None, "source_path": None}
+    response = await client.patch(url, json=unbind, headers=headers)
+    assert response.status_code == 200
+    assert response.json()["source_repository_id"] is None
+    assert response.json()["source_path"] is None
