@@ -6,9 +6,9 @@ models and access rules:
 
 | | Repository documents | Markdown collections |
 | --- | --- | --- |
-| **Origin** | Discovered inside a repository checkout | Uploaded by an operator |
+| **Origin** | Discovered inside a repository checkout | Uploaded by an operator, or mirrored from a repository folder |
 | **Belongs to** | One repository | Nothing — standalone |
-| **Refreshed by** | Every sync, automatically | Explicit upload |
+| **Refreshed by** | Every sync, automatically | Explicit upload, or every sync of the mirrored repository |
 | **Parser** | Heading split | Full markdown parse (frontmatter, tables, code, links) |
 | **Chunker** | Word window, 512 words / 64 overlap | Character budget, 4000 soft, atomic blocks |
 | **Linked to code** | Yes — symbol mentions | No |
@@ -52,7 +52,8 @@ Anything matching no rule is not ingested.
 **Directory exclusions** are applied first, to every parent segment: any
 dot-directory except `.devcontainer` and `.github`, plus `node_modules`, `dist`,
 `build`, `venv`, `.venv`, `__pycache__`, `.cograph`, `.cache`, `.tox`, `.idea`,
-`.vscode`, `.mypy_cache`, `.pytest_cache` and `.ruff_cache`.
+`.vscode`, `.mypy_cache`, `.pytest_cache` and `.ruff_cache`. A folder that a
+collection [mirrors](#mirroring-a-repository-folder) is excluded as well.
 
 ::: warning Non-prose files go through the prose chunker
 A matched `Dockerfile`, `package-lock.json` or example source file is split by the
@@ -233,11 +234,43 @@ states:
 
 Batch uploads aggregate the counts. Re-uploading an unchanged corpus is free.
 
+### Mirroring a repository folder
+
+A collection can be bound to one folder of one repository. Every sync of that
+repository then makes the collection match the folder:
+
+- each `.md` / `.mdx` file under the folder is upserted, keyed by its path
+  relative to the folder;
+- a document whose file is gone is deleted;
+- changed chunks are embedded inside the sync's `embed_repo_docs` step, and
+  links are resolved in `index_repo_docs`, so no `md_jobs` rows appear.
+
+The folder stops being repository documents: it disappears from
+`cograph_retrieve(mode="wiki")` and from the repository's wiki sources, and its
+text is served by `cograph_collection_search` instead, with whole tables and
+cross-document links. Dot-directories and the usual build folders are skipped,
+and a file over 10 MB is skipped with a warning. A folder that is missing in the
+checkout leaves the collection untouched.
+
+Binding is a `PATCH /api/md-collections/{id}` by an instance owner or admin,
+because the collection's readers may not be the repository's readers:
+
+```json
+{"source_repository_id": "<repository uuid>", "source_path": "docs/specs"}
+```
+
+Both fields are set together. Both `null` unbinds: the collection keeps its last
+documents, and the next sync indexes the folder as repository documents again.
+Do not upload into a bound collection by hand; the next sync deletes every
+document that is not a file in the folder.
+
 ### Cross-document link resolution
 
 After ingestion, a resolver walks the unresolved links and tries to bind each to
-a document **within the same collection**, matching the href against either the
-target's `source_key` or its normalised path. Resolved links get a
+a document **within the same collection**. A relative href is first resolved
+against the linking document's own folder, so `../spec.md` finds the sibling
+folder's file even when many documents share that name. Failing that, the href
+is matched against a `source_key` or a bare file name. Resolved links get a
 `target_document_id`; unresolvable ones stay unresolved rather than being
 dropped, so a broken reference remains visible.
 
@@ -353,7 +386,9 @@ symbols, and you get both for free.
 
 **A collection** when the text has no natural repository — cross-service
 requirements, a domain glossary, an internal wiki export, runbooks. You get
-cross-document link resolution and standalone access control.
+cross-document link resolution and standalone access control. If such text
+lives in a repository folder, [mirror the folder](#mirroring-a-repository-folder)
+instead of uploading it.
 
 **Do not do both for the same document.** You would pay to embed it twice, and
 the two copies would compete in retrieval while drifting apart.

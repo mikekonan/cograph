@@ -5,8 +5,10 @@ or normalized path within the same collection.
 """
 from __future__ import annotations
 
+import posixpath
 import re
 from typing import Awaitable, Callable
+from urllib.parse import unquote
 from uuid import UUID
 
 from sqlalchemy import select, update
@@ -42,8 +44,8 @@ class MdLinkResolver:
         """Resolve all unresolved links in a collection. Returns resolved count."""
         unresolved = list(
             (
-                await session.scalars(
-                    select(MdLink)
+                await session.execute(
+                    select(MdLink, MdDocument.source_key)
                     .join(MdDocument, MdLink.source_document_id == MdDocument.id)
                     .where(
                         MdDocument.collection_id == collection_id,
@@ -82,8 +84,8 @@ class MdLinkResolver:
                 lookup.setdefault(f"page:{page_id}", doc.id)
 
         resolved = 0
-        for idx, link in enumerate(unresolved):
-            target_id = self._resolve_href(link.href, lookup)
+        for idx, (link, source_key) in enumerate(unresolved):
+            target_id = self._resolve_href(link.href, lookup, source_key)
             if target_id is not None:
                 await session.execute(
                     update(MdLink)
@@ -100,10 +102,22 @@ class MdLinkResolver:
         return resolved
 
     @staticmethod
-    def _resolve_href(href: str, lookup: dict[str, UUID]) -> UUID | None:
+    def _resolve_href(
+        href: str, lookup: dict[str, UUID], source_key: str | None = None
+    ) -> UUID | None:
         # Direct match
         if href in lookup:
             return lookup[href]
+
+        # Relative to the linking document, for path-keyed collections where
+        # many files share a basename (`../spec.md` from `a/pages/x.md`).
+        path = unquote(href.split("#", 1)[0])
+        if source_key is not None and path and "://" not in path:
+            relative = posixpath.normpath(
+                posixpath.join(posixpath.dirname(source_key), path)
+            )
+            if relative in lookup:
+                return lookup[relative]
 
         # Normalize: strip leading ./ and trailing .md
         normalized = href.lstrip("./")

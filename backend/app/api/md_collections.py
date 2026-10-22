@@ -3,10 +3,11 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime
+from pathlib import PurePosixPath
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, Response, UploadFile, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import UploadFile as StarletteUploadFile
@@ -24,7 +25,7 @@ from backend.app.core.deps import (
 from backend.app.core.errors import ApiError, FieldError
 from backend.app.llm.md_chunk_embedder import MdChunkEmbedderService
 from backend.app.llm.runtime_providers import build_runtime_providers
-from backend.app.md_rag.indexer import MdDocumentInput, MdIndexer
+from backend.app.md_rag.indexer import MAX_MD_DOCUMENT_BYTES, MdDocumentInput, MdIndexer
 from backend.app.md_rag.queries import MdQueryService
 from backend.app.models.enums import (
     GrantLevel,
@@ -34,6 +35,7 @@ from backend.app.models.enums import (
     UserRole,
 )
 from backend.app.models.md_collection import MdChunk, MdCollection, MdDocument, MdJob
+from backend.app.models.repository import Repository
 from backend.app.models.user import User
 from backend.app.query_logs import enqueue_query_log
 from backend.app.rag.hybrid import HybridRetriever
@@ -129,7 +131,6 @@ async def _enqueue_md_rag_jobs(
         )
 
 
-_MAX_MD_DOCUMENT_BYTES = 10 * 1024 * 1024
 _ALLOWED_UPLOAD_SUFFIXES = {".md", ".mdx", ".txt"}
 _TEXTUAL_UPLOAD_CONTENT_TYPES = {
     "text/markdown",
@@ -167,6 +168,31 @@ class UpdateMdCollectionRequest(BaseModel):
     name: str | None = None
     description: str | None = None
     visibility: MdCollectionVisibility | None = None
+    # Mirror a repository folder: every sync of the repository replaces
+    # the collection's documents with the folder's markdown files. Both
+    # set together; both null unbinds and keeps the documents as they are.
+    source_repository_id: UUID | None = None
+    source_path: str | None = None
+
+    @field_validator("source_path")
+    @classmethod
+    def _folder_inside_repository(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        path = PurePosixPath(value.strip())
+        if "\\" in value or path.is_absolute() or ".." in path.parts or path.name == "":
+            raise ValueError("source_path must be a folder inside the repository")
+        return str(path)
+
+    @model_validator(mode="after")
+    def _source_paired(self) -> "UpdateMdCollectionRequest":
+        set_fields = self.model_fields_set
+        repo_set = "source_repository_id" in set_fields
+        if repo_set != ("source_path" in set_fields) or (
+            repo_set and (self.source_repository_id is None) != (self.source_path is None)
+        ):
+            raise ValueError("source_repository_id and source_path must be set together")
+        return self
 
 
 class MdDocumentListItemResponse(BaseModel):
@@ -194,6 +220,8 @@ class MdCollectionDetailResponse(BaseModel):
     description: str | None
     owner_id: UUID | None
     visibility: str
+    source_repository_id: UUID | None
+    source_path: str | None
     documents: MdDocumentsPageResponse
     created_at: datetime
     updated_at: datetime
@@ -364,6 +392,20 @@ async def update_md_collection(
         collection_id=collection_id,
         current_user=current_user,
     )
+    if "source_repository_id" in payload.model_fields_set:
+        # A collection can be readable by people who cannot read the
+        # repository, so only instance admins may bind one.
+        if current_user.role not in (UserRole.OWNER, UserRole.ADMIN):
+            raise ApiError(
+                403, "FORBIDDEN", "Only admins can bind a collection to a repository"
+            )
+        if (
+            payload.source_repository_id is not None
+            and await session.get(Repository, payload.source_repository_id) is None
+        ):
+            raise ApiError(404, "NOT_FOUND", "Repository not found")
+        collection.source_repository_id = payload.source_repository_id
+        collection.source_path = payload.source_path
     if payload.name is not None:
         new_name = _require_collection_name(payload.name)
         if new_name != collection.name:
@@ -1090,6 +1132,8 @@ def _build_collection_detail_response(detail) -> MdCollectionDetailResponse:
         description=detail.description,
         owner_id=detail.owner_id,
         visibility=detail.visibility,
+        source_repository_id=detail.source_repository_id,
+        source_path=detail.source_path,
         documents=MdDocumentsPageResponse(
             items=[
                 MdDocumentListItemResponse(
@@ -1177,7 +1221,7 @@ async def _read_upload_content(upload: UploadFile) -> str:
         raise ApiError(415, "UNSUPPORTED_MEDIA_TYPE", "Unsupported document type")
 
     content_bytes = await upload.read()
-    if len(content_bytes) > _MAX_MD_DOCUMENT_BYTES:
+    if len(content_bytes) > MAX_MD_DOCUMENT_BYTES:
         raise ApiError(413, "PAYLOAD_TOO_LARGE", "Document exceeds 10 MB limit")
     try:
         content = content_bytes.decode("utf-8")

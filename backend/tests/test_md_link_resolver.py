@@ -44,6 +44,21 @@ def test_direct_source_key_match_still_wins():
     assert MdLinkResolver._resolve_href("./docs/guide.md", lookup) == doc_id
 
 
+def test_relative_href_resolves_against_the_linking_document():
+    near, far = uuid4(), uuid4()
+    lookup = {
+        "guides/acme/spec.md": near,
+        "guides/zeta/spec.md": far,
+        "spec.md": far,  # basename index, last writer wins
+    }
+
+    resolved = MdLinkResolver._resolve_href(
+        "../spec.md#limits", lookup, "guides/acme/pages/x.md"
+    )
+
+    assert resolved == near
+
+
 def test_page_id_extraction():
     assert _page_id_from_source_key("confluence:DOCS:3474267#sec-000") == "3474267"
     assert _page_id_from_source_key("confluence:DOCS:3474267") == "3474267"

@@ -45,9 +45,12 @@ class RepoDocumentIndexer:
         repository_id: UUID,
         checkout_path: str | Path,
         relink_unchanged_documents: bool = True,
+        excluded_prefixes: tuple[str, ...] = (),
     ) -> RepoDocumentIndexResult:
         root_path = Path(checkout_path).resolve()
-        document_paths = await asyncio.to_thread(self._discoverer.discover, root_path)
+        document_paths = await asyncio.to_thread(
+            self._discoverer.discover, root_path, excluded_prefixes
+        )
         relative_paths = tuple(path.relative_to(root_path).as_posix() for path in document_paths)
 
         existing_documents = {

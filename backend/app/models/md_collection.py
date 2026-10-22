@@ -40,6 +40,14 @@ class MdCollection(TimestampMixin, Base):
         nullable=False,
         default=MdCollectionVisibility.PRIVATE,
     )
+    # Set together: the collection mirrors `source_path` of this repository
+    # on every sync of it (see MdIndexer.mirror_folder).
+    source_repository_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("repositories.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    source_path: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     documents = relationship(
         "MdDocument",
