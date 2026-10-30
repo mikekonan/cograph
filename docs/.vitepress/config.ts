@@ -10,11 +10,11 @@ import type MarkdownIt from "markdown-it";
 // is deliberately superseded below, because its renderer discards our palette
 // in dark mode. See .vitepress/theme/CographMermaid.vue.
 //
-// Dependency note: VitePress 1.6.4 pins Vite 5, which carries dev-server-only
-// advisories (esbuild CORS, optimized-deps path traversal) with no fix inside
-// the 1.x line. The published site is static files on a CDN — no dev server is
-// ever exposed — and VitePress 2 is alpha-only and incompatible with the
-// mermaid plugin's peer range. Revisit when 2.x ships stable.
+// Dependency note: VitePress 1.6.4 pins Vite 5, whose advisories (esbuild
+// CORS, optimized-deps path traversal) are only fixed in Vite 6.4. package.json
+// overrides Vite to ^6.4.4; the built HTML is identical apart from asset hashes.
+// VitePress 2 is alpha-only and incompatible with the mermaid plugin's peer
+// range. Drop the override when 2.x ships stable.
 
 /**
  * Wrap every table in its own scroll container.
