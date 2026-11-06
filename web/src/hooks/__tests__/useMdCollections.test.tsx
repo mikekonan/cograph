@@ -32,6 +32,7 @@ function makeQueryClient() {
 }
 
 function makeWrapper(queryClient: QueryClient) {
+  // biome-ignore lint/correctness/noComponentHookFactories: renderHook needs a fresh wrapper per test
   return function Wrapper({ children }: { children: ReactNode }) {
     return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
   };

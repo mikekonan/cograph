@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
 import React from "react";
@@ -61,7 +61,7 @@ const server = setupServer(
   http.post("/api/repos", () => HttpResponse.json(STUB_REPO, { status: 202 })),
 );
 
-beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
+beforeAll(() => server.listen({ onUnhandledFrame: "error" }));
 afterEach(() => {
   server.resetHandlers();
   vi.useRealTimers();
@@ -226,7 +226,8 @@ describe("useCreateRepo", () => {
 
 describe("repo lifecycle smoothing", () => {
   it("keeps a just-created fast repo pending in list queries until the first-run lifecycle expires", async () => {
-    vi.useFakeTimers();
+    // Only the clock is fake: the lifecycle stays put while MSW answers on real timers.
+    vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
 
     server.use(
@@ -251,16 +252,13 @@ describe("repo lifecycle smoothing", () => {
 
     const { result } = renderHook(() => useRepos(), { wrapper: localWrapper });
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(0);
-    });
-
-    expect(result.current.data?.items[0]?.status).toBe("pending");
+    await waitFor(() => expect(result.current.data?.items[0]?.status).toBe("pending"));
     expect(result.current.data?.items[0]?.stats.modules_count).toBe(0);
   });
 
   it("keeps a just-created fast repo pending on the detail query until the first-run lifecycle expires", async () => {
-    vi.useFakeTimers();
+    // Only the clock is fake: the lifecycle stays put while MSW answers on real timers.
+    vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
 
     server.use(http.get(REPO_PATH, () => HttpResponse.json(READY_REPO)));
@@ -275,11 +273,7 @@ describe("repo lifecycle smoothing", () => {
 
     const { result } = renderHook(() => useRepo(REPO_SLUG), { wrapper: localWrapper });
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(0);
-    });
-
-    expect(result.current.data?.status).toBe("pending");
+    await waitFor(() => expect(result.current.data?.status).toBe("pending"));
     expect(result.current.data?.last_commit).toBeNull();
   });
 });

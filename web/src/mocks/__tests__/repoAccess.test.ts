@@ -23,7 +23,7 @@ const server = setupServer(
   ...retrieveHandlers,
 );
 
-beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
+beforeAll(() => server.listen({ onUnhandledFrame: "error" }));
 beforeEach(() => resetMockState());
 afterEach(() => {
   server.resetHandlers();

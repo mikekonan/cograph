@@ -178,7 +178,7 @@ const server = setupServer(
   http.get(`${readyEmptyPath}/docs`, () => HttpResponse.json({ total: 0, items: [] })),
 );
 
-beforeAll(() => server.listen({ onUnhandledRequest: "bypass" }));
+beforeAll(() => server.listen({ onUnhandledFrame: "bypass" }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 

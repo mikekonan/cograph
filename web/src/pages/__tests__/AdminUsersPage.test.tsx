@@ -95,7 +95,7 @@ const server = setupServer(
   }),
 );
 
-beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
+beforeAll(() => server.listen({ onUnhandledFrame: "error" }));
 beforeEach(() => {
   users = [{ ...ownerUser }, { ...secondAdmin }, { ...memberUser }];
   authState.user = ownerUser;

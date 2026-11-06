@@ -31,7 +31,7 @@ const server = setupServer(
   ),
 );
 
-beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
+beforeAll(() => server.listen({ onUnhandledFrame: "error" }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
@@ -72,34 +72,10 @@ describe("AuthProvider", () => {
     });
     queryClient.setQueryData(["repos", "", "all"], { items: [], total: 0 });
 
-    function HarnessWithLogin() {
-      const { setUser } = useAuth();
-      return (
-        <button
-          type="button"
-          onClick={() =>
-            setUser({
-              id: "u",
-              email: "a@b.c",
-              name: null,
-              role: "admin",
-              is_owner: false,
-              is_active: true,
-              auth_source: "password",
-              last_login_at: null,
-              created_at: "2026-01-01T00:00:00Z",
-            })
-          }
-        >
-          Set user
-        </button>
-      );
-    }
-
     render(
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
-          <HarnessWithLogin />
+          <Harness />
         </AuthProvider>
       </QueryClientProvider>,
     );
