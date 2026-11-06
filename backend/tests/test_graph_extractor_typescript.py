@@ -409,6 +409,28 @@ export async function Page() {
     assert calls == {"api.get", "Card.Header", "Button"}
 
 
+def test_lazy_loaders_import_and_wrapped_values_call():
+    source_text = """\
+const Tracking = lazy(() => import("./pages/tracking").then((m) => ({ default: m.Tracking })));
+const Depots = React.lazy(() => import("./pages/Depots"));
+export const Card = memo(() => <Badge />);
+export const routes = [{ path: "/", element: <Tracking /> }];
+"""
+    _, nodes, edges = _extract("src/App.tsx", source_text)
+
+    # The variables keep their nodes; only edges are added.
+    assert {"src.App.Tracking", "src.App.Depots", "src.App.Card", "src.App.routes"} <= set(nodes)
+    assert {target for kind, _, target in edges if kind is GraphEdgeType.IMPORTS} == {
+        "src.pages.tracking.Tracking as Tracking",
+        "src.pages.Depots.Depots as Depots",
+    }
+    assert {(source, target) for kind, source, target in edges if kind is GraphEdgeType.CALLS} == {
+        ("src.App.Card", "memo"),
+        ("src.App.Card", "Badge"),
+        ("src.App.routes", "Tracking"),
+    }
+
+
 def test_bare_import_resolves_through_ts_scope():
     scope = TsScope(
         base_url="src",

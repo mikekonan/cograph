@@ -68,6 +68,26 @@ def test_base_url_through_extends_maps_only_existing_entries(tmp_path):
     assert set(config) == {"."}
 
 
+def test_catch_all_path_maps_like_base_url(tmp_path):
+    _write(tmp_path, "tsconfig.json", '{"compilerOptions": {"paths": {"*": ["./src/*"], "@/*": ["./src/*"]}}}')
+    _write(tmp_path, "src/pages/Home.tsx", "export {};\n")
+    _write(tmp_path, "src/api.ts", "export {};\n")
+
+    scope = ts_scope_for(load_ts_config(tmp_path, _SKIP), "src/app.tsx")
+
+    assert scope is not None and scope.base_url == "src"
+    assert scope.map("pages/Home") == "src/pages/Home"
+    assert scope.map("api") == "src/api"
+    assert scope.map("@/api") == "src/api"
+    assert scope.map("react") is None
+
+    # Next to a `baseUrl`, the catch-all only adds typings.
+    _write(tmp_path, "tsconfig.json", '{"compilerOptions": {"baseUrl": ".", "paths": {"*": ["./src/*"]}}}')
+    scope = ts_scope_for(load_ts_config(tmp_path, _SKIP), "src/app.tsx")
+    assert scope is not None and scope.base_url == ""
+    assert scope.map("src/api") == "src/api"
+
+
 def test_workspace_packages_resolve_to_their_source(tmp_path):
     _write(
         tmp_path,

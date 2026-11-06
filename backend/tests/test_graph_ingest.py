@@ -169,6 +169,89 @@ func Normalize(userID string) string {
     }
 
 
+async def test_go_calls_through_receiver_fields_and_closures_resolve(
+    db_session,
+    tmp_path,
+):
+    repository = Repository(
+        host="example.com",
+        git_url="git@github.com:mikekonan/cograph.git",
+        name="cograph",
+        owner="mikekonan",
+        branch="main",
+        status=RepositoryStatus.PENDING,
+        sync_schedule=SyncSchedule.MANUAL,
+    )
+    db_session.add(repository)
+    await db_session.flush()
+
+    checkout_path = tmp_path / "checkout"
+    (checkout_path / "dispatch").mkdir(parents=True)
+    (checkout_path / "storage").mkdir(parents=True)
+    (checkout_path / "go.mod").write_text("module example.com/depot\n", encoding="utf-8")
+    # The method's file sorts first, so it is persisted before its struct.
+    (checkout_path / "dispatch" / "a_route.go").write_text(
+        """package dispatch
+
+func (d *Dispatcher) Route(parcelID string) {
+    d.shelf.Put(parcelID)
+    go func() {
+        d.clock.Tick()
+    }()
+}
+""",
+        encoding="utf-8",
+    )
+    (checkout_path / "dispatch" / "dispatcher.go").write_text(
+        """package dispatch
+
+import store "example.com/depot/storage"
+
+type Clock struct{}
+
+func (c Clock) Tick() {}
+
+type Dispatcher struct {
+    shelf *store.Shelf
+    clock Clock
+}
+""",
+        encoding="utf-8",
+    )
+    (checkout_path / "storage" / "shelf.go").write_text(
+        """package storage
+
+type Shelf struct{}
+
+func (s *Shelf) Put(parcelID string) {}
+""",
+        encoding="utf-8",
+    )
+
+    await GraphIngestService().ingest_checkout(
+        session=db_session,
+        repository_id=repository.id,
+        checkout_path=checkout_path,
+    )
+    await db_session.commit()
+
+    nodes = {
+        node.qualified_name: node
+        for node in (
+            await db_session.scalars(
+                select(CodeNode).where(CodeNode.repository_id == repository.id)
+            )
+        ).all()
+    }
+    route = nodes["dispatch.Dispatcher.Route"]
+    assert set(route.callees) == {
+        str(nodes["storage.Shelf.Put"].id),
+        str(nodes["dispatch.Clock.Tick"].id),
+    }
+    # The closure's own text is not a call target.
+    assert "unresolved_calls" not in route.node_metadata
+
+
 async def test_graph_ingest_service_indexes_go_types_fixture_repo_shape(
     db_session,
     tmp_path,
