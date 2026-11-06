@@ -149,7 +149,7 @@ function renderOverviewPage(slugName = "ready") {
   return router;
 }
 
-describe("RepoOverviewPage", { concurrent: false }, () => {
+describe.sequential("RepoOverviewPage", () => {
   it("keeps overview focused on summary surfaces and routes repo markdown to Docs", async () => {
     const router = renderOverviewPage();
 
