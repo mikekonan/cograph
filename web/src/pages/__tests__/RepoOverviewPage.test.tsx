@@ -118,7 +118,7 @@ const server = setupServer(
   }),
 );
 
-beforeAll(() => server.listen({ onUnhandledRequest: "bypass" }));
+beforeAll(() => server.listen({ onUnhandledFrame: "bypass" }));
 afterEach(() => {
   authState.user = { role: "admin" };
   jobBatchRequests = 0;
@@ -149,7 +149,7 @@ function renderOverviewPage(slugName = "ready") {
   return router;
 }
 
-describe.sequential("RepoOverviewPage", () => {
+describe("RepoOverviewPage", { concurrent: false }, () => {
   it("keeps overview focused on summary surfaces and routes repo markdown to Docs", async () => {
     const router = renderOverviewPage();
 

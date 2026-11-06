@@ -33,7 +33,7 @@ const server = setupServer(
   http.post("/api/repos", () => HttpResponse.json(STUB_REPO, { status: 202 })),
 );
 
-beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
+beforeAll(() => server.listen({ onUnhandledFrame: "error" }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 

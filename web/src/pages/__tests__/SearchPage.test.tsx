@@ -96,7 +96,7 @@ const server = setupServer(
   http.post("/api/retrieve", () => HttpResponse.json(SEARCH_RESPONSE)),
 );
 
-beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
+beforeAll(() => server.listen({ onUnhandledFrame: "error" }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 

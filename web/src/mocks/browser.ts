@@ -9,7 +9,7 @@ export const worker = setupWorker(...handlers);
  */
 export async function startMockWorker() {
   return worker.start({
-    onUnhandledRequest: "bypass",
+    onUnhandledFrame: "bypass",
     serviceWorker: {
       url: "/mockServiceWorker.js",
     },

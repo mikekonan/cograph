@@ -9,7 +9,7 @@ import { useDocPage, useDocTree } from "../useDocs";
 
 const server = setupServer();
 
-beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
+beforeAll(() => server.listen({ onUnhandledFrame: "error" }));
 afterEach(() => {
   server.resetHandlers();
   vi.restoreAllMocks();
@@ -17,6 +17,7 @@ afterEach(() => {
 afterAll(() => server.close());
 
 function makeWrapper(retryOverride?: false) {
+  // biome-ignore lint/correctness/noComponentHookFactories: renderHook needs a fresh wrapper per test
   return function Wrapper({ children }: { children: React.ReactNode }) {
     const qc = new QueryClient({
       defaultOptions: {
@@ -32,6 +33,7 @@ function makeWrapper(retryOverride?: false) {
 
 /** Wrapper that uses the real retry logic from useDocs (no override). */
 function makeRealRetryWrapper() {
+  // biome-ignore lint/correctness/noComponentHookFactories: renderHook needs a fresh wrapper per test
   return function Wrapper({ children }: { children: React.ReactNode }) {
     const qc = new QueryClient({
       defaultOptions: {
