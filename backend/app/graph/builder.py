@@ -839,7 +839,16 @@ def _canonical_target_name(
         if receiver_name and raw_target.startswith(f"{receiver_name}."):
             parent_qualified_name, _, _ = source_node.qualified_name.rpartition(".")
             if parent_qualified_name:
-                return f"{parent_qualified_name}{raw_target[len(receiver_name) :]}"
+                member = raw_target[len(receiver_name) + 1 :]
+                # `s.repo.Get()` calls a method of the field's type; the
+                # extractor copies those types onto the method.
+                field_name, _, called = member.partition(".")
+                receiver_fields = source_node.node_metadata.get("receiver_fields")
+                if called and "." not in called and isinstance(receiver_fields, dict):
+                    field_type = receiver_fields.get(field_name)
+                    if isinstance(field_type, str):
+                        return f"{field_type}.{called}"
+                return f"{parent_qualified_name}.{member}"
 
     if module_node is not None:
         import_candidates: list[str] = []

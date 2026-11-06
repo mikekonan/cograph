@@ -27,6 +27,7 @@ from backend.app.graph.extractor import (
     ExtractedGraph,
     GraphExtractor,
     GraphNodeType,
+    link_go_receiver_fields,
 )
 from backend.app.graph.ingest_cache import GraphIngestCache
 from backend.app.graph.go_variants import (
@@ -950,6 +951,7 @@ class GraphIngestService:
                     f"{existing_path} vs {node.file_path}"
                 )
             parsed_graphs[selected_file.relative_path] = extracted_graph
+        link_go_receiver_fields(parsed_graphs.values())
         return parsed_graphs
 
     async def _prune_missing_files(

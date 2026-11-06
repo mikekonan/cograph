@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -40,14 +41,20 @@ _GO_MODULE_QN_SUFFIX = "#module"
 # expression text (a call chain with its arguments) that never names a node.
 _MAX_EDGE_TARGET_BYTES = 1024
 
+# A field of one of these types has no methods to resolve a call to.
+_GO_PREDECLARED_TYPES = frozenset(
+    "any bool byte complex64 complex128 error float32 float64 int int8 int16 int32"
+    " int64 rune string uint uint8 uint16 uint32 uint64 uintptr".split()
+)
+
 # Bump a language when its extraction output changes: ingest stamps every
 # MODULE node with this and re-extracts any file whose stamp is stale, even
 # when its text has not changed.
 EXTRACTOR_VERSIONS: dict[GraphLanguage, int] = {
     GraphLanguage.PYTHON: 1,
-    GraphLanguage.GO: 1,
-    GraphLanguage.TYPESCRIPT: 3,
-    GraphLanguage.JAVASCRIPT: 3,
+    GraphLanguage.GO: 2,
+    GraphLanguage.TYPESCRIPT: 4,
+    GraphLanguage.JAVASCRIPT: 4,
 }
 
 
@@ -384,19 +391,24 @@ def _extract_go_graph(
         )
     ]
     edges: list[ExtractedEdge] = []
+    # Local package name -> import target. Go puts imports before any
+    # declaration, so struct fields below can resolve `storage.Client`.
+    go_imports: dict[str, str] = {}
 
     for child in parsed_file.root_node.named_children:
         if child.type == "package_clause":
             continue
         if child.type == "import_declaration":
-            edges.extend(
-                _extract_go_import_edges(
-                    parsed_file=parsed_file,
-                    module_name=module_name,
-                    import_node=child,
-                    go_module_path=go_module_path,
-                )
+            import_edges = _extract_go_import_edges(
+                parsed_file=parsed_file,
+                module_name=module_name,
+                import_node=child,
+                go_module_path=go_module_path,
             )
+            edges.extend(import_edges)
+            for edge in import_edges:
+                canonical, _, alias = edge.target.partition(" as ")
+                go_imports[alias or canonical.rsplit(".", 1)[-1]] = canonical
             continue
         if child.type == "function_declaration":
             function_node, function_edges = _extract_go_function(
@@ -427,11 +439,52 @@ def _extract_go_graph(
                 module_name=module_name,
                 package_qualified_name=package_qualified_name,
                 declaration=declaration,
+                go_imports=go_imports,
             )
             nodes.extend(declaration_nodes)
             edges.extend(declaration_edges)
 
     return ExtractedGraph(nodes=nodes, edges=edges)
+
+
+def link_go_receiver_fields(graphs: Iterable[ExtractedGraph]) -> None:
+    """Copy onto each Go method the types of the receiver fields it calls.
+
+    `s.repo.Get()` resolves to `<type of repo>.Get`. The struct can sit in
+    another file of the package, and the builder persists files one by one,
+    so the method carries the types itself. Pass every graph of the package.
+    """
+    graphs = list(graphs)
+    field_types_by_struct = {
+        node.qualified_name: node.metadata["field_types"]
+        for graph in graphs
+        for node in graph.nodes
+        if node.node_type is GraphNodeType.STRUCT and "field_types" in node.metadata
+    }
+    if not field_types_by_struct:
+        return
+    for graph in graphs:
+        methods = {
+            node.qualified_name: node
+            for node in graph.nodes
+            if node.node_type is GraphNodeType.METHOD
+            and node.parent_qualified_name in field_types_by_struct
+        }
+        for edge in graph.edges:
+            method = methods.get(edge.source) if edge.edge_type is GraphEdgeType.CALLS else None
+            if method is None:
+                continue
+            receiver, _, member = edge.target.partition(".")
+            field_name, _, called = member.partition(".")
+            field_types = field_types_by_struct[method.parent_qualified_name]
+            if (
+                receiver == method.metadata.get("receiver_name")
+                and called
+                and "." not in called
+                and field_name in field_types
+            ):
+                receiver_fields = method.metadata.setdefault("receiver_fields", {})
+                receiver_fields[field_name] = field_types[field_name]
 
 
 def _extract_go_function(
@@ -546,6 +599,7 @@ def _extract_go_type_declaration(
     module_name: str,
     package_qualified_name: str,
     declaration: Node,
+    go_imports: dict[str, str],
 ) -> tuple[list[ExtractedNode], list[ExtractedEdge]]:
     if declaration.type == "type_alias":
         alias_node, alias_edge = _extract_go_type_alias(
@@ -577,6 +631,7 @@ def _extract_go_type_declaration(
             type_name=name,
             type_node=declaration,
             struct_node=declared_type,
+            go_imports=go_imports,
         )
 
     if declared_type.type == "interface_type":
@@ -609,18 +664,28 @@ def _extract_go_struct(
     type_name: str,
     type_node: Node,
     struct_node: Node,
+    go_imports: dict[str, str],
 ) -> tuple[list[ExtractedNode], list[ExtractedEdge]]:
     qualified_name = f"{package_qualified_name}.{type_name}"
+    declarations_node = (
+        struct_node.named_children[0] if struct_node.named_children else struct_node
+    )
     embedded_types = _extract_go_embedded_types(
         parsed_file=parsed_file,
-        declarations_node=struct_node.named_children[0]
-        if struct_node.named_children
-        else struct_node,
+        declarations_node=declarations_node,
         package_qualified_name=package_qualified_name,
     )
     metadata: dict[str, object] = {}
     if embedded_types:
         metadata["embeds"] = embedded_types
+    field_types = _go_field_types(
+        parsed_file=parsed_file,
+        declarations_node=declarations_node,
+        package_qualified_name=package_qualified_name,
+        go_imports=go_imports,
+    )
+    if field_types:
+        metadata["field_types"] = field_types
 
     nodes = [
         ExtractedNode(
@@ -863,14 +928,16 @@ def _extract_go_call_edges(
         return []
 
     edges: list[ExtractedEdge] = []
+    # The walk enters closures (`go func() {...}()`, callbacks): they have no
+    # node of their own, so their calls belong to the enclosing function.
     stack = list(reversed(body.children))
     while stack:
         node = stack.pop()
-        if node.type == "function_literal":
-            continue
         if node.type == "call_expression":
             function_expr = node.child_by_field_name("function")
-            if function_expr is not None:
+            # `go func() {...}()` calls the closure itself: its text names
+            # nothing. The calls inside it are walked below.
+            if function_expr is not None and function_expr.type != "func_literal":
                 callee = _symbol_text(parsed_file, function_expr)
                 if callee:
                     edges.append(
@@ -1212,6 +1279,51 @@ def _extract_go_embedded_types(
         if target and target not in embedded_types:
             embedded_types.append(target)
     return embedded_types
+
+
+def _go_field_types(
+    *,
+    parsed_file: ParsedFile,
+    declarations_node: Node,
+    package_qualified_name: str,
+    go_imports: dict[str, str],
+) -> dict[str, str]:
+    """Field name -> QN of its named type, for `s.field.Method()` calls.
+
+    An embedded field is named after its type. Maps, slices, funcs and
+    generic instances are skipped: a call through them names no method.
+    """
+    field_types: dict[str, str] = {}
+    for child in declarations_node.named_children:
+        if child.type != "field_declaration":
+            continue
+        type_node = child.child_by_field_name("type")
+        if type_node is not None and type_node.type == "pointer_type":
+            type_node = type_node.named_children[0] if type_node.named_children else None
+        if type_node is None:
+            continue
+        if type_node.type == "type_identifier":
+            name = _node_text(parsed_file, type_node).strip()
+            if name in _GO_PREDECLARED_TYPES:
+                continue
+            type_qualified_name = f"{package_qualified_name}.{name}"
+        elif type_node.type == "qualified_type":
+            package = go_imports.get(
+                _node_text(parsed_file, type_node.child_by_field_name("package")).strip()
+            )
+            if not package:
+                continue
+            name = _node_text(parsed_file, type_node.child_by_field_name("name")).strip()
+            type_qualified_name = f"{package}.{name}"
+        else:
+            continue
+        field_names = [
+            _node_text(parsed_file, name_node).strip()
+            for name_node in child.children_by_field_name("name")
+        ]
+        for field_name in field_names or [name]:
+            field_types[field_name] = type_qualified_name
+    return field_types
 
 
 def _go_embedded_type_target(
@@ -1875,6 +1987,27 @@ def _extract_ts_var_declarators(
             )
             continue
 
+        dynamic_import = _ts_dynamic_import(parsed_file, value)
+        if dynamic_import is not None:
+            # `const Page = lazy(() => import("./Page"))`: `<Page/>` renders
+            # that module's component, so the name imports it. The variable
+            # keeps its node; its loader calls are noise.
+            specifier, export = dynamic_import
+            canonical = _ts_resolve_specifier(parsed_file, specifier, ts_scope)
+            # A default export: bet on its local name, as for `import D`.
+            target = name if export == "default" else export
+            edges.append(
+                ExtractedEdge(
+                    edge_type=GraphEdgeType.IMPORTS,
+                    source=module_name,
+                    target=f"{canonical}.{target} as {name}",
+                )
+            )
+        elif value is not None:
+            # `const Card = memo(() => ...)`, `createSlice({...})`: the
+            # wrapped code has no node of its own.
+            edges.extend(_ts_calls_in(parsed_file, value, qualified_name))
+
         node_type = GraphNodeType.CONSTANT if name.isupper() else GraphNodeType.VARIABLE
         nodes.append(
             _ts_node(
@@ -1991,9 +2124,14 @@ def _extract_ts_call_edges(
     qualified_name: str,
 ) -> list[ExtractedEdge]:
     body = function_node.child_by_field_name("body")
-    if body is None:
-        return []
+    return [] if body is None else _ts_calls_in(parsed_file, body, qualified_name)
 
+
+def _ts_calls_in(
+    parsed_file: ParsedFile,
+    body: Node,
+    qualified_name: str,
+) -> list[ExtractedEdge]:
     edges: list[ExtractedEdge] = []
     # Unlike the Python/Go walkers this one does NOT skip nested function
     # bodies: in TS most calls live inside callbacks/arrows, and nested
@@ -2010,7 +2148,7 @@ def _extract_ts_call_edges(
                 function_expr = next(iter(function_expr.named_children), None)
             if function_expr is not None:
                 callee = _symbol_text(parsed_file, function_expr)
-                if callee and callee != "require":
+                if callee and callee not in ("require", "import"):
                     edges.append(
                         ExtractedEdge(
                             edge_type=GraphEdgeType.CALLS,
@@ -2196,6 +2334,52 @@ def _ts_resolve_specifier(
     if len(resolved) > 1 and resolved[-1] == "index":
         resolved = resolved[:-1]
     return ".".join(resolved) if resolved else specifier
+
+
+def _ts_dynamic_import(parsed_file: ParsedFile, value: Node | None) -> tuple[str, str] | None:
+    """`lazy(() => import("./Page"))`: the specifier and the export it loads.
+
+    Only a call whose first argument is the loader function: an import deep
+    inside a router config does not make the whole config that module. The
+    export is `default`, or `X` when the loader remaps it with
+    `.then((m) => ({ default: m.X }))`. Two imports or a computed specifier
+    name no single module.
+    """
+    if value is None or value.type != "call_expression":
+        return None
+    arguments = value.child_by_field_name("arguments")
+    loader = next(iter(arguments.named_children), None) if arguments is not None else None
+    if loader is None or loader.type not in _TS_FUNCTION_VALUE_TYPES:
+        return None
+    specifier: str | None = None
+    export = "default"
+    stack = [loader]
+    while stack:
+        node = stack.pop()
+        if node.type == "call_expression":
+            function_expr = node.child_by_field_name("function")
+            arguments = node.child_by_field_name("arguments")
+            if function_expr is not None and function_expr.type == "import":
+                strings = [
+                    argument
+                    for argument in (arguments.named_children if arguments is not None else [])
+                    if argument.type == "string"
+                ]
+                if specifier is not None or not strings:
+                    return None
+                specifier = _ts_string_text(parsed_file, strings[0])
+        elif node.type == "pair":
+            key = node.child_by_field_name("key")
+            loaded = node.child_by_field_name("value")
+            if (
+                key is not None
+                and _node_text(parsed_file, key) == "default"
+                and loaded is not None
+                and loaded.type == "member_expression"
+            ):
+                export = _node_text(parsed_file, loaded.child_by_field_name("property"))
+        stack.extend(node.children)
+    return (specifier, export) if specifier else None
 
 
 def _ts_require_specifier(parsed_file: ParsedFile, value: Node | None) -> str | None:

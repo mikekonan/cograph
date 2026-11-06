@@ -188,14 +188,26 @@ def _build_scope(root: Path, options: dict[str, object], packages: _Rules) -> Ts
     raw_paths = options.get("paths")
     if isinstance(raw_paths, dict) and isinstance(targets_dir, Path):
         for pattern, targets in raw_paths.items():
-            # ponytail: the catch-all `"*"` is skipped, it would send every
-            # npm import (`react`) into the repo. `baseUrl` covers that case.
-            if pattern == "*" or pattern.count("*") > 1:
+            if pattern.count("*") > 1:
                 continue
             if not (isinstance(targets, list) and targets and isinstance(targets[0], str)):
                 continue
             target = Path(os.path.normpath(targets_dir / targets[0]))
-            if target.is_relative_to(root):
+            if pattern == "*":
+                # Without `baseUrl`, the catch-all (`"*": ["./src/*"]`) is the
+                # project's `baseUrl`: map it the same way, through the
+                # directory's entries, so `react` stays external. Next to a
+                # `baseUrl` it usually adds typings (`"*": ["types/*"]`) and
+                # the `baseUrl` stays.
+                catch_all = target.parent.resolve()
+                if (
+                    base_dir is None
+                    and target.name == "*"
+                    and catch_all.is_relative_to(root)
+                    and catch_all.is_dir()
+                ):
+                    base_dir = catch_all
+            elif target.is_relative_to(root):
                 paths.append((pattern, target.relative_to(root).as_posix()))
     if base_dir is None and not paths:
         return None
