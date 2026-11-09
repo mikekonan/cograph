@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 
+import pytest
+
 from backend.app.models.enums import (
     RepositoryStatus,
     RepositoryVisibility,
@@ -63,7 +65,9 @@ async def _seed_repository(db_session) -> Repository:
     return repo
 
 
-async def _call_tool(client, plaintext: str, slug: str, *, request_id: int = 1):
+async def _call_tool(
+    client, plaintext: str, slug: str, *, arg: str = "repository", request_id: int = 1
+):
     return await client.post(
         "/mcp/",
         headers={
@@ -76,13 +80,16 @@ async def _call_tool(client, plaintext: str, slug: str, *, request_id: int = 1):
             "method": "tools/call",
             "params": {
                 "name": "cograph_repository_readme",
-                "arguments": {"slug": slug},
+                "arguments": {arg: slug},
             },
         },
     )
 
 
-async def test_repository_readme_returns_indexed_readme(client, db_session):
+# `repository` is the name every repo-scoped tool takes; `slug` is still
+# accepted because this tool used to take it.
+@pytest.mark.parametrize("arg", ["repository", "slug"])
+async def test_repository_readme_returns_indexed_readme(client, db_session, arg):
     _, plaintext = await _seed_pat_user(db_session)
     repo = await _seed_repository(db_session)
     db_session.add(
@@ -97,7 +104,7 @@ async def test_repository_readme_returns_indexed_readme(client, db_session):
     )
     await db_session.commit()
 
-    response = await _call_tool(client, plaintext, "github.com/acme/widgets")
+    response = await _call_tool(client, plaintext, "github.com/acme/widgets", arg=arg)
 
     assert response.status_code == 200
     payload = response.json()

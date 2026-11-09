@@ -84,7 +84,7 @@ Do NOT use to search inside the readme (use cograph_retrieve mode='wiki') or to 
 
 | Parameter | Type | Required | Default | Bounds |
 | --- | --- | --- | --- | --- |
-| `slug` | string | yes | — | — |
+| `repository` | string | yes | — | — |
 
 ## Search
 

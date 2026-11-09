@@ -37,7 +37,7 @@ _README_SNIPPET_CHARS = 4000
 
 
 class RepositoryReadmeArgs(BaseModel):
-    slug: str
+    repository: str
 
 
 def register(server: MCPServer, services: MCPServices) -> None:
@@ -47,32 +47,32 @@ def register(server: MCPServer, services: MCPServices) -> None:
         description=_README_DESCRIPTION,
     )
     async def repository_readme(
-        slug: str,
+        repository: str,
         ctx: Context | None = None,
     ) -> object:
-        args = tool_args(RepositoryReadmeArgs, slug=slug)
+        args = tool_args(RepositoryReadmeArgs, repository=repository)
         current_user = current_user_from_context(ctx)
         async with services.session_manager.session() as session:
-            repository = await resolve_readable_repository_by_slug(
+            repo = await resolve_readable_repository_by_slug(
                 session=session,
-                slug=args.slug,
+                slug=args.repository,
                 services=services,
                 current_user=current_user,
             )
             await require_ready_repository(
                 session=session,
-                repository_id=repository.id,
+                repository_id=repo.id,
             )
 
             # `%readme%` ordered by size also matched `docs/readme-dev.md`
             # and any nested example README, and "biggest wins" is not the
             # same question as "which one is the repository's".
-            doc = (await load_root_readmes(session, [repository.id])).get(
-                repository.id
+            doc = (await load_root_readmes(session, [repo.id])).get(
+                repo.id
             )
 
             slug_path = (
-                f"{repository.host}/{repository.owner}/{repository.name}"
+                f"{repo.host}/{repo.owner}/{repo.name}"
             )
 
             if doc is not None:
@@ -99,7 +99,7 @@ def register(server: MCPServer, services: MCPServices) -> None:
             # via the cograph_wiki_page tool — not returned from this readme call.
             wiki_page = await services.wiki_queries.get_page_by_slug(
                 session=session,
-                repository_id=repository.id,
+                repository_id=repo.id,
                 slug="overview",
             )
 
