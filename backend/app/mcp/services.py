@@ -459,6 +459,7 @@ async def search_code_payload(
     repository_id: UUID,
     query: str,
     top_k: int,
+    path_prefix: str = "",
 ) -> RetrievalResponse:
     async with services.session_manager.session() as session:
         await require_ready_repository(session=session, repository_id=repository_id)
@@ -468,12 +469,14 @@ async def search_code_payload(
             query_text=query,
             repository_id=repository_id,
             top_k=top_k,
+            path_prefix=path_prefix,
         )
         symbol_hits = await services.symbol.search(
             session,
             query_text=query,
             repository_id=repository_id,
             top_k=top_k,
+            path_prefix=path_prefix,
         )
         merged = rrf_merge_streams(
             [lexical_hits, symbol_hits],

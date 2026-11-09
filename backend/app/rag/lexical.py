@@ -64,6 +64,7 @@ class LexicalRetriever:
         as_of: datetime | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
+        path_prefix: str = "",
     ) -> list[RetrievedChunk]:
         if not query_text or not query_text.strip():
             return []
@@ -79,6 +80,7 @@ class LexicalRetriever:
                 as_of=as_of,
                 since=since,
                 until=until,
+                path_prefix=path_prefix,
             )
         if store == "repo_docs":
             if repository_id is None:
@@ -116,9 +118,12 @@ class LexicalRetriever:
         as_of: datetime | None,
         since: datetime | None,
         until: datetime | None,
+        path_prefix: str,
     ) -> list[RetrievedChunk]:
         # 'simple' regconfig + content_tsv_simple keeps code identifiers intact
         # (no English stemming, no stopword stripping). See migration 0018.
+        # starts_with, not LIKE: `_` and `%` in a path stay literal. An empty
+        # prefix matches every path.
         stmt = text(
             """
             SELECT
@@ -133,6 +138,7 @@ class LexicalRetriever:
             FROM code_nodes cn
             WHERE cn.repository_id = :repo_id
               AND cn.content_tsv_simple @@ plainto_tsquery('simple', :query_text)
+              AND starts_with(cn.file_path, :path_prefix)
               AND (CAST(:as_of AS timestamp) IS NULL OR COALESCE(cn.last_changed_at, cn.created_at) <= CAST(:as_of AS timestamp))
               AND (CAST(:since AS timestamp) IS NULL OR COALESCE(cn.last_changed_at, cn.created_at) >= CAST(:since AS timestamp))
               AND (CAST(:until AS timestamp) IS NULL OR COALESCE(cn.last_changed_at, cn.created_at) <= CAST(:until AS timestamp))
@@ -147,6 +153,7 @@ class LexicalRetriever:
                 "query_text": query_text,
                 "repo_id": repository_id,
                 "top_k": top_k,
+                "path_prefix": path_prefix,
                 "as_of": as_of,
                 "since": since,
                 "until": until,
@@ -334,6 +341,7 @@ class SymbolLookup:
         as_of: datetime | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
+        path_prefix: str = "",
     ) -> list[RetrievedChunk]:
         if not query_text or not query_text.strip():
             return []
@@ -353,6 +361,7 @@ class SymbolLookup:
             WHERE cn.repository_id = :repo_id
               AND cn.qualified_name % :query_text
               AND similarity(cn.qualified_name, :query_text) >= :threshold
+              AND starts_with(cn.file_path, :path_prefix)
               AND (CAST(:as_of AS timestamp) IS NULL OR COALESCE(cn.last_changed_at, cn.created_at) <= CAST(:as_of AS timestamp))
               AND (CAST(:since AS timestamp) IS NULL OR COALESCE(cn.last_changed_at, cn.created_at) >= CAST(:since AS timestamp))
               AND (CAST(:until AS timestamp) IS NULL OR COALESCE(cn.last_changed_at, cn.created_at) <= CAST(:until AS timestamp))
@@ -368,6 +377,7 @@ class SymbolLookup:
                 "repo_id": repository_id,
                 "threshold": self.similarity_threshold,
                 "top_k": top_k,
+                "path_prefix": path_prefix,
                 "as_of": as_of,
                 "since": since,
                 "until": until,

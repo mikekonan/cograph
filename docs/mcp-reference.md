@@ -122,6 +122,8 @@ Do NOT use for a name from the code (use cograph_search_code) or to read a known
 
 Lexical + fuzzy symbol search over a repository's code nodes. Returns signatures + line ranges (no body), at most 25 hits, so the agent can pick the right node, then read it with cograph_read_node(node_id=provenance.node_id).
 
+path_prefix (a folder from the repository root, e.g. internal/shipping/) keeps only hits under it.
+
 Use when: you have a name from the code (class, function, qualified path). One identifier per call. `repository` is host/owner/name.
 
 Do NOT use for natural-language questions (use cograph_retrieve with mode=code) or to read a node fully (use cograph_read_node).
@@ -131,6 +133,7 @@ Do NOT use for natural-language questions (use cograph_retrieve with mode=code) 
 | `repository` | string | yes | — | — |
 | `query` | string | yes | — | non-empty |
 | `top_k` | integer | no | `10` | ≥ 1 |
+| `path_prefix` | string | no | — | — |
 
 ### `cograph_collection_search`
 
