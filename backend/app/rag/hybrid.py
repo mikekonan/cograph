@@ -430,6 +430,7 @@ class HybridRetriever:
             streams: list[list[RetrievedChunk]] = []
             stream_names: list[str] = []
             v_hits = await self._safe(
+                session,
                 self.vector.search(
                     session,
                     store=store_name,
@@ -448,6 +449,7 @@ class HybridRetriever:
 
             if use_text:
                 l_hits = await self._safe(
+                    session,
                     self.lexical.search(
                         session,
                         store=store_name,
@@ -467,6 +469,7 @@ class HybridRetriever:
                 # Symbol lookup is code-only (qualified_name lives on code_nodes).
                 if store_name == "code":
                     s_hits = await self._safe(
+                        session,
                         self.symbol.search(
                             session,
                             query_text=query_text,
@@ -503,13 +506,23 @@ class HybridRetriever:
         return all_merged
 
     @staticmethod
-    async def _safe(coro, *, stream: str, store: str) -> list[RetrievedChunk]:
-        """Await ``coro``; on failure log + return []. Cancellation propagates."""
+    async def _safe(
+        session: AsyncSession, coro, *, stream: str, store: str
+    ) -> list[RetrievedChunk]:
+        """Await ``coro`` in its own SAVEPOINT; on failure log + return [].
+
+        Every stream shares one session and one transaction. Without the
+        savepoint a SQL error in one stream aborts that transaction: each later
+        stream fails too, and the caller gets an empty answer or a dead session.
+        Cancellation propagates.
+        """
         try:
-            return await coro
+            async with session.begin_nested():
+                return await coro
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — graceful degradation
+            coro.close()  # never started when the savepoint itself failed
             logger.warning(
                 "hybrid retrieval: store=%s stream=%s failed",
                 store,
