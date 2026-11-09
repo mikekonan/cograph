@@ -30,6 +30,14 @@ app:
     enabled: false
     apiUrl: https://api.openai.com/v1
     model: gpt-5.4-mini
+  retrieval:
+    # pgvector >= 0.8: "relaxed_order" keeps walking the HNSW index until the
+    # repository filter has enough rows. "off" is the old behaviour and the
+    # rollback switch; a typo fails the pod at start. Keep the quotes: a bare
+    # off is a YAML boolean.
+    hnswIterativeScan: "off"
+    # Candidates per search stream before fusion.
+    candidateCap: 300
 
 backend:
   replicaCount: 1

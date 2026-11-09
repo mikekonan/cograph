@@ -69,6 +69,10 @@ app.kubernetes.io/instance: {{ .Release.Name }}
   value: {{ .Values.app.gitCheckoutsRoot | quote }}
 - name: COGRAPH_AUTH__SECURE_COOKIES
   value: {{ ternary "true" "false" .Values.app.auth.secureCookies | quote }}
+- name: COGRAPH_RETRIEVAL__HNSW_ITERATIVE_SCAN
+  value: {{ .Values.app.retrieval.hnswIterativeScan | quote }}
+- name: COGRAPH_RETRIEVAL__CANDIDATE_CAP
+  value: {{ .Values.app.retrieval.candidateCap | quote }}
 {{- if .Values.app.embedding.enabled }}
 - name: COGRAPH_EMBEDDING__ENABLED
   value: "true"

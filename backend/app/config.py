@@ -4,6 +4,7 @@ import os
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict, YamlConfigSettingsSource
@@ -193,6 +194,10 @@ class RerankSettings(BaseModel):
 class RetrievalSettings(BaseModel):
     rrf_k: int = Field(default=60, gt=0)
     candidate_cap: int = Field(default=300, gt=0)
+    # pgvector >= 0.8: keep walking the HNSW index until the repository filter
+    # has enough rows. Sent as a connection startup parameter; "off" is the
+    # pre-0.8 behaviour.
+    hnsw_iterative_scan: Literal["off", "relaxed_order", "strict_order"] = "off"
     rerank: RerankSettings = Field(default_factory=RerankSettings)
 
 
