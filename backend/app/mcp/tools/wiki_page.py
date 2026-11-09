@@ -13,7 +13,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from pydantic import BaseModel
 
 from backend.app.mcp.services import (
-    READ_ONLY,
+    read_only,
     MCPServices,
     current_user_from_context,
     resolve_readable_repository_by_slug,
@@ -26,14 +26,11 @@ _WIKI_PAGE_DESCRIPTION = (
     "demand. The body is cut at a line boundary after 12000 characters with "
     "structure preserved; `content_truncated` says whether that happened, and "
     "the fix is to re-read one `section` rather than to retry the page.\n"
-    "Use when: the summarized wiki (the cograph_wiki_tree resource) is too "
-    "terse for a topic and you need a page's prose, diagrams, or code samples "
-    "verbatim. `page` is a wiki slug from that summary's tree; pass `section` "
-    "(a heading from that page's `sections` list) to pull just that section and "
-    "save tokens.\n"
-    "Do NOT use as your first wiki read — start from the summarized wiki "
-    "resource and pull full pages only for the few that warrant depth. Do NOT "
-    "use to search code (use cograph_retrieve / cograph_search_code)."
+    "Use when: you need a generated-wiki page's prose, diagrams, or code "
+    "samples. `page` is a slug from cograph_outline's `wiki_pages`; pass "
+    "`section` (a heading from that page's `sections` list) to pull just that "
+    "section and save tokens.\n"
+    "Do NOT use to search code (use cograph_retrieve / cograph_search_code)."
 )
 
 
@@ -46,7 +43,7 @@ class WikiPageArgs(BaseModel):
 def register(server: MCPServer, services: MCPServices) -> None:
     @server.tool(
         name="cograph_wiki_page",
-        annotations=READ_ONLY,
+        annotations=read_only("Read a wiki page"),
         description=_WIKI_PAGE_DESCRIPTION,
     )
     async def wiki_page(

@@ -176,3 +176,6 @@ def test_every_tool_is_read_only() -> None:
 
     missing = sorted(t.name for t in tools if not (t.annotations and t.annotations.read_only_hint))
     assert not missing, f"tools without readOnlyHint: {missing}"
+    # Clients show the title in tool lists and permission prompts.
+    untitled = sorted(t.name for t in tools if not t.annotations.title)
+    assert not untitled, f"tools without a title: {untitled}"

@@ -17,7 +17,7 @@ from sqlalchemy import func, select
 from backend.app.core.errors import ApiError
 from backend.app.core.md_collection_access import get_readable_md_collection
 from backend.app.mcp.services import (
-    READ_ONLY,
+    read_only,
     MCPServices,
     _mcp_error,
     current_user_from_context,
@@ -33,8 +33,9 @@ _OUTLINE_DESCRIPTION = (
     "Token-cheap structural overview: top-level dirs + wiki page titles for a "
     "repo, OR document titles + heading sketches for an md collection. ≤ 30 "
     "items per section.\n"
-    "Use when: agent has just resolved a repo/collection and needs to know "
-    "what's inside before any retrieval call. One-shot bootstrap.\n"
+    "Use when: you need to see what a repository or collection holds, or a "
+    "wiki page slug for cograph_wiki_page (`wiki_pages`). Optional; skip it "
+    "when you can search directly.\n"
     "Do NOT use to read content (use cograph_repository_readme / "
     "cograph_collection_document) or to search (use cograph_retrieve)."
 )
@@ -50,7 +51,7 @@ class OutlineArgs(BaseModel):
 def register(server: MCPServer, services: MCPServices) -> None:
     @server.tool(
         name="cograph_outline",
-        annotations=READ_ONLY,
+        annotations=read_only("Repository or collection overview"),
         description=_OUTLINE_DESCRIPTION,
     )
     async def outline(

@@ -11,7 +11,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import BaseModel
 
 from backend.app.mcp.services import (
-    READ_ONLY,
+    read_only,
     MCPServices,
     current_user_from_context,
     encode_payload,
@@ -43,7 +43,7 @@ class RepositoryReadmeArgs(BaseModel):
 def register(server: MCPServer, services: MCPServices) -> None:
     @server.tool(
         name="cograph_repository_readme",
-        annotations=READ_ONLY,
+        annotations=read_only("Read a repository README"),
         description=_README_DESCRIPTION,
     )
     async def repository_readme(

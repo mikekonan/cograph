@@ -7,7 +7,7 @@ editLink: false
 
 The exact signature of every tool an agent sees: **14 tools**, generated from the MCP server's own `list_tools()` response, so it cannot drift from the code. Each tool's text is reproduced verbatim — it is what the agent reads when deciding which tool to call.
 
-See [MCP server](/mcp) for connecting a client, the response envelope, the token budget and the built-in playbook.
+See [MCP server](/mcp) for connecting a client, the response envelope, the token budget and the server instructions.
 
 ::: info Where the bounds come from
 The schema an agent receives is derived from the handler signature, so it carries types and defaults but **no** bounds. The bounds column comes from the argument model the server validates against: exceeding one is a validation error, not a silent truncation — with the single exception noted on `cograph_retrieve`.
@@ -23,7 +23,7 @@ Called first, to find out what exists and where to look. Cheap — these return 
 
 List repositories readable by the authenticated MCP user. Returns compound slugs (host/owner/name) and the wiki resource URI. There is no graph resource URI — use cograph_search_code / cograph_read_node / cograph_related for the graph.
 
-Use when: target repo is unknown — start here to enumerate, then feed the slug into the other tools.
+Use when: you know a repository only by name (pass search=name) or need the list; feed the host/owner/name slug into the other tools.
 
 Do NOT use to read a repo's docs (use cograph_repository_readme) or to search inside a repo (use cograph_retrieve / cograph_search_code).
 
@@ -48,11 +48,11 @@ Do NOT use to read a collection's documents (use cograph_collection_document) or
 
 ### `cograph_route`
 
-Locate the repositories and markdown collections most likely to contain the answer to a natural-language query. Returns up to `top_k` candidates per kind with a `score` in [0, 1] and a one-line `why` explanation.
+Rank the repositories and markdown collections most likely to hold the answer to a natural-language query. Returns up to `top_k` candidates per kind with a rough `score` in [0, 1] and a one-line `why`.
 
-Use when: the user's question does NOT name a specific repository or collection — call this first, then fan out to ALL high-confidence candidates (score ≥ 0.7) with cograph_outline / cograph_retrieve. Facts routinely span sources; collapsing to a single candidate is a bug.
+Use when: the question does not name a repository and you do not know which one holds the answer. Optional: skip it when you know the repository. Use the top 1-2 candidates; scores are rough.
 
-Do NOT use when the user already named a slug (skip straight to cograph_outline + cograph_retrieve with `repository=<slug>`), and do NOT use as a substitute for cograph_retrieve — route returns *pointers to sources*, not snippets.
+Do NOT use when the repository is known (go straight to cograph_search_code or cograph_retrieve), and do NOT use instead of cograph_retrieve: route returns pointers to sources, not code.
 
 | Parameter | Type | Required | Default | Bounds |
 | --- | --- | --- | --- | --- |
@@ -63,7 +63,7 @@ Do NOT use when the user already named a slug (skip straight to cograph_outline 
 
 Token-cheap structural overview: top-level dirs + wiki page titles for a repo, OR document titles + heading sketches for an md collection. ≤ 30 items per section.
 
-Use when: agent has just resolved a repo/collection and needs to know what's inside before any retrieval call. One-shot bootstrap.
+Use when: you need to see what a repository or collection holds, or a wiki page slug for cograph_wiki_page (`wiki_pages`). Optional; skip it when you can search directly.
 
 Do NOT use to read content (use cograph_repository_readme / cograph_collection_document) or to search (use cograph_retrieve).
 
@@ -92,15 +92,13 @@ Ranked candidates within one source. Returns snippets, not whole files.
 
 ### `cograph_retrieve`
 
-Hybrid search across code, AST summaries, and repo docs of one repository. Returns query-anchored excerpts with citations and a `total_tokens_estimate` so the agent can self-budget.
+Hybrid search across code, AST summaries, and checked-in docs of one repository. Returns query-anchored excerpts with citations; an excerpt is not the whole code, so read the best one or two hits with cograph_read_node.
 
-`top_k` bounds the number of results (clamped to 25); each result is a distinct hit, so start at the default 10 and only raise it if the answer is genuinely spread across many files.
+`repository` is required, as host/owner/name. Unknown repository: pick one with cograph_repositories or cograph_route. `top_k` bounds the results (clamped to 25); the default 10 is usually enough.
 
-`repository` is required — retrieval is always scoped to a single repository slug. If you don't know which repository holds the answer, call cograph_route first and retrieve from each candidate it returns.
+Use when: a question in words, one topic per call. mode='code' for 'where is X implemented'. mode='wiki' searches the repository's checked-in docs (README, docs/), not the generated wiki. mode='mixed' when unsure.
 
-Use when: the user asks a natural-language question and needs file-anchored snippets back. Pick mode='code' for 'where is X implemented', mode='wiki' for 'what is the auth flow about', mode='mixed' only when the target is unclear.
-
-Do NOT use for symbol-exact lookups (use cograph_search_code) or to read a known node fully (use cograph_read_node).
+Do NOT use for a name from the code (use cograph_search_code) or to read a known node fully (use cograph_read_node).
 
 | Parameter | Type | Required | Default | Bounds |
 | --- | --- | --- | --- | --- |
@@ -124,7 +122,7 @@ Do NOT use for symbol-exact lookups (use cograph_search_code) or to read a known
 
 Lexical + fuzzy symbol search over a repository's code nodes. Returns signatures + line ranges (no body), at most 25 hits, so the agent can pick the right node, then read it with cograph_read_node(node_id=provenance.node_id).
 
-Use when: agent has a probable symbol name (class, function, qualified path) and wants a symbol-exact lookup.
+Use when: you have a name from the code (class, function, qualified path). One identifier per call. `repository` is host/owner/name.
 
 Do NOT use for natural-language questions (use cograph_retrieve with mode=code) or to read a node fully (use cograph_read_node).
 
@@ -138,7 +136,7 @@ Do NOT use for natural-language questions (use cograph_retrieve with mode=code) 
 
 Hybrid search inside one readable markdown collection. Returns query-anchored excerpts (snippet + content_truncated) per chunk with a top-level total_tokens_estimate.
 
-Use when: agent has a known collection_id and a natural-language question targeting markdown content.
+Use when: you have a collection_id and a question for team docs: what a term means, a product rule, why something was decided.
 
 Do NOT use to search code/wiki across repositories (use cograph_retrieve) or to read a chunk fully (use cograph_read_chunk).
 
@@ -192,9 +190,9 @@ Do NOT use to read one function or type (use cograph_read_node — exact body, n
 
 Read ONE generated-wiki page — or a single named section of it — on demand. The body is cut at a line boundary after 12000 characters with structure preserved; `content_truncated` says whether that happened, and the fix is to re-read one `section` rather than to retry the page.
 
-Use when: the summarized wiki (the cograph_wiki_tree resource) is too terse for a topic and you need a page's prose, diagrams, or code samples verbatim. `page` is a wiki slug from that summary's tree; pass `section` (a heading from that page's `sections` list) to pull just that section and save tokens.
+Use when: you need a generated-wiki page's prose, diagrams, or code samples. `page` is a slug from cograph_outline's `wiki_pages`; pass `section` (a heading from that page's `sections` list) to pull just that section and save tokens.
 
-Do NOT use as your first wiki read — start from the summarized wiki resource and pull full pages only for the few that warrant depth. Do NOT use to search code (use cograph_retrieve / cograph_search_code).
+Do NOT use to search code (use cograph_retrieve / cograph_search_code).
 
 | Parameter | Type | Required | Default | Bounds |
 | --- | --- | --- | --- | --- |
@@ -238,7 +236,7 @@ Traverse the caller/callee graph around a code node up to `depth` hops (max 2).
 
 Returns nodes and edges, scoped by `direction` (callers, callees, or both), capped at 50 nodes. `truncated: true` means the neighbourhood exceeded the cap — narrow with `direction` or continue from a more specific node instead of asking for more.
 
-Use when: agent has a known node_id (from cograph_search_code or cograph_retrieve) and needs to trace control flow — what calls it, or what it calls.
+Use when: you have a node_id (from cograph_search_code or cograph_retrieve) and need what calls it or what it calls. If the question is how something is set or used and the hit is only a helper, read its callers; if the hit is a test, read its callees.
 
 Do NOT use to find nodes by name (use cograph_search_code) or to read a node's body (use cograph_read_node).
 

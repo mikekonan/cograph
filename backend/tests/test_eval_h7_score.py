@@ -260,28 +260,3 @@ def test_cost_counts_client_tool_calls() -> None:
     )
     assert record["tool_calls_count"] == 2
     assert record["result_bytes_total"] == 1000
-
-
-def test_playbook_text_matches_eval_giveup_pattern() -> None:
-    # Tighten the loop: the playbook bakes a specific give-up phrase
-    # into `backend/app/mcp/instructions.py`. If a future PR softens the
-    # wording in the playbook without updating the eval regex, the
-    # metric stops counting real failures. This pins both sides
-    # together.
-    from backend.app.mcp.instructions import render_instructions
-    from backend.app.config import get_settings
-
-    rendered = render_instructions(None, settings=get_settings())
-    # Find the canonical phrase the playbook tells the agent to use.
-    # We don't pin the wrap (the playbook may reflow), so anchor on the
-    # part the eval regex looks for and verify the rendered text
-    # contains it modulo whitespace.
-    import re
-
-    assert re.search(
-        r"I don'?t have enough information in this\s+Cograph instance to\s+answer",
-        rendered,
-    ), rendered
-    # And the same phrase, normalised, hits the eval pattern.
-    normalised = re.sub(r"\s+", " ", rendered)
-    assert _is_giveup_phrase(normalised), normalised

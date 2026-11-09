@@ -69,10 +69,8 @@ def register_resources(server: MCPServer, services: MCPServices) -> None:
         mime_type="application/json",
     )
     async def briefing_resource() -> object:
-        # No ACL gate here: the briefing is already inlined into the
-        # `instructions=` payload every initialised MCP client sees. Exposing
-        # the same text as a resource just makes it re-fetchable after a
-        # client drops the system message — same blast radius as today.
+        # No ACL gate here: the briefing is deployment-wide text that every
+        # MCP client used to get inside `instructions=`.
         async with services.session_manager.session() as session:
             row = (
                 await session.execute(

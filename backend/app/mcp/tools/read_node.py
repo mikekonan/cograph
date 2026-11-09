@@ -4,7 +4,8 @@ from mcp.server.mcpserver import Context, MCPServer
 from pydantic import BaseModel, Field
 
 from backend.app.mcp.services import (
-    READ_ONLY,
+    read_only,
+    search_hint,
     MCPServices,
     current_user_from_context,
     encode_payload,
@@ -51,7 +52,8 @@ class ReadNodeArgs(BaseModel):
 def register(server: MCPServer, services: MCPServices) -> None:
     @server.tool(
         name="cograph_read_node",
-        annotations=READ_ONLY,
+        annotations=read_only("Read a code node"),
+        meta=search_hint("read source, show code, function body"),
         description=_READ_NODE_DESCRIPTION,
     )
     async def read_node(

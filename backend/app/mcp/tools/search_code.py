@@ -2,7 +2,8 @@ from mcp.server.mcpserver import Context, MCPServer
 from pydantic import BaseModel, Field, field_validator
 
 from backend.app.mcp.services import (
-    READ_ONLY,
+    read_only,
+    search_hint,
     MCPServices,
     count_response_results,
     current_user_from_context,
@@ -39,14 +40,18 @@ class SearchCodeToolArgs(BaseModel):
 def register(server: MCPServer, services: MCPServices) -> None:
     @server.tool(
         name="cograph_search_code",
-        annotations=READ_ONLY,
+        annotations=read_only("Find code by name"),
+        meta=search_hint(
+            "find function, class, method, type, symbol, identifier, definition"
+        ),
         description=(
             "Lexical + fuzzy symbol search over a repository's code nodes. "
             "Returns signatures + line ranges (no body), at most 25 hits, so "
             "the agent can pick the right node, then read it with "
             "cograph_read_node(node_id=provenance.node_id).\n"
-            "Use when: agent has a probable symbol name (class, function, "
-            "qualified path) and wants a symbol-exact lookup.\n"
+            "Use when: you have a name from the code (class, function, "
+            "qualified path). One identifier per call. `repository` is "
+            "host/owner/name.\n"
             "Do NOT use for natural-language questions (use cograph_retrieve "
             "with mode=code) or to read a node fully (use cograph_read_node)."
         ),

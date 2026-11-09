@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from backend.app.mcp.services import (
-    READ_ONLY,
+    read_only,
     MCPServices,
     current_user_from_context,
     encode_payload,
@@ -50,7 +50,7 @@ class ReadFileRangeArgs(BaseModel):
 def register(server: MCPServer, services: MCPServices) -> None:
     @server.tool(
         name="cograph_read_file_range",
-        annotations=READ_ONLY,
+        annotations=read_only("Read file lines"),
         description=_READ_FILE_RANGE_DESCRIPTION,
     )
     async def read_file_range(

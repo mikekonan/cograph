@@ -5,7 +5,8 @@ from pydantic import BaseModel, Field
 
 from backend.app.graph.traversal import TraversalDirection
 from backend.app.mcp.services import (
-    READ_ONLY,
+    read_only,
+    search_hint,
     MCPServices,
     current_user_from_context,
     encode_payload,
@@ -29,7 +30,10 @@ class RelatedToolArgs(BaseModel):
 def register(server: MCPServer, services: MCPServices) -> None:
     @server.tool(
         name="cograph_related",
-        annotations=READ_ONLY,
+        annotations=read_only("Callers and callees"),
+        meta=search_hint(
+            "callers, callees, who calls, usages, references, call graph"
+        ),
         description=(
             "Traverse the caller/callee graph around a code node up to "
             "`depth` hops (max 2).\n"
@@ -38,9 +42,11 @@ def register(server: MCPServer, services: MCPServices) -> None:
             "means the neighbourhood exceeded the cap — narrow with "
             "`direction` or continue from a more specific node instead "
             "of asking for more.\n"
-            "Use when: agent has a known node_id (from cograph_search_code "
-            "or cograph_retrieve) and needs to trace control flow — what "
-            "calls it, or what it calls.\n"
+            "Use when: you have a node_id (from cograph_search_code or "
+            "cograph_retrieve) and need what calls it or what it calls. If "
+            "the question is how something is set or used and the hit is "
+            "only a helper, read its callers; if the hit is a test, read "
+            "its callees.\n"
             "Do NOT use to find nodes by name (use cograph_search_code) or "
             "to read a node's body (use cograph_read_node)."
         ),

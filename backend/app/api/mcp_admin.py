@@ -24,22 +24,17 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.app.config import Settings
 from backend.app.core.deps import (
     get_db_session,
-    get_settings_dep,
     require_admin_or_owner,
     require_csrf,
 )
-from backend.app.mcp.instructions import refresh_cached_instructions
 from backend.app.models.mcp_operator_briefing import McpOperatorBriefing
 from backend.app.models.user import User
 
 router = APIRouter(prefix="/admin/mcp", tags=["admin-mcp"])
 
-# Same cap as the column / Settings.mcp.briefing_max_length; defended
-# at the API layer too so an oversized PATCH 400s instead of choking
-# on the playbook render.
+# Same cap as the column, checked here too so an oversized PATCH 400s.
 _BRIEFING_MAX_LENGTH = 8000
 
 
@@ -111,7 +106,6 @@ async def update_mcp_briefing(
     payload: McpBriefingPatchRequest,
     session: AsyncSession = Depends(get_db_session),
     actor: User = Depends(require_admin_or_owner),
-    settings: Settings = Depends(get_settings_dep),
     _csrf: User = Depends(require_csrf),
 ) -> McpBriefingResponse:
     del _csrf
@@ -120,9 +114,4 @@ async def update_mcp_briefing(
     row.updated_by_user_id = actor.id
     await session.commit()
     await session.refresh(row)
-    # Push the new briefing into the in-process cache the MCP server reads
-    # at `initialize`. Without this, agents would keep seeing the previous
-    # briefing until the next process restart — which is the kind of silent
-    # staleness operators end up debugging via "did you bounce the pod".
-    await refresh_cached_instructions(session, settings=settings)
     return await _serialize(session, row)

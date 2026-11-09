@@ -159,9 +159,8 @@ notes or to declare the exact page list, which bypasses automatic planning
 entirely. Caps on note count and length are fixed. See
 [the wiki page](/wiki#steering).
 
-You can also edit the agent-facing briefing at `/admin?tab=mcp` to tell agents what
-this deployment is for. Generated page bodies are not hand-editable — they are
-rewritten when their sources change.
+Generated page bodies are not hand-editable — they are rewritten when their
+sources change.
 
 ## Can I limit which MCP tools an agent gets?
 

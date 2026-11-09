@@ -2,7 +2,8 @@ from mcp.server.mcpserver import Context, MCPServer
 from pydantic import BaseModel, Field, field_validator
 
 from backend.app.mcp.services import (
-    READ_ONLY,
+    read_only,
+    search_hint,
     MCPServices,
     current_user_from_context,
     encode_payload,
@@ -27,14 +28,16 @@ class RepositoriesToolArgs(BaseModel):
 def register(server: MCPServer, services: MCPServices) -> None:
     @server.tool(
         name="cograph_repositories",
-        annotations=READ_ONLY,
+        annotations=read_only("List repositories"),
+        meta=search_hint("which repository, find repo, list repos, where does it live"),
         description=(
             "List repositories readable by the authenticated MCP user. Returns "
             "compound slugs (host/owner/name) and the wiki resource URI. There "
             "is no graph resource URI — use cograph_search_code / "
             "cograph_read_node / cograph_related for the graph.\n"
-            "Use when: target repo is unknown — start here to enumerate, then "
-            "feed the slug into the other tools.\n"
+            "Use when: you know a repository only by name (pass "
+            "search=name) or need the list; feed the host/owner/name slug "
+            "into the other tools.\n"
             "Do NOT use to read a repo's docs (use cograph_repository_readme) "
             "or to search inside a repo (use cograph_retrieve / cograph_search_code)."
         ),

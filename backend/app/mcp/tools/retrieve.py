@@ -6,7 +6,8 @@ from mcp.server.mcpserver import Context, MCPServer
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from backend.app.mcp.services import (
-    READ_ONLY,
+    read_only,
+    search_hint,
     MCPServices,
     count_response_results,
     current_user_from_context,
@@ -39,20 +40,18 @@ _MODE_TO_LAYERS: dict[RetrieveMode, set[RetrievalLayer]] = {
 }
 
 _RETRIEVE_DESCRIPTION = (
-    "Hybrid search across code, AST summaries, and repo docs of one repository. "
-    "Returns query-anchored excerpts with citations and a "
-    "`total_tokens_estimate` so the agent can self-budget.\n"
-    "`top_k` bounds the number of results (clamped to 25); each result is a "
-    "distinct hit, so start at the default 10 and only raise it if the answer "
-    "is genuinely spread across many files.\n"
-    "`repository` is required — retrieval is always scoped to a single "
-    "repository slug. If you don't know which repository holds the answer, "
-    "call cograph_route first and retrieve from each candidate it returns.\n"
-    "Use when: the user asks a natural-language question and needs "
-    "file-anchored snippets back. Pick mode='code' for "
-    "'where is X implemented', mode='wiki' for 'what is the auth flow about', "
-    "mode='mixed' only when the target is unclear.\n"
-    "Do NOT use for symbol-exact lookups (use cograph_search_code) or "
+    "Hybrid search across code, AST summaries, and checked-in docs of one "
+    "repository. Returns query-anchored excerpts with citations; an excerpt "
+    "is not the whole code, so read the best one or two hits with "
+    "cograph_read_node.\n"
+    "`repository` is required, as host/owner/name. Unknown repository: pick "
+    "one with cograph_repositories or cograph_route. `top_k` bounds the "
+    "results (clamped to 25); the default 10 is usually enough.\n"
+    "Use when: a question in words, one topic per call. mode='code' for "
+    "'where is X implemented'. mode='wiki' searches the repository's "
+    "checked-in docs (README, docs/), not the generated wiki. mode='mixed' "
+    "when unsure.\n"
+    "Do NOT use for a name from the code (use cograph_search_code) or "
     "to read a known node fully (use cograph_read_node)."
 )
 
@@ -118,7 +117,11 @@ class RetrieveToolArgs(BaseModel):
 def register(server: MCPServer, services: MCPServices) -> None:
     @server.tool(
         name="cograph_retrieve",
-        annotations=READ_ONLY,
+        annotations=read_only("Search code and docs by meaning"),
+        meta=search_hint(
+            "semantic search, how does, where is implemented, "
+            "find code by meaning, explain"
+        ),
         description=_RETRIEVE_DESCRIPTION,
     )
     async def retrieve(
