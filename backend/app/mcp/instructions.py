@@ -28,7 +28,7 @@ DEFAULT_BRIEFING = """\
 This Cograph deployment hasn't been customised yet.
 
 Cite every claim with `file_path:start_line-end_line` or `wiki/<slug>`
-taken from the `provenance` block. If you cannot cite, the correct
+as given in the result. If you cannot cite, the correct
 answer is "I don't have enough information in this Cograph instance to
 answer."
 
