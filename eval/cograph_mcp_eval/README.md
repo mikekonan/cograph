@@ -51,6 +51,46 @@ paid for it.
         .claude/commands/cograph-eval.md
   ```
 
+- `live_run.py` - runs a real agent (`claude -p`) once per question, run
+  and text variant, and prints a per-question table. See "Live run".
+- `proxy.py` - stdio MCP proxy the live run puts between the agent and the
+  server, to swap instructions and tool descriptions.
+- `live_questions.yaml` - six live-run questions on open repositories.
+
+## Live run
+
+The skill flow above trusts the agent to report its own calls. The live run
+does not: each answer comes from a fresh `claude -p` process, and calls,
+result bytes and the answer are read from its event stream. It is the gate
+for a change to the server instructions or tool descriptions.
+
+```bash
+# The backend venv has the mcp package the proxy needs.
+COGRAPH_MCP_URL=http://localhost:8000/mcp COGRAPH_MCP_TOKEN=<PAT> \
+backend/.venv/bin/python -m eval.cograph_mcp_eval.live_run \
+    --variant old --variant new=path/to/new.yaml --runs 3 --out /tmp/live
+```
+
+- **Variants.** `old` without a file keeps the server's own text. A variant
+  file is YAML with `instructions` and/or `tools: {<name>: {description: …}}`.
+  Both variants run against the same server build, so only the text differs.
+  A tool name the server does not have stops the run.
+- **Isolation.** The agent starts with `--setting-sources ""` (no plugins,
+  hooks or CLAUDE.md) and only `Read`, `Grep`, `Glob` and read-only `Bash`
+  besides the Cograph tools. The token reaches the proxy through the
+  environment, never a file.
+- **Table.** One row per question and variant: correct answers, runs that
+  `reached` the answer (one tool result held both `expected_location` strings),
+  runs that cited the expected file, median calls and KB, calls per tool.
+  Compare rows, not averages: a new text can help one question and break another.
+- **Questions.** `live_questions.yaml` needs `github.com/mikekonan/cograph`,
+  `github.com/samber/lo` and `github.com/samber/mo` indexed. `cwd` sets the
+  agent's working directory, so a question can have the repository on disk or
+  not. Pass your own set with `--questions`; keep a private set and its
+  `--out` outside this repository.
+- **Cost.** Real model tokens: one agent session per question × run × variant.
+  `--claude-args "--model <name>"` picks the model.
+
 ## How to run
 
 ### Preconditions

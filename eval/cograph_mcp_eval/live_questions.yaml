@@ -1,0 +1,72 @@
+# Live-run question set: a real agent answers each question in a fresh process.
+#
+# Same fields as questions.yaml, plus:
+#   expected_location  {file, symbol}: where the answer lives. "reached" is true
+#                      when one tool result holds both strings. No line numbers:
+#                      they move with every commit.
+#   cwd                Working directory of the agent, relative to this file or
+#                      absolute. Absent: an empty temporary directory, i.e. the
+#                      repository is not on disk.
+#
+# Assumes the repositories at their default-branch HEAD are indexed:
+#   github.com/mikekonan/cograph, github.com/samber/lo, github.com/samber/mo
+
+questions:
+  # The symbol is named; the repository is not on disk.
+  - id: mo-option-orelse
+    category: symbol_lookup
+    question: "In samber/mo, what does Option.OrElse return when the option is empty?"
+    expected_answer_keywords: ["fallback"]
+    expected_provenance: ["option.go"]
+    expected_location: {file: option.go, symbol: OrElse}
+    negative: false
+
+  # No symbol named: only the behaviour is described.
+  - id: lo-split-into-groups
+    category: feature_flow
+    question: "How does samber/lo split a slice into groups of a fixed size? Name the function."
+    expected_answer_keywords: ["Chunk"]
+    expected_provenance: ["slice.go"]
+    expected_location: {file: slice.go, symbol: "func Chunk"}
+    negative: false
+
+  # The answer is in the function the named one calls.
+  - id: lo-must-false-message
+    category: feature_flow
+    question: >-
+      In samber/lo, what panic message does lo.Must produce when err is false
+      and no message is given?
+    expected_answer_keywords: ["not ok"]
+    expected_provenance: ["errors.go"]
+    expected_location: {file: errors.go, symbol: MustChecker}
+    negative: false
+
+  # Nothing to find.
+  - id: mo-http-retry
+    category: negative
+    question: "Where does samber/mo retry HTTP requests with exponential backoff?"
+    expected_answer_keywords: ["does not", "doesn't", "no such", "not found"]
+    expected_provenance: []
+    negative: true
+
+  # Zone: the repository is the working directory and is named.
+  - id: cograph-fusion-named
+    category: zone
+    question: "In mikekonan/cograph, which function fuses the rankings of the search streams?"
+    expected_answer_keywords: ["rrf_merge_streams"]
+    expected_provenance: ["fusion.py"]
+    expected_location: {file: fusion.py, symbol: rrf_merge_streams}
+    cwd: ../..
+    negative: false
+
+  # Zone: the repository is the working directory, its name is not given.
+  - id: cograph-rerank-skip-unnamed
+    category: zone
+    question: >-
+      Where does this project skip reranking because an exact symbol match is
+      already near the top, and how many top results does it check?
+    expected_answer_keywords: ["3"]
+    expected_provenance: ["router.py"]
+    expected_location: {file: router.py, symbol: _has_exact_symbol_match}
+    cwd: ../..
+    negative: false
