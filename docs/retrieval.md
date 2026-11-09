@@ -100,7 +100,7 @@ score(candidate) = Σ over streams  1 / (k + rank_in_stream)
 ```
 
 `k` is `retrieval.rrf_k`, default `60`. Each stream is truncated to
-`retrieval.candidate_cap` (default `300`) *before* fusion. Ties break
+`retrieval.candidate_cap` (default `100`) *before* fusion. Ties break
 deterministically on chunk id, so the same query returns the same order.
 
 RRF is used rather than score normalisation because the three streams produce

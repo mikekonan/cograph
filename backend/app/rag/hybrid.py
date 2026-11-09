@@ -140,7 +140,7 @@ class VectorRetriever:
         if store == "code":
             if repository_id is None:
                 return []
-            return await self._code(
+            hits = await self._code(
                 session,
                 qvec,
                 repository_id,
@@ -149,10 +149,10 @@ class VectorRetriever:
                 since=since,
                 until=until,
             )
-        if store == "repo_docs":
+        elif store == "repo_docs":
             if repository_id is None:
                 return []
-            return await self._repo_docs(
+            hits = await self._repo_docs(
                 session,
                 qvec,
                 repository_id,
@@ -161,10 +161,10 @@ class VectorRetriever:
                 since=since,
                 until=until,
             )
-        if store == "md_collections":
+        elif store == "md_collections":
             if collection_id is None:
                 return []
-            return await self._md_collections(
+            hits = await self._md_collections(
                 session,
                 qvec,
                 collection_id,
@@ -173,7 +173,12 @@ class VectorRetriever:
                 since=since,
                 until=until,
             )
-        raise ValueError(f"unknown store: {store!r}")
+        else:
+            raise ValueError(f"unknown store: {store!r}")
+        # hnsw.iterative_scan = relaxed_order returns rows only roughly by
+        # distance, and RRF ranks by position: restore the order here.
+        hits.sort(key=lambda hit: hit.score, reverse=True)
+        return hits
 
     async def _code(
         self,
@@ -386,7 +391,7 @@ class HybridRetriever:
         reranker: _Reranker,
         router: _Router,
         rrf_k: int = 60,
-        candidate_cap: int = 300,
+        candidate_cap: int = 100,
     ) -> None:
         self.vector = vector
         self.lexical = lexical

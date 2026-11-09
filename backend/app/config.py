@@ -193,11 +193,12 @@ class RerankSettings(BaseModel):
 
 class RetrievalSettings(BaseModel):
     rrf_k: int = Field(default=60, gt=0)
-    candidate_cap: int = Field(default=300, gt=0)
+    # Each extra candidate is more of the HNSW walk once iterative scan is on.
+    candidate_cap: int = Field(default=100, gt=0)
     # pgvector >= 0.8: keep walking the HNSW index until the repository filter
-    # has enough rows. Sent as a connection startup parameter; "off" is the
-    # pre-0.8 behaviour.
-    hnsw_iterative_scan: Literal["off", "relaxed_order", "strict_order"] = "off"
+    # has enough rows. Sent as a connection startup parameter. "off" is the
+    # pre-0.8 behaviour and the rollback switch.
+    hnsw_iterative_scan: Literal["off", "relaxed_order", "strict_order"] = "relaxed_order"
     rerank: RerankSettings = Field(default_factory=RerankSettings)
 
 

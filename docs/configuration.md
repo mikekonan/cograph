@@ -210,8 +210,8 @@ The timeouts here apply to the wiki and summary providers even in database mode.
 | Setting | Env suffix | Default |
 | --- | --- | --- |
 | `rrf_k` | `RETRIEVAL__RRF_K` | `60` |
-| `candidate_cap` | `RETRIEVAL__CANDIDATE_CAP` | `300` |
-| `hnsw_iterative_scan` | `RETRIEVAL__HNSW_ITERATIVE_SCAN` | `off` |
+| `candidate_cap` | `RETRIEVAL__CANDIDATE_CAP` | `100` |
+| `hnsw_iterative_scan` | `RETRIEVAL__HNSW_ITERATIVE_SCAN` | `relaxed_order` |
 | `rerank.enabled` | `RETRIEVAL__RERANK__ENABLED` | `true` |
 | `rerank.threshold` | `RETRIEVAL__RERANK__THRESHOLD` | `50` |
 | `rerank.provider` | `RETRIEVAL__RERANK__PROVIDER` | `disabled` |
@@ -224,7 +224,9 @@ candidate count below which reranking is skipped as not worth the latency.
 `hnsw_iterative_scan` is pgvector's `hnsw.iterative_scan` (pgvector 0.8 or
 newer): `off`, `relaxed_order` or `strict_order`. All repositories share one
 HNSW index and the repository filter applies after the index walk, so with `off`
-a large repository can get few or no vector candidates. Cograph sends it as a
+a large repository can get few or no vector candidates. `relaxed_order` keeps
+walking the index until the filter has `candidate_cap` rows; Cograph re-sorts them
+by score. `off` is the rollback switch. Cograph sends it as a
 connection startup parameter, together with the statement timeout and TCP
 keepalives. Postgres does not reject a wrong value there, it falls back to `off`;
 the setting accepts only the three values, so a typo fails at startup instead.

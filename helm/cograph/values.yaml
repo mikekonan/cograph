@@ -35,9 +35,9 @@ app:
     # repository filter has enough rows. "off" is the old behaviour and the
     # rollback switch; a typo fails the pod at start. Keep the quotes: a bare
     # off is a YAML boolean.
-    hnswIterativeScan: "off"
+    hnswIterativeScan: "relaxed_order"
     # Candidates per search stream before fusion.
-    candidateCap: 300
+    candidateCap: 100
 
 backend:
   replicaCount: 1
