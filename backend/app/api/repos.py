@@ -458,6 +458,7 @@ async def create_repository(
     current_user: User = Depends(require_admin),
     _csrf: User = Depends(require_csrf),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    settings: Settings = Depends(get_settings_dep),
 ) -> RepositoryResponse | JSONResponse:
     del _csrf
 
@@ -510,21 +511,12 @@ async def create_repository(
     if payload.name:
         name = payload.name
 
-    # Resolve the concrete branch BEFORE inserting so the unique constraint on
-    # (git_url, branch) is evaluated against the real value, not a "main"
-    # placeholder.  When the caller omits branch, probe the remote's HEAD ref;
-    # fall back to "main" only if the probe times out or fails.
-    if payload.branch:
-        branch = payload.branch
-    else:
-        branch = _detect_default_branch(payload.git_url)
-
     # Resolve git host: explicit `host_id` wins; otherwise look up the
     # registered host (Phase 30.5) for this URL's hostname. We don't 404
     # when no host is registered — clones still work for public repos
     # via the legacy "no credential" code path. The FK is nullable
     # specifically for that case.
-    from backend.app.git.credentials import resolve_host_for_url
+    from backend.app.git.credentials import default_clone_token, resolve_host_for_url
     from backend.app.models.git_host import GitHost
 
     host_id_resolved: UUID | None = payload.host_id
@@ -547,6 +539,19 @@ async def create_repository(
         registered = await resolve_host_for_url(payload.git_url, session=session)
         if registered is not None:
             host_id_resolved = registered.id
+
+    # Resolve the concrete branch BEFORE inserting so the unique constraint on
+    # (git_url, branch) is evaluated against the real value, not a "main"
+    # placeholder.  When the caller omits branch, probe the remote's HEAD ref
+    # with the host's token (a private repo answers nothing without it); fall
+    # back to "main" only if the probe times out or fails.
+    if payload.branch:
+        branch = payload.branch
+    else:
+        token = await default_clone_token(
+            host_id_resolved, session=session, settings=settings
+        )
+        branch = _detect_default_branch(payload.git_url, plaintext_token=token)
 
     repository = Repository(
         git_url=payload.git_url,
@@ -589,28 +594,31 @@ async def create_repository(
             409, "CONFLICT", "A conflicting repository already exists"
         ) from exc
 
-    response_obj = await _build_repository_response(
-        session=session, repository=repository
-    )
-
-    # Use INITIAL trigger for the first-ever sync of this repository so the
-    # JobsPage renders the correct "initial index" icon.  Subsequent reindexes
-    # (triggered manually or via schedule/webhook) keep MANUAL.
-    prior_batch_count: int = (
-        await session.scalar(
-            select(func.count(SyncBatch.id)).where(
-                SyncBatch.repository_id == repository.id
-            )
-        )
-    ) or 0
-    trigger_kind = (
-        RepoSyncTriggerKind.INITIAL
-        if prior_batch_count == 0
-        else RepoSyncTriggerKind.MANUAL
-    )
-
-    orchestrator = await _resolve_repo_sync_orchestrator(request)
+    # From here on the row exists. Any failure must leave it in ERROR with a
+    # message, not in PENDING with no run to explain why.
+    repository_id = repository.id
     try:
+        response_obj = await _build_repository_response(
+            session=session, repository=repository
+        )
+
+        # Use INITIAL trigger for the first-ever sync of this repository so the
+        # JobsPage renders the correct "initial index" icon.  Subsequent reindexes
+        # (triggered manually or via schedule/webhook) keep MANUAL.
+        prior_batch_count: int = (
+            await session.scalar(
+                select(func.count(SyncBatch.id)).where(
+                    SyncBatch.repository_id == repository.id
+                )
+            )
+        ) or 0
+        trigger_kind = (
+            RepoSyncTriggerKind.INITIAL
+            if prior_batch_count == 0
+            else RepoSyncTriggerKind.MANUAL
+        )
+
+        orchestrator = await _resolve_repo_sync_orchestrator(request)
         await orchestrator.enqueue_repository_sync(
             session=session,
             repository_id=repository.id,
@@ -624,6 +632,10 @@ async def create_repository(
     except JobEnqueueError as exc:
         await _mark_repository_error(session, repository.id, exc)
         raise ApiError(503, "SERVICE_UNAVAILABLE", str(exc)) from exc
+    except Exception as exc:
+        await session.rollback()
+        await _mark_repository_error(session, repository_id, exc)
+        raise
 
     # Persist idempotency payload so replays return the same body.
     if idem_record is not None and not idem_record.is_replay:
