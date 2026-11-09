@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 from backend.app.graph.traversal import TraversalDirection
 from backend.app.mcp.services import (
+    READ_ONLY,
     MCPServices,
     current_user_from_context,
     encode_payload,
@@ -28,6 +29,7 @@ class RelatedToolArgs(BaseModel):
 def register(server: MCPServer, services: MCPServices) -> None:
     @server.tool(
         name="cograph_related",
+        annotations=READ_ONLY,
         description=(
             "Traverse the caller/callee graph around a code node up to "
             "`depth` hops (max 2).\n"

@@ -163,3 +163,16 @@ def test_retrieve_marks_repository_as_required() -> None:
         "cograph_retrieve must require `repository` — optional-in-schema "
         f"but required-at-runtime is a guaranteed 422. Got: {schema.get('required')}"
     )
+
+
+def test_every_tool_is_read_only() -> None:
+    # Clients run read-only tools in parallel. A tool without the hint is
+    # called one at a time, and every search the agent fans out waits.
+    import asyncio
+
+    services, _ = build_mcp_services()
+    server = create_mcp_server(services=services)
+    tools = asyncio.run(server.list_tools())
+
+    missing = sorted(t.name for t in tools if not (t.annotations and t.annotations.read_only_hint))
+    assert not missing, f"tools without readOnlyHint: {missing}"

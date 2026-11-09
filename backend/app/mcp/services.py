@@ -10,6 +10,7 @@ from uuid import UUID
 
 from fastapi.encoders import jsonable_encoder
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -62,6 +63,11 @@ from backend.app.wiki.compact import (
     extract_sections,
     truncate_markdown,
 )
+
+
+# Every tool only reads. Clients run read-only tools in parallel; without the
+# hint they call them one by one.
+READ_ONLY = ToolAnnotations(readOnlyHint=True)
 
 
 @dataclass(slots=True, kw_only=True)

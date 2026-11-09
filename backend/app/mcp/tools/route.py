@@ -16,6 +16,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from pydantic import BaseModel, Field
 
 from backend.app.mcp.services import (
+    READ_ONLY,
     MCPServices,
     current_user_from_context,
     encode_payload,
@@ -57,7 +58,7 @@ def _hit_payload(hit: RouteHit) -> dict[str, object]:
 
 
 def register(server: MCPServer, services: MCPServices) -> None:
-    @server.tool(name="cograph_route", description=_DESCRIPTION)
+    @server.tool(name="cograph_route", description=_DESCRIPTION, annotations=READ_ONLY)
     async def route(
         query: str,
         top_k: int = 3,

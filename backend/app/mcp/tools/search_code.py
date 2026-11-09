@@ -2,6 +2,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from pydantic import BaseModel, Field, field_validator
 
 from backend.app.mcp.services import (
+    READ_ONLY,
     MCPServices,
     count_response_results,
     current_user_from_context,
@@ -38,6 +39,7 @@ class SearchCodeToolArgs(BaseModel):
 def register(server: MCPServer, services: MCPServices) -> None:
     @server.tool(
         name="cograph_search_code",
+        annotations=READ_ONLY,
         description=(
             "Lexical + fuzzy symbol search over a repository's code nodes. "
             "Returns signatures + line ranges (no body), at most 25 hits, so "

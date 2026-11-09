@@ -6,6 +6,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from backend.app.mcp.services import (
+    READ_ONLY,
     MCPServices,
     count_response_results,
     current_user_from_context,
@@ -117,6 +118,7 @@ class RetrieveToolArgs(BaseModel):
 def register(server: MCPServer, services: MCPServices) -> None:
     @server.tool(
         name="cograph_retrieve",
+        annotations=READ_ONLY,
         description=_RETRIEVE_DESCRIPTION,
     )
     async def retrieve(

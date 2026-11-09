@@ -13,6 +13,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from pydantic import BaseModel
 
 from backend.app.mcp.services import (
+    READ_ONLY,
     MCPServices,
     current_user_from_context,
     resolve_readable_repository_by_slug,
@@ -45,6 +46,7 @@ class WikiPageArgs(BaseModel):
 def register(server: MCPServer, services: MCPServices) -> None:
     @server.tool(
         name="cograph_wiki_page",
+        annotations=READ_ONLY,
         description=_WIKI_PAGE_DESCRIPTION,
     )
     async def wiki_page(

@@ -17,6 +17,7 @@ from sqlalchemy import func, select
 from backend.app.core.errors import ApiError
 from backend.app.core.md_collection_access import get_readable_md_collection
 from backend.app.mcp.services import (
+    READ_ONLY,
     MCPServices,
     _mcp_error,
     current_user_from_context,
@@ -49,6 +50,7 @@ class OutlineArgs(BaseModel):
 def register(server: MCPServer, services: MCPServices) -> None:
     @server.tool(
         name="cograph_outline",
+        annotations=READ_ONLY,
         description=_OUTLINE_DESCRIPTION,
     )
     async def outline(
