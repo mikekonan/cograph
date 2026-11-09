@@ -38,7 +38,10 @@ def _tsquery_operand(term: str) -> str:
     # Quoted, so `to_tsquery` hands the term to the parser that built the
     # index: `a.b`, `a-b`, `a_b` split the way the code did, and `&|!():*`
     # stay text.
-    return "'" + term.replace("\\", "\\\\").replace("'", "''") + "'"
+    quoted = "'" + term.replace("\\", "\\\\").replace("'", "''") + "'"
+    # Prefix match from 5 characters: `label` finds `labels`. A shorter
+    # prefix matches too many words.
+    return quoted + ":*" if len(term) >= 5 else quoted
 
 
 def _bind_temporal(stmt: TextClause) -> TextClause:

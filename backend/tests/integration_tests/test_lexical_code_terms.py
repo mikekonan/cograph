@@ -90,6 +90,14 @@ async def test_all_words_rank_first_one_word_still_found(pg_session) -> None:
     assert "shipping/label.go#module" not in names
 
 
+async def test_long_word_matches_as_prefix_short_word_does_not(pg_session) -> None:
+    repo_id = await _seed(pg_session)
+    await _node(pg_session, repo_id, "shipping.Pack", "func Pack() {\n\t// labels for shipments\n}")
+
+    assert "shipping.Pack" in await _names(pg_session, repo_id, "label")
+    assert "shipping.Pack" not in await _names(pg_session, repo_id, "ship")
+
+
 # (query, expected names, or None when any answer will do)
 _HOSTILE = [
     pytest.param("it's \"quoted\" `parcel`", None, id="quotes"),
