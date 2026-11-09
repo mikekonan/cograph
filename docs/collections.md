@@ -364,8 +364,8 @@ Four of the fourteen MCP tools:
 | --- | --- |
 | `cograph_collections` | List readable collections |
 | `cograph_collection_search` | Hybrid search inside one collection |
-| `cograph_collection_document` | One full document plus parsed metadata, untruncated |
-| `cograph_read_chunk` | One chunk in full |
+| `cograph_collection_document` | One full document plus parsed metadata; past 12 000 characters, cut on a chunk boundary with the next chunk named |
+| `cograph_read_chunk` | One chunk in full, and the id of the next one |
 
 Collections are also first-class in `cograph_route`, scored in their own pool —
 and always returned up to the requested count even at low confidence, because a

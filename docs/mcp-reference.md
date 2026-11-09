@@ -202,7 +202,7 @@ Do NOT use to search code (use cograph_retrieve / cograph_search_code).
 
 ### `cograph_collection_document`
 
-Read one full markdown collection document with parsed metadata (headings, code blocks, tables, links). No truncation.
+Read one full markdown collection document with parsed metadata (headings, code blocks, tables, links). A document over 12000 characters is cut on a chunk boundary, without the metadata; continue with cograph_read_chunk(next_chunk_id).
 
 Use when: agent has a known document_id from a prior cograph_collection_search / cograph_outline call.
 
