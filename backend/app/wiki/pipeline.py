@@ -896,18 +896,23 @@ async def write_pages(
     traversal = GraphTraversalService()
 
     async def _fetch_bundle(spec: PageSpec) -> PageBundle:
+        # Pages run in parallel, so every DB read here and in `_edit_one`
+        # takes its own session from `factory`. One shared session breaks
+        # under concurrent use (each search stream opens a savepoint on it),
+        # and the error kills the whole sync job.
         try:
-            return await retriever.for_page(
-                session=session,
-                repository_id=repository_id,
-                purpose=spec.purpose,
-                sources_hint=spec.sources_hint,
-                code_top_k=config.code_top_k,
-                docs_top_k=config.docs_top_k,
-                graph_pivot_top_k=config.graph_pivot_top_k,
-                domain_concepts=list(overview.business_context.domain_concepts),
-                business_confidence=overview.business_context.confidence,
-            )
+            async with factory() as page_session:
+                return await retriever.for_page(
+                    session=page_session,
+                    repository_id=repository_id,
+                    purpose=spec.purpose,
+                    sources_hint=spec.sources_hint,
+                    code_top_k=config.code_top_k,
+                    docs_top_k=config.docs_top_k,
+                    graph_pivot_top_k=config.graph_pivot_top_k,
+                    domain_concepts=list(overview.business_context.domain_concepts),
+                    business_confidence=overview.business_context.confidence,
+                )
         except Exception as exc:
             logger.warning(
                 "write_pages: retrieval failed for slug=%s (%s); using empty bundle",
@@ -1146,9 +1151,10 @@ async def write_pages(
         bundle_qns = {c.qualified_name for c in bundle.code_chunks if c.qualified_name}
 
         # Live state of the symbols the page cited → dead / changed buckets.
-        current_by_qn = await _fetch_nodes_by_qn(
-            session, repository_id=repository_id, qns=old_qns
-        )
+        async with factory() as page_session:
+            current_by_qn = await _fetch_nodes_by_qn(
+                page_session, repository_id=repository_id, qns=old_qns
+            )
         stored_hashes = record.cited_content_hashes or {}
         # Cited symbols but no content-hash snapshot ⇒ we can't tell which
         # bodies moved, so we can't scope a safe edit. Post-0063 writes always
@@ -1207,9 +1213,10 @@ async def write_pages(
 
         new_qns = sorted(bundle_qns - old_qns)[:_EDIT_NEW_SYMBOL_CAP]
 
-        surviving_doc_paths = await _fetch_live_doc_paths(
-            session, repository_id=repository_id, paths=old_doc_paths
-        )
+        async with factory() as page_session:
+            surviving_doc_paths = await _fetch_live_doc_paths(
+                page_session, repository_id=repository_id, paths=old_doc_paths
+            )
         ledger = _seed_edit_ledger(
             bundle=bundle,
             surviving_node_qns=[qn for qn in old_qns if qn in current_by_qn],

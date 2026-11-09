@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock
 from uuid import UUID
 
@@ -248,6 +249,51 @@ async def test_write_pages_continues_when_retrieval_raises() -> None:
     assert failures == []
     assert len(drafts) == 1
     assert drafts[0].slug == "index"
+
+
+async def test_write_pages_page_retrieval_takes_its_own_session() -> None:
+    """Pages run in parallel. A session shared between them breaks under
+    concurrent use and kills the sync job, so each retrieval must take a
+    session from the factory, never the bound one."""
+    plan = _plan("index", "architecture")
+    shared = object()
+    opened: list[object] = []
+
+    @asynccontextmanager
+    async def factory():
+        page_session = object()
+        opened.append(page_session)
+        yield page_session
+
+    seen: list[object] = []
+    retriever = _stub_retriever()
+    stub_for_page = retriever.for_page.side_effect
+
+    async def for_page(*, session, **kwargs):
+        seen.append(session)
+        return await stub_for_page(**kwargs)
+
+    retriever.for_page.side_effect = for_page
+
+    fake = FakeStructuredProvider()
+    for _ in plan.pages:
+        fake.queue_tool_turn(tool_uses=[("write_page", {"markdown": "# P\n\nbody"})])
+        fake.queue_tool_turn(text="")
+
+    await write_pages(
+        llm=fake,
+        retriever=retriever,
+        session=shared,  # type: ignore[arg-type]
+        repository_id=UUID("00000000-0000-0000-0000-000000000abc"),
+        context=_ctx(),
+        overview=RepoOverview(one_line="Demo", long_description="..."),
+        plan=plan,
+        config=WikiGenerationConfig(write_concurrency=2),
+        session_factory=factory,
+    )
+
+    assert len(seen) == 2
+    assert all(s is not shared and s in opened for s in seen)
 
 
 # ---------------------------------------------------------------------------
