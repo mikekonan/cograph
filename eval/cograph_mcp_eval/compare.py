@@ -15,9 +15,9 @@ from pathlib import Path
 # Targets per H1-H7 (see plan §"Hypothesis verification").
 #
 # H7 — too_early_giveup_rate — uses `must_be_zero` rather than
-# `lower_or_equal` because the playbook explicitly forbids giving up
-# before ≥3 distinct attempts; a non-zero value on `after` means the
-# rule isn't landing and the merge should not ship. We also accept a
+# `lower_or_equal`: giving up after fewer than two different attempts is
+# always a failure; a non-zero value on `after` means the merge should
+# not ship. We also accept a
 # zero baseline (= the prior behavior already didn't bail early) — the
 # constraint isn't "improve" here, it's "stay at zero".
 TARGETS = {
@@ -25,7 +25,6 @@ TARGETS = {
     "median_tokens_estimate": {"direction": "lower", "min_delta_pct": 40, "label": "tokens / answer"},
     "cites_provenance_rate": {"direction": "higher", "min_delta_pp": 10, "min_abs": 0.80, "label": "cites provenance"},
     "correctness_rate": {"direction": "higher_or_equal", "tol_pp": 2, "label": "correctness"},
-    "silent_fallback_rate": {"direction": "lower_or_equal", "label": "silent fallback"},
     "too_early_giveup_rate": {"direction": "must_be_zero", "label": "early give-up (H7)"},
 }
 
@@ -56,11 +55,6 @@ def _evaluate(metric: str, baseline: float, after: float) -> tuple[str, str]:
     if direction == "higher_or_equal":
         delta_pp = delta * 100
         passed = delta_pp >= -spec["tol_pp"]
-        return f"{delta_pp:+.1f}pp", "✅" if passed else "❌"
-
-    if direction == "lower_or_equal":
-        delta_pp = delta * 100
-        passed = after <= baseline + 1e-9
         return f"{delta_pp:+.1f}pp", "✅" if passed else "❌"
 
     if direction == "must_be_zero":

@@ -3,10 +3,10 @@
 The rule's whole reason to exist is to flag the "agent gave up after one
 empty retrieve" failure. We cover four shapes that matter:
 
-  * positive question + give-up phrase + <3 calls -> H7 fires
-  * positive question + give-up phrase + ≥3 calls -> H7 quiet (the
+  * positive question + give-up phrase + <2 calls -> H7 fires
+  * positive question + give-up phrase + ≥2 calls -> H7 quiet (the
     agent earned the give-up)
-  * negative question + give-up phrase + <3 calls -> H7 quiet (the
+  * negative question + give-up phrase + <2 calls -> H7 quiet (the
     correct answer for a question with no answer)
   * positive question, no give-up phrase -> H7 quiet (correct answer)
 
@@ -31,6 +31,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from eval.cograph_mcp_eval.record import _validate  # noqa: E402
 from eval.cograph_mcp_eval.score import (  # noqa: E402
     _aggregate,
     _is_giveup_phrase,
@@ -50,7 +51,7 @@ def _positive_question() -> dict:
 def _negative_question() -> dict:
     return {
         "category": "negative_doesnt_exist",
-        "expected_answer_keywords": [],
+        "expected_answer_keywords": ["not found", "no such", "doesn't exist"],
         "expected_provenance": [],
         "negative": True,
     }
@@ -89,6 +90,11 @@ def _record(
         "Insufficient information to answer this.",
         "I can't answer that — no matching code or wiki found.",
         "No information about that feature is indexed here.",
+        # Plain refusals without the playbook phrase.
+        "I could not find a FactoryOfFactoryFactory class in samber/lo.",
+        "Search found no symbol with that name.",
+        "No matches for that query.",
+        "That repository is not indexed in this instance.",
     ],
 )
 def test_is_giveup_phrase_matches_expected_wordings(answer: str) -> None:
@@ -113,7 +119,7 @@ def test_is_giveup_phrase_ignores_real_answers(answer: str) -> None:
 # ---------- _score_record: H7 ------------------------------------------------
 
 
-def test_h7_fires_when_agent_gives_up_with_under_three_calls() -> None:
+def test_h7_fires_when_agent_gives_up_after_one_call() -> None:
     record = _record(
         answer="I don't have enough information to answer.",
         tool_calls_count=1,
@@ -123,11 +129,10 @@ def test_h7_fires_when_agent_gives_up_with_under_three_calls() -> None:
 
 
 def test_h7_quiet_when_agent_earned_the_giveup() -> None:
-    # 3 distinct attempts came back empty — playbook says this is the
-    # correct moment to say "I don't know", so H7 must NOT fire.
+    # Two different attempts came back empty: that is enough to stop.
     record = _record(
         answer="I don't have enough information in this Cograph instance to answer.",
-        tool_calls_count=3,
+        tool_calls_count=2,
     )
     scored = _score_record(record, _positive_question())
     assert scored["too_early_giveup"] is False
@@ -173,8 +178,8 @@ def test_h7_rate_is_proportional_across_population() -> None:
         _score_record(
             _record(
                 qid="q2",
-                answer="I can't answer that.",
-                tool_calls_count=2,
+                answer="I could not find it.",
+                tool_calls_count=0,
             ),
             pos,
         ),
@@ -214,6 +219,47 @@ def test_h7_rate_is_zero_on_a_clean_run() -> None:
     ]
     summary = _aggregate(scored)
     assert summary["too_early_giveup_rate"] == 0.0
+    # Reading local files is not penalised: cost (H1/H2) covers it.
+    assert "silent_fallback_rate" not in summary
+
+
+# ---------- negative questions ----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "No such class in samber/lo.",  # one keyword out of three
+        "I looked in samber/lo and could not find that class.",  # free wording
+    ],
+)
+def test_negative_question_is_correct_on_any_refusal(answer: str) -> None:
+    scored = _score_record(_record(answer=answer, tool_calls_count=1), _negative_question())
+    assert scored["correctness"] == "correct"
+
+
+def test_negative_question_is_incorrect_on_a_made_up_answer() -> None:
+    record = _record(answer="It lives in factory.go:12-40.", tool_calls_count=1)
+    scored = _score_record(record, _negative_question())
+    assert scored["correctness"] == "incorrect"
+
+
+# ---------- cost ------------------------------------------------------------
+
+
+def test_cost_counts_client_tool_calls() -> None:
+    record = _validate(
+        {
+            "tool_calls": [
+                {"name": "mcp__cograph__cograph_retrieve", "result_bytes": 900},
+                {"name": "Grep", "result_bytes": 100},
+            ],
+            "answer": "stub",
+        },
+        "q1",
+    )
+    assert record["tool_calls_count"] == 2
+    assert record["result_bytes_total"] == 1000
 
 
 def test_playbook_text_matches_eval_giveup_pattern() -> None:
