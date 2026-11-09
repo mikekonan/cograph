@@ -5,7 +5,8 @@ Two classes:
 * ``LexicalRetriever`` — BM25-like ``ts_rank_cd`` queries over the tsvector
   columns produced by migrations 0015 (``content_tsv``, english config) and
   0018 (``content_tsv_simple``, simple config).  The code store uses the
-  simple config because English stemming hurts code identifiers.
+  simple config because English stemming hurts code identifiers.  It matches
+  any query word, rows with every word first.
 
 * ``SymbolLookup`` — pg_trgm similarity on ``code_nodes.qualified_name`` to
   find fuzzy matches BM25 misses (``foo_bar_baz`` ↔ ``foobarbaz``).
@@ -22,10 +23,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import TextClause
 
 from backend.app.rag.retriever import RetrievedChunk
+from backend.app.rag.snippet import extract_query_terms
 
 logger = logging.getLogger(__name__)
 
 Store = Literal["code", "repo_docs", "md_collections"]
+
+# A query matches on any one word, so it can match much of a repository.
+# Past this many, lexical hits only push vector hits out of the fused list.
+_CODE_CANDIDATE_CAP = 50
+
+
+def _tsquery_operand(term: str) -> str:
+    # Quoted, so `to_tsquery` hands the term to the parser that built the
+    # index: `a.b`, `a-b`, `a_b` split the way the code did, and `&|!():*`
+    # stay text.
+    return "'" + term.replace("\\", "\\\\").replace("'", "''") + "'"
 
 
 def _bind_temporal(stmt: TextClause) -> TextClause:
@@ -47,9 +60,10 @@ def _bind_temporal(stmt: TextClause) -> TextClause:
 class LexicalRetriever:
     """BM25 / ts_rank_cd retrieval over the per-store tsvector columns.
 
-    The query text is always passed as a bound parameter — never interpolated —
-    so adversarial tsquery operators (``&|!():*``) can't break out of
-    ``plainto_tsquery``'s sanitisation.
+    Query text is always a bound parameter, never interpolated. The doc stores
+    pass it to ``plainto_tsquery``; the code store passes quoted terms from
+    ``extract_query_terms`` to ``to_tsquery``. Neither lets ``&|!():*`` in the
+    query act as an operator.
     """
 
     async def search(
@@ -120,8 +134,17 @@ class LexicalRetriever:
         until: datetime | None,
         path_prefix: str,
     ) -> list[RetrievedChunk]:
+        terms = extract_query_terms(query_text)
+        if not terms:
+            return []
+        operands = [_tsquery_operand(term) for term in terms]
         # 'simple' regconfig + content_tsv_simple keeps code identifiers intact
         # (no English stemming, no stopword stripping). See migration 0018.
+        # Any word matches; rows with every word sort first, then by rank.
+        # ts_rank_cd without a normalisation flag: a long body is not
+        # penalised for its length.
+        # Module rows hold a whole file, so they contain most words and would
+        # top every query; their functions and types are rows of their own.
         # starts_with, not LIKE: `_` and `%` in a path stay literal. An empty
         # prefix matches every path.
         stmt = text(
@@ -134,15 +157,17 @@ class LexicalRetriever:
                 cn.language AS language,
                 cn.start_line AS start_line,
                 cn.end_line AS end_line,
-                ts_rank_cd(cn.content_tsv_simple, plainto_tsquery('simple', :query_text)) AS score
+                cn.content_tsv_simple @@ to_tsquery('simple', :all_terms) AS has_all_terms,
+                ts_rank_cd(cn.content_tsv_simple, to_tsquery('simple', :any_term)) AS score
             FROM code_nodes cn
             WHERE cn.repository_id = :repo_id
-              AND cn.content_tsv_simple @@ plainto_tsquery('simple', :query_text)
+              AND cn.content_tsv_simple @@ to_tsquery('simple', :any_term)
+              AND cn.node_type <> 'module'
               AND starts_with(cn.file_path, :path_prefix)
               AND (CAST(:as_of AS timestamp) IS NULL OR COALESCE(cn.last_changed_at, cn.created_at) <= CAST(:as_of AS timestamp))
               AND (CAST(:since AS timestamp) IS NULL OR COALESCE(cn.last_changed_at, cn.created_at) >= CAST(:since AS timestamp))
               AND (CAST(:until AS timestamp) IS NULL OR COALESCE(cn.last_changed_at, cn.created_at) <= CAST(:until AS timestamp))
-            ORDER BY score DESC
+            ORDER BY has_all_terms DESC, score DESC
             LIMIT :top_k
             """
         )
@@ -150,9 +175,10 @@ class LexicalRetriever:
         result = await session.execute(
             stmt,
             {
-                "query_text": query_text,
+                "any_term": " | ".join(operands),
+                "all_terms": " & ".join(operands),
                 "repo_id": repository_id,
-                "top_k": top_k,
+                "top_k": min(top_k, _CODE_CANDIDATE_CAP),
                 "path_prefix": path_prefix,
                 "as_of": as_of,
                 "since": since,

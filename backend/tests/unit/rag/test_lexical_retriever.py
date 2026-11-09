@@ -64,26 +64,36 @@ async def test_whitespace_only_query_returns_empty_without_sql():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("adversarial", ["foo & bar", "a | b", "a:*", "!(x)", "((", ")):"])
-async def test_adversarial_tsquery_input_does_not_raise(adversarial: str):
-    """plainto_tsquery should sanitise these — assert we don't pre-validate and crash."""
+@pytest.mark.parametrize("query", ["((", ")):", "a | b", "!*", "how does the"])
+async def test_code_query_without_words_returns_empty_without_sql(query: str):
     retriever = LexicalRetriever()
     session, captured = _session_capturing_sql()
-    # Should NOT raise; SQL should be issued with the raw query text bound as a parameter
-    # (NEVER interpolated into the SQL string).
     result = await retriever.search(
         session,
         store="code",
-        query_text=adversarial,
+        query_text=query,
         repository_id=uuid.uuid4(),
         top_k=10,
     )
     assert result == []
-    assert len(captured) == 1
-    sql, params = captured[0]
-    # Adversarial chars must not appear in the SQL text — only in bound params.
-    assert adversarial not in sql
-    assert adversarial in params.values()
+    assert captured == []
+
+
+@pytest.mark.asyncio
+async def test_code_query_reaches_sql_only_as_quoted_bound_terms():
+    retriever = LexicalRetriever()
+    session, captured = _session_capturing_sql()
+    await retriever.search(
+        session,
+        store="code",
+        query_text="(foo & !bar):* | baz",
+        repository_id=uuid.uuid4(),
+        top_k=10,
+    )
+    [(sql, params)] = captured
+    assert "foo" not in sql
+    assert params["any_term"] == "'foo' | 'bar' | 'baz'"
+    assert params["all_terms"] == "'foo' & 'bar' & 'baz'"
 
 
 @pytest.mark.asyncio
