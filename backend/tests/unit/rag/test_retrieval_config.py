@@ -14,7 +14,7 @@ from backend.app.config import RetrievalSettings  # type: ignore[import-not-foun
 def test_defaults_match_runtime_contract():
     s = RetrievalSettings()
     assert s.rrf_k == 60
-    assert s.candidate_cap == 300
+    assert s.candidate_cap == 100
     assert s.rerank.enabled is True
     assert s.rerank.threshold == 50
     # Default provider is `disabled` — the base image ships without

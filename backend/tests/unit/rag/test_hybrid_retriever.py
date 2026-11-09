@@ -380,3 +380,22 @@ async def test_forwards_temporal_filters_to_all_streams():
     assert captured["lexical"]["until"] == until
     assert captured["symbol"]["since"] == since
     assert captured["symbol"]["until"] == until
+
+
+@pytest.mark.asyncio
+async def test_vector_search_restores_score_order(monkeypatch):
+    # relaxed_order iterative scan returns rows only roughly by distance; RRF
+    # ranks by position, so the vector stream must come back sorted.
+    from backend.app.rag.hybrid import VectorRetriever
+
+    rows = [_chunk(uuid.uuid4(), score=s) for s in (0.7, 0.9, 0.8)]
+
+    async def _code(*_args, **_kw):
+        return list(rows)
+
+    retriever = VectorRetriever()
+    monkeypatch.setattr(retriever, "_code", _code)
+    hits = await retriever.search(
+        None, store="code", query_embedding=[0.0] * 1536, repository_id=uuid.uuid4()
+    )
+    assert [h.score for h in hits] == [0.9, 0.8, 0.7]
