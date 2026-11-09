@@ -4,6 +4,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from pydantic import BaseModel, Field, field_validator
 
 from backend.app.mcp.services import (
+    READ_ONLY,
     MCPServices,
     collection_document_payload,
     collection_search_payload,
@@ -59,6 +60,7 @@ class ReadChunkToolArgs(BaseModel):
 def register(server: MCPServer, services: MCPServices) -> None:
     @server.tool(
         name="cograph_collections",
+        annotations=READ_ONLY,
         description=(
             "List markdown collections readable by the authenticated MCP user.\n"
             "Use when: target collection_id is unknown — start here to enumerate.\n"
@@ -83,6 +85,7 @@ def register(server: MCPServer, services: MCPServices) -> None:
 
     @server.tool(
         name="cograph_collection_document",
+        annotations=READ_ONLY,
         description=(
             "Read one full markdown collection document with parsed metadata "
             "(headings, code blocks, tables, links). No truncation.\n"
@@ -112,6 +115,7 @@ def register(server: MCPServer, services: MCPServices) -> None:
 
     @server.tool(
         name="cograph_collection_search",
+        annotations=READ_ONLY,
         description=(
             "Hybrid search inside one readable markdown collection. Returns "
             "query-anchored excerpts (snippet + content_truncated) per chunk "
@@ -157,6 +161,7 @@ def register(server: MCPServer, services: MCPServices) -> None:
 
     @server.tool(
         name="cograph_read_chunk",
+        annotations=READ_ONLY,
         description=(
             "Fetch the full content of one markdown collection chunk by id.\n"
             "Use when: cograph_collection_search returned a hit with "

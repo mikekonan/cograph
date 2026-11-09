@@ -2,6 +2,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from pydantic import BaseModel, Field, field_validator
 
 from backend.app.mcp.services import (
+    READ_ONLY,
     MCPServices,
     current_user_from_context,
     encode_payload,
@@ -26,6 +27,7 @@ class RepositoriesToolArgs(BaseModel):
 def register(server: MCPServer, services: MCPServices) -> None:
     @server.tool(
         name="cograph_repositories",
+        annotations=READ_ONLY,
         description=(
             "List repositories readable by the authenticated MCP user. Returns "
             "compound slugs (host/owner/name) and the wiki resource URI. There "

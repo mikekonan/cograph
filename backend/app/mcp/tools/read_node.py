@@ -4,6 +4,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from pydantic import BaseModel, Field
 
 from backend.app.mcp.services import (
+    READ_ONLY,
     MCPServices,
     current_user_from_context,
     encode_payload,
@@ -50,6 +51,7 @@ class ReadNodeArgs(BaseModel):
 def register(server: MCPServer, services: MCPServices) -> None:
     @server.tool(
         name="cograph_read_node",
+        annotations=READ_ONLY,
         description=_READ_NODE_DESCRIPTION,
     )
     async def read_node(
