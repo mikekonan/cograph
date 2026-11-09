@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import re
 
-_TOKEN_RE = re.compile(r"[A-Za-z0-9_./:-]+")
+# \w, not A-Za-z: lexical code search takes its words from here too, and
+# code comments are not only in English.
+_TOKEN_RE = re.compile(r"[\w./:-]+")
 _STOPWORDS = frozenset(
     {
         "a",

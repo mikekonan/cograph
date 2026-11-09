@@ -61,9 +61,9 @@ def register(server: MCPServer, services: MCPServices) -> None:
             "cograph_read_node(node_id=provenance.node_id).\n"
             "path_prefix (a folder from the repository root, e.g. "
             "internal/shipping/) keeps only hits under it.\n"
-            "Use when: you have a name from the code (class, function, "
-            "qualified path). One identifier per call. `repository` is "
-            "host/owner/name.\n"
+            "Use when: you have a word from the code: a name (class, "
+            "function, qualified path) or a word that appears in the code. "
+            "`repository` is host/owner/name.\n"
             "Do NOT use for natural-language questions (use cograph_retrieve "
             "with mode=code) or to read a node fully (use cograph_read_node)."
         ),

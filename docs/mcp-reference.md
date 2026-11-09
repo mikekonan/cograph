@@ -124,7 +124,7 @@ Lexical + fuzzy symbol search over a repository's code nodes. Returns signatures
 
 path_prefix (a folder from the repository root, e.g. internal/shipping/) keeps only hits under it.
 
-Use when: you have a name from the code (class, function, qualified path). One identifier per call. `repository` is host/owner/name.
+Use when: you have a word from the code: a name (class, function, qualified path) or a word that appears in the code. `repository` is host/owner/name.
 
 Do NOT use for natural-language questions (use cograph_retrieve with mode=code) or to read a node fully (use cograph_read_node).
 
