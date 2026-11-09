@@ -37,8 +37,9 @@ from backend.app.graph.traversal import (
 )
 from backend.app.llm.embedder import EmbedProvider
 from backend.app.llm.runtime_providers import build_runtime_providers
+from backend.app.models.code_edge import CodeEdge
 from backend.app.models.code_node import CodeNode
-from backend.app.models.enums import RepositoryStatus
+from backend.app.models.enums import CodeEdgeType, RepositoryStatus
 from backend.app.models.md_collection import MdChunk, MdCollection, MdDocument
 from backend.app.models.repository import Repository
 from backend.app.models.user import User
@@ -106,8 +107,8 @@ def encode_payload(value: object) -> str:
     return json.dumps(encoded, ensure_ascii=False, separators=(",", ":"))
 
 
-# A graph node's empty `callers` means "looked, none": it answers the question.
-_KEEP_EMPTY = frozenset({"callers", "callees"})
+# An empty caller list means "looked, none": it answers the question.
+_KEEP_EMPTY = frozenset({"callers", "callees", "called_by"})
 
 
 def _drop_empty(value: object) -> object:
@@ -346,6 +347,7 @@ def compact_hits(
     *,
     with_dates: bool = False,
     with_graph: bool = False,
+    called_by: dict[UUID, tuple[list[dict[str, Any]], int]] | None = None,
 ) -> dict[str, object]:
     """A search response as the agent reads it: one record per place.
 
@@ -354,10 +356,18 @@ def compact_hits(
     metadata, and repeats the docs linked to the node on every row. Here a
     node becomes one record and a doc section another, in the order each
     first appears. REST and the web UI keep the full response.
+
+    `called_by` maps a node to its first callers and their total, from
+    `_called_by`. Without it the records carry no `called_by` field: the
+    graph was not looked at.
     """
 
     places: dict[object, dict[str, Any]] = {}
     for row in response.results:
+        if row.layer is RetrievalLayer.AST_SUMMARY:
+            # MCP asks for the code layer instead; summaries stay in
+            # read_node and the wiki.
+            continue
         cite = row.provenance
         if cite.node_id is None:
             _add_doc(places, cite.file_path, cite.heading_path, row.snippet, row.content_truncated)
@@ -371,9 +381,11 @@ def compact_hits(
                 "score": row.score,
                 "last_changed_at": cite.last_changed_at if with_dates else None,
             }
-        if row.layer is RetrievalLayer.AST_SUMMARY:
-            record["summary"] = row.snippet
-        elif row.layer is RetrievalLayer.CODE or "code" not in record:
+            if called_by is not None:
+                callers, total = called_by.get(cite.node_id, ([], 0))
+                record["called_by"] = callers
+                record["called_by_more"] = total - len(callers) or None
+        if row.layer is RetrievalLayer.CODE or "code" not in record:
             # The signature row stands in only for a node with no body row.
             record["code"] = row.snippet
             record["truncated"] = row.content_truncated or None
@@ -388,8 +400,75 @@ def compact_hits(
             "cograph_read_node(node_id)."
         )
     if with_graph:
-        payload["nodes"] = response.nodes
+        payload["nodes"] = {
+            key: node.model_dump(exclude={"summary"}) for key, node in response.nodes.items()
+        }
     return payload
+
+
+_CALLERS_SHOWN = 3
+
+
+async def _called_by(
+    session: AsyncSession, node_ids: list[UUID]
+) -> dict[UUID, tuple[list[dict[str, Any]], int]]:
+    """The first callers of each node and how many there are, in one query.
+
+    Rides `idx_code_edges_target (target_node_id, edge_type)`. A node with
+    no callers is missing from the result. Callers sort by path, then line.
+    """
+
+    if not node_ids:
+        return {}
+    # One caller can reach a node through two spellings of its name: count
+    # it once. A recursive call is not a caller.
+    pairs = (
+        select(
+            CodeEdge.target_node_id.label("callee"),
+            CodeEdge.source_node_id.label("caller"),
+        )
+        .where(
+            CodeEdge.target_node_id.in_(node_ids),
+            CodeEdge.edge_type == CodeEdgeType.CALLS.value,
+            CodeEdge.source_node_id != CodeEdge.target_node_id,
+        )
+        .distinct()
+        .subquery()
+    )
+    ranked = (
+        select(
+            pairs.c.callee,
+            CodeNode.id,
+            CodeNode.qualified_name,
+            CodeNode.file_path,
+            CodeNode.start_line,
+            CodeNode.end_line,
+            func.count().over(partition_by=pairs.c.callee).label("total"),
+            func.row_number()
+            .over(
+                partition_by=pairs.c.callee,
+                order_by=(CodeNode.file_path, CodeNode.start_line, CodeNode.id),
+            )
+            .label("rank"),
+        )
+        .join(CodeNode, CodeNode.id == pairs.c.caller)
+        .subquery()
+    )
+    rows = await session.execute(
+        select(ranked).where(ranked.c.rank <= _CALLERS_SHOWN).order_by(ranked.c.rank)
+    )
+    found: dict[UUID, tuple[list[dict[str, Any]], int]] = {}
+    for row in rows:
+        callers, _ = found.get(row.callee, ([], 0))
+        callers.append(
+            {
+                "node_id": row.id,
+                "name": row.qualified_name,
+                "at": _at(row.file_path, row.start_line, row.end_line),
+            }
+        )
+        found[row.callee] = (callers, row.total)
+    return found
 
 
 def _at(path: str | None, start: int | None, end: int | None) -> str | None:
@@ -463,11 +542,17 @@ async def retrieve_payload(
             mode=mode,
             usage_sink=usage_sink,
         )
+        called_by = await _called_by(session, _node_ids(response))
     return compact_hits(
         response,
         with_dates=any(when is not None for when in (as_of, since, until)),
         with_graph=include_graph,
+        called_by=called_by,
     )
+
+
+def _node_ids(response: RetrievalResponse) -> list[UUID]:
+    return list({row.provenance.node_id for row in response.results} - {None})
 
 
 async def node_payload(
@@ -583,7 +668,8 @@ async def search_code_payload(
             include_graph=False,
             include_scores=False,
         )
-    return compact_hits(response)
+        called_by = await _called_by(session, _node_ids(response))
+    return compact_hits(response, called_by=called_by)
 
 
 # Hard ceiling on nodes returned by `cograph_related`. Without it a BFS

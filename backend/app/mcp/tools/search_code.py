@@ -57,8 +57,10 @@ def register(server: MCPServer, services: MCPServices) -> None:
         description=(
             "Lexical + fuzzy symbol search over a repository's code nodes. "
             "Returns at most 25 records {node_id, name, at: path:start-end, "
-            "code}, where `code` is the signature, not the body. Pick the "
-            "right node, then read it with cograph_read_node(node_id).\n"
+            "called_by, code}, where `code` is the signature, not the body. "
+            "Pick the right node, then read it with cograph_read_node(node_id).\n"
+            "`called_by` lists up to 3 callers {node_id, name, at}; "
+            "called_by_more counts the rest; [] means no callers.\n"
             "path_prefix (a folder from the repository root, e.g. "
             "internal/shipping/) keeps only hits under it.\n"
             "Use when: you have a word from the code: a name (class, "
