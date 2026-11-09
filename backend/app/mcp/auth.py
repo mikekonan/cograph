@@ -4,8 +4,9 @@ The MCP transport (Streamable HTTP) is a Starlette sub-app mounted at
 `/mcp`. Wrapping it with this callable forces every HTTP request to
 carry `Authorization: Bearer cgr_pat_…`. The token is looked up via the
 unified PAT resolver in `backend.app.core.deps`, the `mcp` scope is
-enforced, and the resolved actor is stashed in `scope["state"]` so MCP
-tools can read it through a contextvar.
+enforced, and the resolved actor is stashed in `scope["state"]` (where
+tools read it through their `Context`) and in `mcp_actor_var` (the only
+route for resources: the SDK injects no `Context` into a static resource).
 
 Why an ASGI wrapper instead of FastAPI middleware:
 - The FastAPI middleware stack only sees requests routed by FastAPI
@@ -17,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+from contextvars import ContextVar
 from typing import Any, Awaitable, Callable
 
 from backend.app.auth.actor import AuthenticatedActor
@@ -24,6 +26,15 @@ from backend.app.core.deps import PAT_PLAINTEXT_PREFIX, _resolve_pat
 from backend.app.db.session import SessionManager
 
 logger = logging.getLogger(__name__)
+
+# Set per request below. Stateless streamable-http serves each request in a
+# task spawned from this one, so the handler task inherits the value. This
+# holds only while `stateless_http=True`: a stateful session runs its handlers
+# in a task started by the first request, so later requests would read that
+# request's actor, or none.
+mcp_actor_var: ContextVar[AuthenticatedActor | None] = ContextVar(
+    "mcp_actor", default=None
+)
 
 ASGIApp = Callable[
     [
@@ -165,7 +176,10 @@ def wrap_with_mcp_auth(inner_app: ASGIApp, session_manager: SessionManager) -> A
         # may not exist on raw scopes, so populate carefully.
         state = scope.setdefault("state", {})
         state["cograph_actor"] = actor
-
-        await inner_app(scope, receive, send)
+        token = mcp_actor_var.set(actor)
+        try:
+            await inner_app(scope, receive, send)
+        finally:
+            mcp_actor_var.reset(token)
 
     return app

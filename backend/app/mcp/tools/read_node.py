@@ -11,20 +11,22 @@ from backend.app.mcp.services import (
     resolve_readable_repository_by_slug,
     tool_args,
 )
-from backend.app.rag.snippet import (
-    DEFAULT_SNIPPET_CHARS,
-    MAX_SNIPPET_CHARS,
-    MIN_SNIPPET_CHARS,
-)
+from backend.app.rag.snippet import MIN_SNIPPET_CHARS
+
+# A node body is read as code, so it gets a larger budget than a search
+# snippet. 16000 chars is ~400 lines; past that read by line range.
+READ_NODE_DEFAULT_CHARS = 6000
+READ_NODE_MAX_CHARS = 16000
 
 _READ_NODE_DESCRIPTION = (
-    "Read one code node's body with its AST citation. The body is a "
-    "whitespace-collapsed excerpt of at most snippet_chars (default 600, max "
-    "4000), and `content_truncated` says whether anything was cut — if a node "
-    "is larger than the maximum, read its line range with "
-    "cograph_read_file_range instead.\n"
-    "Use when: you have a known node_id (typically from cograph_search_code "
-    "or cograph_retrieve) and need the actual code, not a list of hits.\n"
+    "Read one code node's exact source (a function, method or type) with its "
+    "AST citation. The body keeps its real lines from provenance.start_line, "
+    "at most snippet_chars (default 6000, max 16000) cut on a line boundary; "
+    "if `content_truncated`, continue with cograph_read_file_range.\n"
+    "Use when: you have a node_id (from cograph_search_code, cograph_retrieve "
+    "or cograph_related) and need its code. Prefer it to "
+    "cograph_read_file_range for a whole function: it returns exactly the "
+    "node, no guessed line window.\n"
     "Do NOT use to search by name (use cograph_search_code) or to explore "
     "neighbours by graph (use cograph_related). Pass with_graph=true / "
     "with_summary=true / with_linked_docs=true only when you actually "
@@ -39,9 +41,9 @@ class ReadNodeArgs(BaseModel):
     with_summary: bool = False
     with_linked_docs: bool = False
     snippet_chars: int = Field(
-        default=DEFAULT_SNIPPET_CHARS,
+        default=READ_NODE_DEFAULT_CHARS,
         ge=MIN_SNIPPET_CHARS,
-        le=MAX_SNIPPET_CHARS,
+        le=READ_NODE_MAX_CHARS,
     )
 
 
@@ -56,7 +58,7 @@ def register(server: MCPServer, services: MCPServices) -> None:
         with_graph: bool = False,
         with_summary: bool = False,
         with_linked_docs: bool = False,
-        snippet_chars: int = DEFAULT_SNIPPET_CHARS,
+        snippet_chars: int = READ_NODE_DEFAULT_CHARS,
         ctx: Context | None = None,
     ) -> object:
         args = tool_args(

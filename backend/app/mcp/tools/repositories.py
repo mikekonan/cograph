@@ -1,5 +1,5 @@
 from mcp.server.mcpserver import Context, MCPServer
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from backend.app.mcp.services import (
     MCPServices,
@@ -14,7 +14,13 @@ from backend.app.models.enums import RepositoryStatus
 class RepositoriesToolArgs(BaseModel):
     search: str | None = None
     status: RepositoryStatus | None = None
-    limit: int = Field(default=100, ge=1, le=100)
+    # Clamped, not rejected: agents ask for 200 and got an error instead of a list.
+    limit: int = Field(default=100, ge=1)
+
+    @field_validator("limit")
+    @classmethod
+    def _clamp_limit(cls, value: int) -> int:
+        return min(value, 100)
 
 
 def register(server: MCPServer, services: MCPServices) -> None:

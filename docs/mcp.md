@@ -100,6 +100,12 @@ Each result:
   and inclusive.
 - **`metadata.candidate_from`** — which retrieval streams nominated this hit.
 
+Every tool result is compact JSON. Below the top level, `null` fields and empty
+lists or objects are left out, so a missing key means "not set". The exception is
+a graph node's `callers` and `callees`: when the graph was requested, an empty list
+is kept and means "looked, found none". Top-level keys always stay, so an empty
+`results` still reads as "no hits".
+
 ::: warning `vector_score` and `bm25_score` are not populated
 The result metadata declares them, but only `rerank_score` is ever filled in. Use
 `candidate_from` and the fused ordering to reason about why a hit surfaced.
@@ -163,10 +169,10 @@ replaces that selection; an empty list is accepted and ignored, so omit `stores`
 rather than passing `[]`.
 
 ::: warning Reads are excerpt-bounded, not whole-file
-No tool returns an arbitrarily large body. `cograph_read_node` collapses
-whitespace and cuts at `snippet_chars` (600 by default, 4000 maximum), and
-`cograph_wiki_page` cuts a page at 12 000 characters. Both report
-`content_truncated`. To read a node larger than the maximum, take its line range
+No tool returns an arbitrarily large body. `cograph_read_node` returns the
+node's source with its real lines and cuts on a line boundary at `snippet_chars`
+(6000 by default, 16 000 maximum), and `cograph_wiki_page` cuts a page at 12 000
+characters. Both report `content_truncated`. To read the rest of a node, continue
 with `cograph_read_file_range` — up to 1000 lines, unmodified.
 :::
 
@@ -180,7 +186,7 @@ confusion, and the built-in playbook warns agents about it explicitly.
 
 | Tool | Purpose |
 | --- | --- |
-| `cograph_read_node` | One code node's body with its AST citation, excerpt-bounded |
+| `cograph_read_node` | One code node's exact source with its citation, real lines, up to 16 000 characters |
 | `cograph_read_file_range` | A 1-indexed line range of a source file, ≤ 1000 lines |
 | `cograph_wiki_page` | One generated wiki page, or one named section — verbatim, cut at 12 000 characters |
 | `cograph_collection_document` | One full collection document plus parsed metadata, untruncated |
