@@ -1,5 +1,6 @@
 """How MCP tool results are shaped for the agent."""
 
+import json
 from uuid import uuid4
 
 from backend.app.mcp.services import _head_lines, compact_hits, encode_payload
@@ -121,7 +122,6 @@ def test_one_place_is_one_record_without_service_fields() -> None:
         "name": "shipping.label.Print",
         "at": "shipping/label.go:10-40",
         "code": "func Print(",
-        "summary": "Prints a parcel label.",
     }
     assert records[1] == {
         "heading_path": list(GUIDE[1]),
@@ -147,6 +147,9 @@ def test_one_place_is_one_record_without_service_fields() -> None:
         "total_tokens_estimate",
         "mode",
         "nodes",
+        "summary",
+        "Prints a parcel label.",
+        "called_by",
     ):
         assert f'"{gone}' not in text, gone
 
@@ -161,3 +164,21 @@ def test_scores_dates_and_graph_stay_when_asked() -> None:
     assert payload["results"][0]["last_changed_at"] == "2025-12-08T14:12:43+00:00"
     assert "note" not in payload
     assert encode_payload(payload).endswith(',"nodes":{}}')
+
+
+def test_called_by_is_absent_empty_or_capped_with_a_count() -> None:
+    label, crate, pallet = uuid4(), uuid4(), uuid4()
+    caller = {"node_id": uuid4(), "name": "shipping.Ship", "at": "shipping/ship.go:3-9"}
+    rows = [_code_row(RetrievalLayer.CODE, "func f(", node) for node in (label, crate, pallet)]
+    response = RetrievalResponse(results=rows)
+
+    # Not looked at: no field at all.
+    assert all("called_by" not in r for r in compact_hits(response)["results"])
+
+    # `pallet` has no callers, so `_called_by` leaves it out.
+    called_by = {label: ([caller] * 3, 5), crate: ([caller], 1)}
+    text = encode_payload(compact_hits(response, called_by=called_by))
+    records = json.loads(text)["results"]
+    assert [len(r["called_by"]) for r in records] == [3, 1, 0]
+    assert [r.get("called_by_more") for r in records] == [2, None, None]
+    assert records[0]["called_by"][0] == {**caller, "node_id": str(caller["node_id"])}

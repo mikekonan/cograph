@@ -63,9 +63,12 @@ rank order: a code node or a doc section.
       "node_id": "uuid",
       "name": "shipping.label.Print",
       "at": "shipping/label.go:42-58",
+      "called_by": [
+        {"node_id": "uuid", "name": "shipping.Ship", "at": "shipping/ship.go:10-31"}
+      ],
+      "called_by_more": 4,
       "code": "≤ snippet_chars characters",
-      "truncated": true,
-      "summary": "what the function does"
+      "truncated": true
     },
     {
       "heading_path": ["Labels", "Printing"],
@@ -77,10 +80,14 @@ rank order: a code node or a doc section.
 }
 ```
 
-- **One place, one record.** The search finds a code node as up to three rows:
-  its body, its signature and its summary. They come out as one record. The
-  signature stands in as `code` only when there is no body row, so
-  `cograph_search_code` shows signatures, not bodies.
+- **One place, one record.** The search may find a code node as more than one
+  row: its body and its signature. They come out as one record. The signature
+  stands in as `code` only when there is no body row, so `cograph_search_code`
+  shows signatures, not bodies. Node summaries are not shown here; read them
+  with `cograph_read_node(with_summary=true)` or in the wiki.
+- **`called_by`** lists up to 3 callers of a code hit, sorted by path, and
+  `called_by_more` counts the rest. An empty list means the node has no known
+  callers. When a hit is only a helper, its callers show where it is used.
 - **`code`** and **`text`** are query-anchored excerpts, never a full body.
   Default 600 characters (~150 tokens); override with `snippet_chars` in
   `[80, 4000]`.
@@ -102,8 +109,8 @@ with provenance, commit SHAs and stream metadata.
 
 Every tool result is compact JSON. Below the top level, `null` fields and empty
 lists or objects are left out, so a missing key means "not set". The exception is
-a graph node's `callers` and `callees`: when the graph was requested, an empty list
-is kept and means "looked, found none". Top-level keys always stay, so an empty
+`called_by` on a code hit and a graph node's `callers` and `callees`: an empty
+list is kept and means "looked, found none". Top-level keys always stay, so an empty
 `results` still reads as "no hits".
 
 ::: info `cograph_collection_search` has its own shape
@@ -146,12 +153,12 @@ response.
 
 | Tool | Purpose |
 | --- | --- |
-| `cograph_retrieve` | Hybrid search over code, AST summaries and repository docs of **one** repository |
+| `cograph_retrieve` | Hybrid search over the code and repository docs of **one** repository |
 | `cograph_search_code` | Lexical and fuzzy-symbol lookup over code nodes. Names and line ranges, **no bodies** |
 | `cograph_collection_search` | Hybrid search inside one collection |
 
-`mode` maps to layers: `code` → code and summaries, `wiki` →
-repository documents, `mixed` → the broad set. A **non-empty** `stores` list
+`mode` maps to layers: `code` → code, `wiki` → repository documents,
+`mixed` → both. A **non-empty** `stores` list
 replaces that selection; an empty list is accepted and ignored, so omit `stores`
 rather than passing `[]`.
 

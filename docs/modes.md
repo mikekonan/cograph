@@ -140,11 +140,13 @@ re-embedding everything: unchanged nodes keep their vectors.
 
 | Value | Layers searched |
 | --- | --- |
-| `code` | `code`, `ast_summary` |
+| `code` | `code` |
 | `wiki` | `repo_doc` — the repository's **checked-in** markdown, *not* the generated wiki |
-| `mixed` | The broad set: `code`, `ast_summary`, `repo_doc`. Default |
+| `mixed` | `code`, `repo_doc`. Default |
 
-An explicit `stores` list overrides `mode`.
+An explicit `stores` list overrides `mode`. MCP does not show summaries: an
+`ast_summary` store returns the code of the hit, and `ast` is dropped when
+`code` is asked for too.
 
 ### Layers
 

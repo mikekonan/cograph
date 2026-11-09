@@ -17,7 +17,7 @@ from backend.app.mcp.services import (
     retrieve_payload,
     tool_args,
 )
-from backend.app.rag.context_builder import BROAD_RETRIEVAL_LAYERS, RetrievalLayer
+from backend.app.rag.context_builder import RetrievalLayer
 from backend.app.rag.snippet import (
     DEFAULT_SNIPPET_CHARS,
     MAX_SNIPPET_CHARS,
@@ -31,20 +31,23 @@ RetrieveMode = Literal["code", "wiki", "mixed"]
 # (not reject) so an over-eager agent still gets a bounded answer.
 MAX_TOP_K = 25
 
+# No AST or summary layer: a hit shows its body, and the signature and
+# summary rows of the same node only spent top_k.
 _MODE_TO_LAYERS: dict[RetrieveMode, set[RetrievalLayer]] = {
-    # No bare AST layer: a node's signature row is dropped from the output
-    # whenever its body row is there, so asking for it only spent top_k.
-    "code": {RetrievalLayer.CODE, RetrievalLayer.AST_SUMMARY},
+    "code": {RetrievalLayer.CODE},
     "wiki": {RetrievalLayer.REPO_DOC},
-    "mixed": set(BROAD_RETRIEVAL_LAYERS),
+    "mixed": {RetrievalLayer.CODE, RetrievalLayer.REPO_DOC},
 }
 
 _RETRIEVE_DESCRIPTION = (
-    "Hybrid search across code, AST summaries, and checked-in docs of one "
-    "repository. Returns one record per place: a code hit as {node_id, name, "
-    "at: path:start-end, code, summary}, a doc as {heading_path, at, text}.\n"
+    "Hybrid search across the code and checked-in docs of one repository. "
+    "Returns one record per place: a code hit as {node_id, name, at: "
+    "path:start-end, called_by, code}, a doc as {heading_path, at, text}.\n"
     "`code` is a query-anchored excerpt, not the whole body; read the best "
     "one or two hits with cograph_read_node(node_id).\n"
+    "`called_by` lists up to 3 callers {node_id, name, at}; called_by_more "
+    "counts the rest; [] means no callers. When a hit is only a helper, "
+    "follow called_by to the code that uses it.\n"
     "`repository` is required, as host/owner/name. Unknown repository: pick "
     "one with cograph_repositories or cograph_route. `top_k` bounds the "
     "results (clamped to 25); the default 10 is usually enough.\n"
@@ -110,9 +113,15 @@ class RetrieveToolArgs(BaseModel):
 
     def resolved_layers(self) -> set[RetrievalLayer]:
         # Explicit `stores=` wins over `mode=` so power users keep precise control.
-        if self.stores:
-            return set(self.stores)
-        return set(_MODE_TO_LAYERS[self.mode])
+        if not self.stores:
+            return set(_MODE_TO_LAYERS[self.mode])
+        layers = set(self.stores)
+        # Summaries are not searched, only shown, and a hit shows its code
+        # instead. With the body asked for, the signature row is never shown.
+        if layers & {RetrievalLayer.CODE, RetrievalLayer.AST_SUMMARY}:
+            layers = layers - {RetrievalLayer.AST, RetrievalLayer.AST_SUMMARY}
+            layers.add(RetrievalLayer.CODE)
+        return layers
 
 
 def register(server: MCPServer, services: MCPServices) -> None:
