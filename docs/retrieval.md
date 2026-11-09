@@ -79,6 +79,10 @@ ordering, so this is a performance characteristic rather than a contract.
 A stream that errors logs a warning and contributes an empty list. Partial
 results beat no results — but a cancelled request still propagates.
 
+All streams share one session and one transaction, so each runs inside its own
+savepoint. Without it, a SQL error in one stream would abort the transaction and
+every later stream would fail with it.
+
 ::: tip The `simple` tsvector configuration
 The code store's full-text index uses PostgreSQL's `simple` configuration rather
 than `english`. English stemming is actively harmful on identifiers: it would

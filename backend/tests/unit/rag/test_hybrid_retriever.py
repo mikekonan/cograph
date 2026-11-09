@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 import uuid
 from dataclasses import replace
+import contextlib
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -17,6 +18,13 @@ import pytest
 
 from backend.app.rag.hybrid import HybridRetriever  # type: ignore[import-not-found]
 from backend.app.rag.retriever import RetrievedChunk
+
+
+def _session() -> AsyncMock:
+    # retrieve runs each stream inside `session.begin_nested()`.
+    session = AsyncMock()
+    session.begin_nested = contextlib.nullcontext
+    return session
 
 
 def _chunk(cid: uuid.UUID, store: str = "code", score: float = 0.5) -> RetrievedChunk:
@@ -89,7 +97,7 @@ async def test_fan_out_invokes_all_three_streams_for_code_store():
     )
 
     result = await retriever.retrieve(
-        AsyncMock(),
+        _session(),
         query_text="foo",
         query_embedding=[0.1] * 1536,
         repository_id=uuid.uuid4(),
@@ -126,7 +134,7 @@ async def test_partial_failure_in_one_stream_degrades_gracefully():
     )
 
     result = await retriever.retrieve(
-        AsyncMock(),
+        _session(),
         query_text="foo",
         query_embedding=[0.1] * 1536,
         repository_id=uuid.uuid4(),
@@ -154,7 +162,7 @@ async def test_per_stream_candidate_cap_applied_pre_merge():
     )
 
     result = await retriever.retrieve(
-        AsyncMock(),
+        _session(),
         query_text="foo",
         query_embedding=[0.1] * 1536,
         repository_id=uuid.uuid4(),
@@ -178,7 +186,7 @@ async def test_skips_code_store_without_repository_id():
         router=_NeverRouter(),
     )
     result = await retriever.retrieve(
-        AsyncMock(),
+        _session(),
         query_text="foo",
         query_embedding=[0.1] * 1536,
         repository_id=None,
@@ -205,7 +213,7 @@ async def test_invokes_reranker_when_router_allows():
     )
 
     result = await retriever.retrieve(
-        AsyncMock(),
+        _session(),
         query_text="foo",
         query_embedding=[0.1] * 1536,
         repository_id=uuid.uuid4(),
@@ -233,7 +241,7 @@ async def test_router_skip_means_reranker_never_called():
         router=_NeverRouter(),
     )
     await retriever.retrieve(
-        AsyncMock(),
+        _session(),
         query_text="foo",
         query_embedding=[0.1] * 1536,
         repository_id=uuid.uuid4(),
@@ -258,7 +266,7 @@ async def test_empty_query_text_skips_lexical_and_symbol_streams():
         router=_NeverRouter(),
     )
     result = await retriever.retrieve(
-        AsyncMock(),
+        _session(),
         query_text="",
         query_embedding=[0.1] * 1536,
         repository_id=uuid.uuid4(),
@@ -287,7 +295,7 @@ async def test_md_collections_store_fans_out_vector_and_lexical():
     )
 
     result = await retriever.retrieve(
-        AsyncMock(),
+        _session(),
         query_text="foo",
         query_embedding=[0.1] * 1536,
         collection_id=uuid.uuid4(),
@@ -315,7 +323,7 @@ async def test_skips_md_collections_without_collection_id():
         router=_NeverRouter(),
     )
     result = await retriever.retrieve(
-        AsyncMock(),
+        _session(),
         query_text="foo",
         query_embedding=[0.1] * 1536,
         collection_id=None,
@@ -356,7 +364,7 @@ async def test_forwards_temporal_filters_to_all_streams():
     until = datetime(2026, 4, 21, 12, 0, tzinfo=UTC)
 
     await retriever.retrieve(
-        AsyncMock(),
+        _session(),
         query_text="foo",
         query_embedding=[0.1] * 1536,
         repository_id=uuid.uuid4(),
