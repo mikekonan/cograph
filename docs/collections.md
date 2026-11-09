@@ -370,6 +370,8 @@ Four of the fourteen MCP tools:
 Collections are also first-class in `cograph_route`, scored in their own pool —
 and always returned up to the requested count even at low confidence, because a
 glossary frequently answers a question whose vocabulary does not appear in it.
+A caller with only one collection gets it without a score: one collection has
+nothing to be ranked against.
 
 REST lives under `/api/md-collections`: CRUD, single and batch document upload,
 document read and delete, chunk listing, `search`, `embed-status`, `re-embed`,

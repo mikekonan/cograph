@@ -36,7 +36,7 @@ class RouteHitResponse(BaseModel):
     kind: Literal["repository", "collection"]
     id: str
     label: str
-    score: float
+    score: float | None  # None: the caller's only collection, not ranked
     why: str
 
 
@@ -51,7 +51,7 @@ def _to_response(hit: RouteHit) -> RouteHitResponse:
         kind=hit.kind,  # type: ignore[arg-type]
         id=hit.id,
         label=hit.label,
-        score=round(hit.score, 3),
+        score=None if hit.score is None else round(hit.score, 3),
         why=hit.why,
     )
 

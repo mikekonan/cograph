@@ -18,26 +18,17 @@ import re
 # \w, not A-Za-z: lexical code search takes its words from here too, and
 # code comments are not only in English.
 _TOKEN_RE = re.compile(r"[\w./:-]+")
-_STOPWORDS = frozenset(
+
+# Question and function words: they match almost any text and carry no topic.
+# Shared with the source router (`rag/source_router.py`).
+STOPWORDS = frozenset(
     {
-        "a",
-        "an",
-        "and",
-        "are",
-        "does",
-        "for",
-        "how",
-        "in",
-        "is",
-        "of",
-        "or",
-        "the",
-        "to",
-        "what",
-        "where",
-        "which",
-        "who",
-        "why",
+        "a", "about", "an", "and", "are", "as", "at", "be", "by", "can",
+        "could", "do", "does", "for", "from", "has", "have", "how", "i", "if",
+        "in", "into", "is", "it", "its", "me", "my", "of", "on", "or", "our",
+        "should", "that", "the", "their", "there", "these", "this", "those",
+        "to", "was", "we", "were", "what", "when", "where", "which", "who",
+        "why", "will", "with", "would", "you", "your",
     }
 )
 
@@ -55,7 +46,7 @@ def extract_query_terms(query: str, *, max_terms: int = 8) -> list[str]:
     seen: set[str] = set()
     for raw in _TOKEN_RE.findall(query or ""):
         term = raw.lower().strip("._-:/")
-        if len(term) < 2 or term in _STOPWORDS or term in seen:
+        if len(term) < 2 or term in STOPWORDS or term in seen:
             continue
         seen.add(term)
         terms.append(term)

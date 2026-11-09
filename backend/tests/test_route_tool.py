@@ -20,9 +20,13 @@ scoring tests via the REST mirror.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from backend.app.core.auth import TokenType, create_token, hash_password
+from backend.app.mcp.services import encode_payload
+from backend.app.mcp.tools.route import _hit_payload
 from backend.app.models.code_node import CodeNode
 from backend.app.models.enums import (
     CodeNodeType,
@@ -306,6 +310,10 @@ async def test_route_matches_collection_title_and_headings(db_session, settings)
             {"text": "Consignee", "level": 2},
         ],
     )
+    # Two collections: both get a score, ranked against each other.
+    await _make_collection(
+        db_session, name="Frontend notes", description="UI build scripts."
+    )
     hits = await route_sources(
         db_session,
         query="what does carrier mean",
@@ -314,9 +322,10 @@ async def test_route_matches_collection_title_and_headings(db_session, settings)
         top_k=3,
     )
     coll_hits = [h for h in hits if h.kind == "collection"]
-    assert coll_hits, hits
-    assert coll_hits[0].label == "Engineering glossary"
+    assert [h.label for h in coll_hits] == ["Engineering glossary", "Frontend notes"]
     assert "carrier" in coll_hits[0].why.lower()
+    assert coll_hits[0].score is not None and coll_hits[1].score is not None
+    assert coll_hits[0].score > coll_hits[1].score
 
 
 @pytest.mark.asyncio
@@ -561,6 +570,10 @@ async def test_route_collection_finds_entity_in_body(
         )
     )
     await db_session.commit()
+    # A second collection, so the pool is ranked (one alone is not scored).
+    await _make_collection(
+        db_session, name="Frontend notes", description="UI build scripts."
+    )
 
     hits = await route_sources(
         db_session,
@@ -616,6 +629,9 @@ async def test_route_always_returns_top_collection_even_without_lexical_match(
         )
     )
     await db_session.commit()
+    await _make_collection(
+        db_session, name="Warehouse runbook", description="Stock counts."
+    )
 
     hits = await route_sources(
         db_session,
@@ -625,22 +641,102 @@ async def test_route_always_returns_top_collection_even_without_lexical_match(
         top_k=3,
     )
     coll_hits = [h for h in hits if h.kind == "collection"]
-    assert coll_hits, (
+    assert {h.label for h in coll_hits} == {
+        "Frontend Tooling Notes",
+        "Warehouse runbook",
+    }, (
         "collections must always be returned (structural guarantee), even "
         "when no token matched — the agent needs to see that docs exist so "
         "it can decide to skim the outline. Got: " + repr(hits)
     )
-    top_coll = coll_hits[0]
-    assert top_coll.label == "Frontend Tooling Notes"
-    assert top_coll.score < 0.3, (
-        f"no lexical match → score must be in the weak/fallback bucket; "
-        f"got {top_coll.score:.3f}"
+    for coll_hit in coll_hits:
+        assert coll_hit.score is not None and coll_hit.score < 0.3, (
+            f"no lexical match → score must be in the weak/fallback bucket; "
+            f"got {coll_hit.score}"
+        )
+        why_lower = coll_hit.why.lower()
+        assert "weak" in why_lower or "fallback" in why_lower, (
+            f"weak/fallback marker missing — agent won't know to treat this "
+            f"as a 'verify by reading' recommendation; got: {coll_hit.why!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_route_lists_the_only_collection_without_a_score(
+    client, db_session, settings
+) -> None:
+    """With one collection there is nothing to rank it against, and plain
+    coverage over a large docs mirror scored it high for unrelated questions.
+    It is listed so the agent knows docs exist, with no score."""
+    await _make_collection(
+        db_session,
+        name="Shipping Glossary",
+        description="Carrier terms and acronyms.",
+        heading_tree=[{"text": "Carrier", "level": 2}],
     )
-    why_lower = top_coll.why.lower()
-    assert "weak" in why_lower or "fallback" in why_lower, (
-        f"weak/fallback marker missing — agent won't know to treat this as "
-        f"a 'verify by reading' recommendation; got: {top_coll.why!r}"
+    hits = await route_sources(
+        db_session,
+        query="carrier terms",
+        current_user=None,
+        settings=settings,
+        top_k=3,
     )
+    [only] = [h for h in hits if h.kind == "collection"]
+    assert only.label == "Shipping Glossary"
+    assert only.score is None
+    assert "only collection" in only.why
+
+    # MCP drops the key, REST sends null.
+    mcp_payload = json.loads(encode_payload({"collections": [_hit_payload(only)]}))
+    assert "score" not in mcp_payload["collections"][0]
+    response = await client.post("/api/route", json={"query": "carrier terms"})
+    assert response.status_code == 200, response.text
+    assert response.json()["collections"][0]["score"] is None
+
+
+@pytest.mark.asyncio
+async def test_route_matches_whole_words_not_substrings(
+    db_session, settings
+) -> None:
+    """`get` must not match a repo whose text only has `target`. It still
+    matches a whole word, here the camelCase part of a module name."""
+    await _make_public_repo(
+        db_session,
+        host="git.example.com",
+        owner="team",
+        name="build-targets",
+        readme="# Build targets\n\nThe default target packs the warehouse image.",
+    )
+    inventory = await _make_public_repo(
+        db_session, host="git.example.com", owner="team", name="inventory"
+    )
+    db_session.add(
+        CodeNode(
+            repository_id=inventory.id,
+            file_path="src/stock/getLevels.ts",
+            qualified_name="src/stock/getLevels",
+            name="getLevels",
+            language="typescript",
+            node_type=CodeNodeType.MODULE,
+            start_line=1,
+            end_line=40,
+            content="export function getLevels() {}\n",
+            content_hash="g" * 64,
+        )
+    )
+    await db_session.commit()
+
+    hits = await route_sources(
+        db_session,
+        query="get",
+        current_user=None,
+        settings=settings,
+        top_k=3,
+    )
+    labels = [h.label for h in hits if h.kind == "repository"]
+    assert labels == ["git.example.com/team/inventory"], hits
+    assert hits[0].score is not None and hits[0].score > 0.5
+    assert "symbols" in hits[0].why
 
 
 # ---------- REST mirror tests -------------------------------------------------
