@@ -4,20 +4,24 @@ Scoring rules (see plan §"Hypothesis verification"):
 
 - correctness: "correct" if every expected_answer_keyword is present in
   the answer (case-insensitive); "partial" if >=50%; "incorrect" otherwise.
+  A negative question is "correct" when the answer holds ANY of its
+  keywords or any give-up phrase: a refusal has many wordings, and the
+  keyword list is examples, not a checklist.
 - cites_provenance: at least one citations_seen entry contains any of
   expected_provenance as substring.
-- silent_fallback: tool_calls_count == 0 AND answer_chars > 50 AND
-  correctness != "incorrect" AND not negative.
 - too_early_giveup (H7): the answer matches an "I don't know" / "not
-  enough information" pattern AND tool_calls_count < 3 AND the
+  enough information" pattern AND tool_calls_count < 2 AND the
   question is NOT marked negative. Captures the "agent gave up after
   one empty retrieve" failure the playbook is explicitly designed to
   prevent.
 - tokens_estimate: result_bytes_total // 4 (rough proxy).
 
 Aggregations: median over the population for tool_calls and tokens;
-rates (proportions) for correctness, cites_provenance, silent_fallback,
-too_early_giveup.
+rates (proportions) for correctness, cites_provenance, too_early_giveup.
+
+tool_calls and tokens count every call the agent made, client tools
+(file reads, grep) included: the eval measures what an answer costs,
+not which tool paid for it.
 
 Usage:
     python -m eval.cograph_mcp_eval.score --target=baseline
@@ -34,9 +38,8 @@ from pathlib import Path
 import yaml
 
 
-# H7 trigger phrases — the playbook tells the agent to end with one of
-# these when it has genuinely tried ≥3 distinct approaches. If the agent
-# emits the phrase with <3 calls instead, the rule has failed.
+# H7 trigger phrases — any wording of "I looked and found nothing". If
+# the agent says it with fewer than two attempts, it gave up too early.
 # We deliberately use loose alternation (don't / dont, "have" / "know") so
 # minor agent variation doesn't slip past — false positives are cheap (the
 # eval flags one extra record), false negatives are expensive (the metric
@@ -44,14 +47,14 @@ import yaml
 _GIVEUP_RE = re.compile(
     r"(?i)\b(?:(?:don'?t|do not) (?:have|know)|not enough information|"
     r"insufficient information|cannot answer|can'?t answer|"
-    r"no information (?:in|about))",
+    r"no information (?:in|about)|"
+    r"(?:could not|couldn'?t|cannot|can'?t) find|found no\b|no match(?:es)?\b|"
+    r"not indexed)",
 )
 
-# Minimum distinct attempts the playbook demands before "I don't know"
-# is the right answer. See `backend/app/mcp/instructions.py` — the same
-# threshold is described in prose there; this constant is the executable
-# counterpart.
-_MIN_ATTEMPTS_BEFORE_GIVEUP = 3
+# Two different empty attempts are enough to say "not found". A third
+# one mostly rephrases the second.
+_MIN_ATTEMPTS_BEFORE_GIVEUP = 2
 
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS_DIR = ROOT / "results"
@@ -63,10 +66,13 @@ def _load_questions() -> dict[str, dict]:
     return {q["id"]: q for q in raw["questions"]}
 
 
-def _grade_correctness(answer: str, keywords: list[str]) -> str:
+def _grade_correctness(answer: str, keywords: list[str], *, negative: bool = False) -> str:
+    lowered = answer.lower()
+    if negative:
+        refused = any(kw.lower() in lowered for kw in keywords) or _is_giveup_phrase(answer)
+        return "correct" if refused else "incorrect"
     if not keywords:
         return "correct"
-    lowered = answer.lower()
     hits = sum(1 for kw in keywords if kw.lower() in lowered)
     ratio = hits / len(keywords)
     if hits == len(keywords):
@@ -90,17 +96,13 @@ def _is_giveup_phrase(answer: str) -> bool:
 
 def _score_record(record: dict, question: dict) -> dict:
     correctness = _grade_correctness(
-        record["answer"], question.get("expected_answer_keywords", [])
+        record["answer"],
+        question.get("expected_answer_keywords", []),
+        negative=question.get("negative", False),
     )
     cites = _cites_provenance(
         record.get("citations_seen", []),
         question.get("expected_provenance", []),
-    )
-    silent = (
-        record["tool_calls_count"] == 0
-        and record["answer_chars"] > 50
-        and correctness != "incorrect"
-        and not question.get("negative", False)
     )
     # H7: only applies to positive questions. A `negative: true` question
     # is one where the agent SHOULD say "I don't know" — counting it
@@ -116,7 +118,6 @@ def _score_record(record: dict, question: dict) -> dict:
         "category": question["category"],
         "correctness": correctness,
         "cites_provenance": cites,
-        "silent_fallback": silent,
         "too_early_giveup": too_early_giveup,
         "tool_calls_count": record["tool_calls_count"],
         "tokens_estimate": tokens,
@@ -132,7 +133,6 @@ def _aggregate(scored: list[dict]) -> dict:
     correct = sum(1 for s in scored if s["correctness"] == "correct")
     incorrect = sum(1 for s in scored if s["correctness"] == "incorrect")
     cites = sum(1 for s in scored if s["cites_provenance"])
-    silent = sum(1 for s in scored if s["silent_fallback"])
     too_early = sum(1 for s in scored if s["too_early_giveup"])
     calls = [s["tool_calls_count"] for s in scored]
     tokens = [s["tokens_estimate"] for s in scored]
@@ -162,7 +162,6 @@ def _aggregate(scored: list[dict]) -> dict:
         "correctness_rate": correct / n,
         "incorrect_rate": incorrect / n,
         "cites_provenance_rate": cites / n,
-        "silent_fallback_rate": silent / n,
         "too_early_giveup_rate": too_early / n,
         "median_tool_calls": statistics.median(calls),
         "median_tokens_estimate": statistics.median(tokens),

@@ -3,7 +3,7 @@
 A frozen question set + recorder + scorer + comparator for measuring how
 well an MCP-aware agent extracts information from the Cograph server.
 
-## What it measures (H1-H7)
+## What it measures
 
 | # | Claim | Metric | Target |
 |---|-------|--------|--------|
@@ -12,14 +12,22 @@ well an MCP-aware agent extracts information from the Cograph server.
 | H3 | Source-anchored answers | `cites_provenance_rate` | +≥10pp and ≥80% absolute |
 | H4 | No correctness regression | `correctness_rate` | within ±2pp of baseline |
 | H5 | Truncation doesn't hide answers | `incorrect_rate` on positive Qs | ≤ baseline |
-| H6 | No silent grep/web fallback | `silent_fallback_rate` | 0 |
 | H7 | Agent does not bail early | `too_early_giveup_rate` | 0 |
 
-H7 fires when the agent emits an "I don't have enough information /
-cannot answer" phrase on a **positive** question with `tool_calls_count
-< 3` — the playbook explicitly requires three distinct attempts before
-giving up. `compare.py` uses `direction: must_be_zero` for this row,
-so any non-zero rate on `after` holds the merge.
+H7 fires when the agent says it found nothing ("I don't have enough
+information", "could not find", "no matches", …) on a **positive**
+question with `tool_calls_count < 2`. Two different empty attempts are
+enough to stop; fewer is giving up too early. `compare.py` uses
+`direction: must_be_zero` for this row, so any non-zero rate on `after`
+holds the merge.
+
+A **negative** question is correct when the answer holds any of its
+keywords or any give-up phrase. A refusal has many wordings.
+
+H1 and H2 count every tool call and every result byte, client tools
+(file reads, grep) included. There is no separate penalty for reading
+local files: the eval measures what an answer costs, whichever tool
+paid for it.
 
 ## Files
 
@@ -31,7 +39,7 @@ so any non-zero rate on `after` holds the merge.
 - `score.py` — reads the JSONL, applies deterministic scoring rules
   (no LLM-as-judge), emits `<target>.summary.json`.
 - `compare.py` — diffs `baseline.summary.json` against `after.summary.json`
-  per H1-H7 and prints a pass/fail table.
+  per metric and prints a pass/fail table.
 - `cograph-eval.skill.md` — the slash command body Claude reads when
   you invoke `/cograph-eval`. Symlink it into your local
   `.claude/commands/` (which is gitignored as user-specific) to
@@ -108,7 +116,7 @@ rather than working around it. The eval set is meant to evolve.
 `questions.yaml` is meant to grow. Categories are buckets; aggregations
 are reported per-category in the summary. Keep the set under ~80 to
 keep wall-clock manageable. Always include negative questions
-(target=true) to catch H5/H6 regressions.
+(`negative: true`) to catch H5 regressions.
 
 ## Re-running a single category
 

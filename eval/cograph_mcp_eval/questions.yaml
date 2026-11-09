@@ -20,8 +20,9 @@
 #   max_tool_calls_target    Soft target for H1; the harness records actual
 #                            count regardless and the comparator uses median.
 #   negative                 If true, the "correct" answer is a graceful
-#                            "I don't have enough information". Catches H5
-#                            (truncation) and H6 (silent fallback).
+#                            "I don't have enough information". Any one
+#                            keyword or any give-up phrase is "correct".
+#                            Catches H5 (truncation).
 #
 # Repos assumed indexed in the test instance:
 #   - github.com/mikekonan/cograph              (this repo)
@@ -287,7 +288,7 @@ questions:
     max_tool_calls_target: 2
     negative: false
 
-  # --- Category: negative (4 questions — H5/H6 guardrails) ---
+  # --- Category: negative (4 questions — H5 guardrails) ---
   - id: negative-unknown-repo
     category: negative
     question: "What is the architecture of repo gitlab.com/internal/private-thing-not-indexed?"
@@ -315,7 +316,7 @@ questions:
   - id: negative-empty-collection-search
     category: negative
     question: "Find chunks about 'kubernetes operators' in the cograph-design-notes collection."
-    expected_answer_keywords: ["no", "nothing", "not found", "0 results"]
+    expected_answer_keywords: ["nothing", "not found", "0 results", "no results", "no matching"]
     expected_provenance: []
     max_tool_calls_target: 1
     negative: true

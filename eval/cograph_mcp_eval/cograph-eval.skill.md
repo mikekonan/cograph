@@ -31,7 +31,8 @@ For each question in `questions.yaml`:
    `Grep`/`Explore`. Do NOT fetch from the web. The whole point of
    the eval is to measure what the agent extracts from Cograph, not
    what it can pull from your environment.
-3. For each tool call, record:
+3. Record **every** tool call you make, Cograph or not. A `Read`, `Grep`
+   or `Bash` call counts too: the score is what the answer cost. For each:
    - `name` — the exact tool name as called.
    - `args` — the arguments you passed (omit secrets).
    - `result_bytes` — `len(result_as_string)` (best-effort).
@@ -58,9 +59,10 @@ For each question in `questions.yaml`:
    JSON
    ```
 
-7. Negative questions (`negative: true`): the *correct* answer is a
-   graceful "I don't have enough information" / "no such symbol" /
-   "out of scope". Do NOT hallucinate. Do NOT fall back to web.
+7. Negative questions (`negative: true`): the *correct* answer says
+   plainly that nothing was found, in any wording ("no such symbol",
+   "not indexed", "out of scope"). Do NOT hallucinate. Do NOT fall back
+   to web.
 8. If a question genuinely cannot be answered with the current MCP
    surface (e.g. no `outline` tool exists yet at baseline), still
    attempt with whatever tool comes closest, record what you actually
