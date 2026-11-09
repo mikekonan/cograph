@@ -84,6 +84,7 @@ completion:
 # retrieval:
 #   rrf_k: 60            # reciprocal-rank-fusion constant
 #   candidate_cap: 300   # candidates per stream, before fusion
+#   hnsw_iterative_scan: "off"   # pgvector >= 0.8: relaxed_order | strict_order
 #   rerank:
 #     enabled: true
 #     threshold: 50      # candidate count below which reranking is skipped

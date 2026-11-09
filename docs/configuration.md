@@ -211,6 +211,7 @@ The timeouts here apply to the wiki and summary providers even in database mode.
 | --- | --- | --- |
 | `rrf_k` | `RETRIEVAL__RRF_K` | `60` |
 | `candidate_cap` | `RETRIEVAL__CANDIDATE_CAP` | `300` |
+| `hnsw_iterative_scan` | `RETRIEVAL__HNSW_ITERATIVE_SCAN` | `off` |
 | `rerank.enabled` | `RETRIEVAL__RERANK__ENABLED` | `true` |
 | `rerank.threshold` | `RETRIEVAL__RERANK__THRESHOLD` | `50` |
 | `rerank.provider` | `RETRIEVAL__RERANK__PROVIDER` | `disabled` |
@@ -219,6 +220,14 @@ The timeouts here apply to the wiki and summary providers even in database mode.
 `rrf_k` is the reciprocal-rank-fusion constant; `candidate_cap` bounds how many
 candidates each stream contributes before fusion. `rerank.threshold` is the
 candidate count below which reranking is skipped as not worth the latency.
+
+`hnsw_iterative_scan` is pgvector's `hnsw.iterative_scan` (pgvector 0.8 or
+newer): `off`, `relaxed_order` or `strict_order`. All repositories share one
+HNSW index and the repository filter applies after the index walk, so with `off`
+a large repository can get few or no vector candidates. Cograph sends it as a
+connection startup parameter, together with the statement timeout and TCP
+keepalives. Postgres does not reject a wrong value there, it falls back to `off`;
+the setting accepts only the three values, so a typo fails at startup instead.
 
 ::: warning Only two rerank providers actually work
 `provider` accepts `disabled`, `local_cross_encoder`, `cohere`, `voyage` and
