@@ -98,8 +98,37 @@ curl -sS https://cograph.example.com/api/retrieve \
       }'
 ```
 
-Response fields match the [MCP envelope](/mcp#response-envelope) — same builder,
-same provenance, same `total_tokens_estimate`.
+The response holds `results`, the graph `nodes` (with `include.graph`),
+`total_tokens_estimate` and `mode`. Each result is one row per layer:
+
+```jsonc
+{
+  "layer": "code | ast | ast_summary | repo_doc",
+  "score": 0.81,
+  "snippet": "≤ snippet_chars characters",
+  "content_truncated": true,
+  "provenance": {
+    "node_id": "uuid-or-null",
+    "qualified_name": "module.symbol-or-null",
+    "file_path": "src/auth/middleware.py",
+    "start_line": 42,
+    "end_line": 58,
+    "document_id": "uuid-or-null",
+    "heading_path": ["Errors"],
+    "first_seen_commit": "sha-or-null",
+    "last_changed_commit": "sha-or-null",
+    "last_changed_at": "iso-8601-or-null"
+  },
+  "metadata": {
+    "rerank_score": null,
+    "candidate_from": ["vector", "lexical"]
+  },
+  "related_repo_doc_chunks": [ /* … */ ]
+}
+```
+
+The MCP tools read the same rows and merge them into one record per place; see
+the [MCP envelope](/mcp#response-envelope).
 
 Parameter bounds: `top_k` 1–100 (the MCP tool clamps to 25), `snippet_chars`
 80–4000. The three temporal parameters are validated against each other.

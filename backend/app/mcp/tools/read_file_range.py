@@ -25,11 +25,11 @@ from backend.app.models.source_file import SourceFile
 
 _READ_FILE_RANGE_DESCRIPTION = (
     "Read a 1-indexed line range of a source file by repo slug + path.\n"
-    "Use when: you have a `file_path` (typically from `provenance` on a "
-    "cograph_retrieve / cograph_search_code / cograph_read_node result) and "
-    "need the lines around a hit that a node-bounded read won't capture. "
-    "Aim at the hit: start ~20 lines above provenance.start_line and stop "
-    "~20 below end_line; do not start at line 1 unless you need the imports. "
+    "Use when: you have a file path (typically `at` on a cograph_retrieve / "
+    "cograph_search_code hit, or `provenance` on a cograph_read_node result) "
+    "and need the lines around a hit that a node-bounded read won't capture. "
+    "Aim at the hit: start ~20 lines above its start line and stop ~20 below "
+    "its end line; do not start at line 1 unless you need the imports. "
     "Do not re-read lines already in your context.\n"
     "Do NOT use to read one function or type (use cograph_read_node — exact "
     "body, no guessed window), to guess a path you have not seen in a result, "

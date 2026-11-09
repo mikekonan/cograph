@@ -140,7 +140,7 @@ re-embedding everything: unchanged nodes keep their vectors.
 
 | Value | Layers searched |
 | --- | --- |
-| `code` | `code`, `ast`, `ast_summary` |
+| `code` | `code`, `ast_summary` |
 | `wiki` | `repo_doc` — the repository's **checked-in** markdown, *not* the generated wiki |
 | `mixed` | The broad set: `code`, `ast_summary`, `repo_doc`. Default |
 

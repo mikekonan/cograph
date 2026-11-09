@@ -36,8 +36,11 @@ def test_mixed_mode_excludes_bare_ast():
     }
 
 
-def test_code_mode_keeps_ast_for_power_users():
-    assert RetrievalLayer.AST in _args(mode="code").resolved_layers()
+def test_code_mode_skips_the_signature_row_shown_only_without_a_body():
+    assert _args(mode="code").resolved_layers() == {
+        RetrievalLayer.CODE,
+        RetrievalLayer.AST_SUMMARY,
+    }
 
 
 def test_explicit_stores_override_mode():
