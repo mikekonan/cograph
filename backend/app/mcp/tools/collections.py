@@ -4,7 +4,8 @@ from mcp.server.mcpserver import Context, MCPServer
 from pydantic import BaseModel, Field, field_validator
 
 from backend.app.mcp.services import (
-    READ_ONLY,
+    read_only,
+    search_hint,
     MCPServices,
     collection_document_payload,
     collection_search_payload,
@@ -60,7 +61,7 @@ class ReadChunkToolArgs(BaseModel):
 def register(server: MCPServer, services: MCPServices) -> None:
     @server.tool(
         name="cograph_collections",
-        annotations=READ_ONLY,
+        annotations=read_only("List doc collections"),
         description=(
             "List markdown collections readable by the authenticated MCP user.\n"
             "Use when: target collection_id is unknown — start here to enumerate.\n"
@@ -85,7 +86,7 @@ def register(server: MCPServer, services: MCPServices) -> None:
 
     @server.tool(
         name="cograph_collection_document",
-        annotations=READ_ONLY,
+        annotations=read_only("Read a doc"),
         description=(
             "Read one full markdown collection document with parsed metadata "
             "(headings, code blocks, tables, links). No truncation.\n"
@@ -115,13 +116,16 @@ def register(server: MCPServer, services: MCPServices) -> None:
 
     @server.tool(
         name="cograph_collection_search",
-        annotations=READ_ONLY,
+        annotations=read_only("Search team docs"),
+        meta=search_hint(
+            "docs, documentation, glossary, definition, design decision, spec"
+        ),
         description=(
             "Hybrid search inside one readable markdown collection. Returns "
             "query-anchored excerpts (snippet + content_truncated) per chunk "
             "with a top-level total_tokens_estimate.\n"
-            "Use when: agent has a known collection_id and a natural-language "
-            "question targeting markdown content.\n"
+            "Use when: you have a collection_id and a question for team docs: "
+            "what a term means, a product rule, why something was decided.\n"
             "Do NOT use to search code/wiki across repositories (use "
             "cograph_retrieve) or to read a chunk fully (use cograph_read_chunk)."
         ),
@@ -161,7 +165,7 @@ def register(server: MCPServer, services: MCPServices) -> None:
 
     @server.tool(
         name="cograph_read_chunk",
-        annotations=READ_ONLY,
+        annotations=read_only("Read a doc chunk"),
         description=(
             "Fetch the full content of one markdown collection chunk by id.\n"
             "Use when: cograph_collection_search returned a hit with "

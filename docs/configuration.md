@@ -284,7 +284,6 @@ text is never retained. Retention is enforced by a daily prune job.
 | --- | --- | --- |
 | `allowed_hosts` | `MCP__ALLOWED_HOSTS` | `[]` |
 | `allowed_origins` | `MCP__ALLOWED_ORIGINS` | `[]` |
-| `briefing_max_length` | `MCP__BRIEFING_MAX_LENGTH` | `8000` (256–32768) |
 
 Setting a non-empty `allowed_hosts` automatically enables DNS-rebinding
 protection on the MCP transport. Do set it for an internet-facing deployment.

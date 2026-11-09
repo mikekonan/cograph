@@ -1,9 +1,7 @@
 """MCP tool: `cograph_route(query, top_k=3)`.
 
-Cheap source-routing step the playbook tells the agent to call FIRST when
-the user's question doesn't name a specific repository. The agent then
-fans out to the returned candidates (per the playbook's "≥0.7 take all,
-else top-2" rule) rather than burning tokens on a global retrieve.
+Optional source-routing step for a question that names no repository.
+The agent searches the top one or two candidates.
 
 Returns top-`k` repository candidates AND top-`k` collection candidates
 side by side — the agent treats them as two independent verticals. See
@@ -16,7 +14,8 @@ from mcp.server.mcpserver import Context, MCPServer
 from pydantic import BaseModel, Field
 
 from backend.app.mcp.services import (
-    READ_ONLY,
+    read_only,
+    search_hint,
     MCPServices,
     current_user_from_context,
     encode_payload,
@@ -26,19 +25,16 @@ from backend.app.rag.source_router import RouteHit, route_sources
 
 
 _DESCRIPTION = (
-    "Locate the repositories and markdown collections most likely to "
-    "contain the answer to a natural-language query. Returns up to "
-    "`top_k` candidates per kind with a `score` in [0, 1] and a one-line "
-    "`why` explanation.\n"
-    "Use when: the user's question does NOT name a specific repository "
-    "or collection — call this first, then fan out to ALL high-confidence "
-    "candidates (score ≥ 0.7) with cograph_outline / cograph_retrieve. "
-    "Facts routinely span sources; collapsing to a single candidate is a "
-    "bug.\n"
-    "Do NOT use when the user already named a slug (skip straight to "
-    "cograph_outline + cograph_retrieve with `repository=<slug>`), and "
-    "do NOT use as a substitute for cograph_retrieve — route returns "
-    "*pointers to sources*, not snippets."
+    "Rank the repositories and markdown collections most likely to "
+    "hold the answer to a natural-language query. Returns up to "
+    "`top_k` candidates per kind with a rough `score` in [0, 1] and a "
+    "one-line `why`.\n"
+    "Use when: the question does not name a repository and you do not "
+    "know which one holds the answer. Optional: skip it when you know "
+    "the repository. Use the top 1-2 candidates; scores are rough.\n"
+    "Do NOT use when the repository is known (go straight to "
+    "cograph_search_code or cograph_retrieve), and do NOT use instead of "
+    "cograph_retrieve: route returns pointers to sources, not code."
 )
 
 
@@ -58,7 +54,12 @@ def _hit_payload(hit: RouteHit) -> dict[str, object]:
 
 
 def register(server: MCPServer, services: MCPServices) -> None:
-    @server.tool(name="cograph_route", description=_DESCRIPTION, annotations=READ_ONLY)
+    @server.tool(
+        name="cograph_route",
+        description=_DESCRIPTION,
+        annotations=read_only("Find the right repository"),
+        meta=search_hint("which repository, find repo, list repos, where does it live"),
+    )
     async def route(
         query: str,
         top_k: int = 3,

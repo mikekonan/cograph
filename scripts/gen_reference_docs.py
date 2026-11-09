@@ -120,7 +120,7 @@ TAG_GROUPS: list[tuple[str, str, str]] = [
     (
         "admin-mcp",
         "MCP briefing",
-        "The operator briefing injected into every MCP session.",
+        "The operator briefing, served as the `cograph://briefing` MCP resource.",
     ),
     ("webhooks", "Inbound webhooks", "Push events that trigger a sync."),
     (
@@ -609,7 +609,7 @@ def render_mcp(tools: list[tuple[Any, dict[str, dict]]]) -> str:
         "the agent reads when deciding which tool to call.",
         "",
         "See [MCP server](/mcp) for connecting a client, the response envelope, the "
-        "token budget and the built-in playbook.",
+        "token budget and the server instructions.",
         "",
         "::: info Where the bounds come from",
         "The schema an agent receives is derived from the handler signature, so it "

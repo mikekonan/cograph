@@ -259,7 +259,7 @@ Encrypted provider credentials.
 
 ## MCP briefing
 
-The operator briefing injected into every MCP session.
+The operator briefing, served as the `cograph://briefing` MCP resource.
 
 | Operation | Purpose | Parameters | Request | Response |
 | --- | --- | --- | --- | --- |

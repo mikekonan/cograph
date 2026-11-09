@@ -119,7 +119,6 @@ completion:
 #   # any internet-facing deployment.
 #   allowed_hosts: []
 #   allowed_origins: []
-#   briefing_max_length: 8000  # 256..32768
 
 # archive_upload:
 #   # Zip-bomb guards for the repository-upload path. max_compressed_bytes is

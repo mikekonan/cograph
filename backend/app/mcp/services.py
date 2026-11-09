@@ -65,9 +65,16 @@ from backend.app.wiki.compact import (
 )
 
 
-# Every tool only reads. Clients run read-only tools in parallel; without the
-# hint they call them one by one.
-READ_ONLY = ToolAnnotations(readOnlyHint=True)
+def read_only(title: str) -> ToolAnnotations:
+    # Every tool only reads. Clients run read-only tools in parallel; without the
+    # hint they call them one by one. Clients show `title` in tool lists.
+    return ToolAnnotations(title=title, readOnlyHint=True)
+
+
+def search_hint(words: str) -> dict[str, str]:
+    # Claude Code defers MCP tools and finds them by keyword (ToolSearch); this
+    # key adds words to match on. The model never reads it.
+    return {"anthropic/searchHint": words}
 
 
 @dataclass(slots=True, kw_only=True)

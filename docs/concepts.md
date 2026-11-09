@@ -90,8 +90,8 @@ discovered in a repository: product requirements, architecture decisions,
 glossaries, a mirrored internal wiki. Collections are not tied to any
 repository, have their own visibility model, and are searchable alongside code.
 
-The division of labour, as the agent playbook puts it: code answers *how*;
-collections answer *what* and *why*.
+The division of labour: code answers *how*; collections answer *what* and
+*why*.
 
 ## Wiki page
 

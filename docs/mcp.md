@@ -179,7 +179,7 @@ with `cograph_read_file_range` — up to 1000 lines, unmodified.
 ::: warning `mode: "wiki"` does not search the generated wiki
 It searches the repository's **checked-in** markdown. The generated wiki is reached
 through the wiki resource and `cograph_wiki_page`. This is the single most common
-confusion, and the built-in playbook warns agents about it explicitly.
+confusion, and the `cograph_retrieve` description warns agents about it.
 :::
 
 ### Read
@@ -233,41 +233,28 @@ involved. Two consequences: it can never drift from the pages it summarises, and
 an improvement to how it is compacted reaches every repository on the next read at
 zero token cost.
 
-## The built-in playbook
+## Server instructions
 
-Cograph ships instructions to every client at `initialize`, composed of two
-layers.
+Cograph sends short instructions to every client at `initialize`, about 1,600
+characters. Clients show only the start of long instructions, so the text holds
+three things and nothing else:
 
-**The playbook** is the same for every deployment. It encodes the retrieval
-strategy the tools are designed around:
+- **When to use Cograph.** A repository outside the working directory, a search
+  by meaning, team docs. For a repository on disk with a known name, the agent's
+  own grep and file reads are cheaper and may be newer than the index.
+- **How to answer: find, read, stop.** Find with `cograph_search_code` for a
+  name and `cograph_retrieve` for a question in words. Read the best one or two
+  hits with `cograph_read_node`. Stop once the answer is read and can be cited;
+  most questions need 2-4 calls.
+- **Citations.** `path:start-end` for code, title and heading for docs.
 
-- **Step 0 — route.** If the question does not name a source, call
-  `cograph_route` first. Use *all* candidates scoring ≥ 0.7, and at least the top
-  two regardless of score. Three rules make a re-route mandatory, including when
-  routing returned only one candidate.
-- **Step 1 — wiki first.** Where a wiki exists, the compact map is the mandatory
-  first read.
-- **Step 2 — fan out.** Search docs and code in parallel, with at least three
-  distinct phrasings per source.
-- **Step 3 — widen,** then fall back to symbol search.
-- **Step 4 — synthesise** from every candidate, not the first hit.
-- A ceiling of **12 tool calls** per question.
-- Citations are mandatory, in the form `file_path:start-end`, `wiki/<slug>`, or
-  `collection/<id>#<heading>`.
+Rules that belong to one tool live in that tool's description: when
+`cograph_route` is worth calling, what each `cograph_retrieve` mode searches,
+where `cograph_wiki_page` slugs come from. The text itself is in
+`backend/app/mcp/instructions.py`.
 
-The governing principle: one hit is a lead, three concurring hits are an answer.
-
-**The operator briefing** is yours. Edit it at `/admin?tab=mcp` to tell agents
-what this particular deployment is for — domain vocabulary, canonical sources,
-local rules. Default cap 8000 characters
-(`COGRAPH_MCP__BRIEFING_MAX_LENGTH`, range 256–32768); longer text is truncated
-with a marker.
-
-::: info Briefing changes reach clients on their next `initialize`
-The rendered instructions are cached per process. After an edit, sibling workers
-can lag by one update or until a restart, and any already-connected client keeps
-the instructions it was given at connect time.
-:::
+The operator briefing at `/admin?tab=mcp` is not part of the instructions.
+Agents can read it only through the `cograph://briefing` resource.
 
 ## Access control
 

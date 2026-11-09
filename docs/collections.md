@@ -19,8 +19,7 @@ models and access rules:
 | **Tables** | `repo_documents`, `repo_document_chunks`, `repo_document_chunk_mentions` | `md_collections`, `md_documents`, `md_chunks`, `md_links`, `md_jobs` |
 
 They are not shared code, and the differences are deliberate. The division of
-labour, as the agent playbook frames it: **code answers *how*; collections answer
-*what* and *why*.**
+labour: **code answers *how*; collections answer *what* and *why*.**
 
 ---
 
