@@ -90,6 +90,25 @@ async def test_limit_is_taken_as_top_k(client, db_session):
     assert seen["top_k"] == 3
 
 
+async def test_path_prefix_reaches_the_search_relative_to_the_root(client, db_session):
+    plaintext = await _seed(db_session)
+    seen: dict = {}
+
+    async def _payload(**kwargs):
+        seen.update(kwargs)
+        return {"results": []}
+
+    with patch("backend.app.mcp.tools.search_code.search_code_payload", _payload):
+        result = await _search_code(
+            client,
+            plaintext,
+            {"repository": _SLUG, "query": "Pallet", "path_prefix": "./internal/shipping/"},
+        )
+
+    assert not result.get("isError"), result
+    assert seen["path_prefix"] == "internal/shipping/"
+
+
 async def test_unknown_argument_is_an_error_naming_the_valid_ones(client, db_session):
     plaintext = await _seed(db_session)
 
