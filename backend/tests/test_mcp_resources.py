@@ -328,3 +328,57 @@ async def test_graph_resources_are_not_served_over_mcp(app, db_session) -> None:
             "cograph://repo/github.com/acme/searchindex/graph/node/"
             "00000000-0000-0000-0000-000000000000"
         )
+
+
+@pytest.mark.asyncio
+async def test_resources_see_the_pat_caller_over_http(client, db_session) -> None:
+    # The SDK hands a static resource no `Context`, so the caller must come
+    # from the auth wrapper's contextvar. Without it every resource read ran
+    # anonymous: my-context listed nothing and the wiki of a private repo
+    # failed with NOT_FOUND.
+    import hashlib
+
+    from backend.app.models.personal_access_token import PersonalAccessToken
+
+    user = User(email="res@example.com", password_hash="x", role=UserRole.ADMIN)
+    db_session.add(user)
+    await db_session.flush()
+    plaintext = "cgr_pat_" + "r" * 48
+    db_session.add(
+        PersonalAccessToken(
+            user_id=user.id,
+            name="res",
+            token_hash=hashlib.sha256(plaintext.encode()).digest(),
+            token_prefix=plaintext[:16],
+            scopes=["api:read", "mcp"],
+        )
+    )
+    db_session.add(
+        Repository(
+            host="github.com",
+            owner="acme",
+            name="secret",
+            git_url="https://github.com/acme/secret.git",
+            branch="main",
+            status=RepositoryStatus.READY,
+            visibility=RepositoryVisibility.ADMIN_ONLY,
+        )
+    )
+    await db_session.commit()
+
+    async def read(uri: str) -> dict:
+        response = await client.post(
+            "/mcp/",
+            headers={"Authorization": f"Bearer {plaintext}", "Accept": "application/json"},
+            json={"jsonrpc": "2.0", "id": 1, "method": "resources/read", "params": {"uri": uri}},
+        )
+        assert response.status_code == 200
+        return response.json()
+
+    context = await read("cograph://my-context")
+    slugs = [i["slug"] for i in json.loads(context["result"]["contents"][0]["text"])["repositories"]["items"]]
+    assert "github.com/acme/secret" in slugs
+
+    wiki = await read("cograph://repo/github.com/acme/secret/wiki")
+    assert "error" not in wiki, wiki
+    assert json.loads(wiki["result"]["contents"][0]["text"])["total"] == 0

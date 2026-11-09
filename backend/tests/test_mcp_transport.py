@@ -325,11 +325,10 @@ async def test_mcp_streamable_http_entrypoint_serves_node_tool(tmp_path):
 
         assert [item["layer"] for item in payload["results"]] == [
             "code",
-            "ast",
             "ast_summary",
         ]
         assert (
-            payload["results"][2]["snippet"] == "Raises the repo-not-ready guardrail."
+            payload["results"][1]["snippet"] == "Raises the repo-not-ready guardrail."
         )
     finally:
         _terminate_process(process)
@@ -373,11 +372,14 @@ async def test_mounted_mcp_streamable_http_app_serves_node_tool(tmp_path):
 
         assert [item["layer"] for item in payload["results"]] == [
             "code",
-            "ast",
             "ast_summary",
         ]
+        # read_node returns the body as code: real lines, not collapsed.
+        assert payload["results"][0]["snippet"] == (
+            "def raise_repo_not_ready() -> None:\n    raise RuntimeError('E_REPO_NOT_READY')"
+        )
         assert (
-            payload["results"][2]["snippet"] == "Raises the repo-not-ready guardrail."
+            payload["results"][1]["snippet"] == "Raises the repo-not-ready guardrail."
         )
     finally:
         _terminate_process(process)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -27,6 +28,7 @@ from backend.app.core.repository_access import (
     get_readable_repository_by_slug,
 )
 from backend.app.db.session import SessionManager
+from backend.app.mcp.auth import mcp_actor_var
 from backend.app.graph.traversal import (
     GraphTraversalService,
     TraversalDirection,
@@ -75,8 +77,37 @@ class MCPServices:
     wiki_queries: WikiQueryService
 
 
-def encode_payload(value: object) -> object:
-    return jsonable_encoder(value)
+def encode_payload(value: object) -> str:
+    """One tool result as compact JSON text.
+
+    Returning text keeps the SDK from pretty-printing a dict with
+    `indent=2`. Nulls and empty containers are dropped below the top level:
+    unset scores, empty doc links and empty metadata were a large share of
+    every search hit and told the agent nothing. Top-level keys stay, so an
+    empty `results` still reads as "no hits".
+    """
+
+    encoded = jsonable_encoder(value)
+    if isinstance(encoded, dict):
+        encoded = {key: _drop_empty(item) for key, item in encoded.items()}
+    return json.dumps(encoded, ensure_ascii=False, separators=(",", ":"))
+
+
+# A graph node's empty `callers` means "looked, none": it answers the question.
+_KEEP_EMPTY = frozenset({"callers", "callees"})
+
+
+def _drop_empty(value: object) -> object:
+    if isinstance(value, dict):
+        pairs = ((key, _drop_empty(item)) for key, item in value.items())
+        return {
+            key: item
+            for key, item in pairs
+            if key in _KEEP_EMPTY or item not in (None, [], {})
+        }
+    if isinstance(value, list):
+        return [_drop_empty(item) for item in value]
+    return value
 
 
 ArgsT = TypeVar("ArgsT", bound=BaseModel)
@@ -131,6 +162,9 @@ def current_user_from_context(ctx: object | None) -> User | None:
             state_dict = scope.get("state")
             if isinstance(state_dict, dict):
                 actor = state_dict.get("cograph_actor")
+    if actor is None:
+        # Resources get no `Context`; the auth wrapper's contextvar still has it.
+        actor = mcp_actor_var.get()
     return getattr(actor, "user", None)
 
 
@@ -374,13 +408,11 @@ async def node_payload(
                 "end_line": node.end_line,
             },
         )
-        requested_layers: set[RetrievalLayer] = {
-            RetrievalLayer.CODE,
-            RetrievalLayer.AST,
-        }
+        # No AST row: it only repeated the signature that opens the body.
+        requested_layers: set[RetrievalLayer] = {RetrievalLayer.CODE}
         if with_summary:
             requested_layers.add(RetrievalLayer.AST_SUMMARY)
-        return await services.context_builder.build(
+        response = await services.context_builder.build(
             session,
             chunks=[chunk],
             requested_layers=requested_layers,
@@ -390,6 +422,22 @@ async def node_payload(
             include_scores=False,
             snippet_chars=snippet_chars,
         )
+    # Search snippets collapse whitespace; a body read for its code keeps the
+    # real lines, cut on a line boundary so the rest continues by line number.
+    for result in response.results:
+        if result.layer == RetrievalLayer.CODE:
+            result.snippet, result.content_truncated = _head_lines(
+                node.content or "", snippet_chars
+            )
+    response.total_tokens_estimate = sum(len(r.snippet) for r in response.results) // 4
+    return response
+
+
+def _head_lines(text: str, chars: int) -> tuple[str, bool]:
+    if len(text) <= chars:
+        return text, False
+    cut = text.rfind("\n", 0, chars)
+    return text[: cut if cut > 0 else chars], True
 
 
 async def search_code_payload(

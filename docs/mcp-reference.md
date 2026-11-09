@@ -31,7 +31,7 @@ Do NOT use to read a repo's docs (use cograph_repository_readme) or to search in
 | --- | --- | --- | --- | --- |
 | `search` | string | no | — | — |
 | `status` | `pending` \| `cloning` \| `indexing` \| `embedding` \| `generating` \| `ready` \| `error` \| `deleting` | no | — | — |
-| `limit` | integer | no | `100` | 1–100 |
+| `limit` | integer | no | `100` | ≥ 1 |
 
 ### `cograph_collections`
 
@@ -122,7 +122,7 @@ Do NOT use for symbol-exact lookups (use cograph_search_code) or to read a known
 
 ### `cograph_search_code`
 
-Lexical + fuzzy symbol search over a repository's code nodes. Returns names + line ranges (no body) so the agent can pick the right node, then read it with cograph_read_node.
+Lexical + fuzzy symbol search over a repository's code nodes. Returns signatures + line ranges (no body), at most 25 hits, so the agent can pick the right node, then read it with cograph_read_node(node_id=provenance.node_id).
 
 Use when: agent has a probable symbol name (class, function, qualified path) and wants a symbol-exact lookup.
 
@@ -132,7 +132,7 @@ Do NOT use for natural-language questions (use cograph_retrieve with mode=code) 
 | --- | --- | --- | --- | --- |
 | `repository` | string | yes | — | — |
 | `query` | string | yes | — | non-empty |
-| `top_k` | integer | no | `10` | 1–100 |
+| `top_k` | integer | no | `10` | ≥ 1 |
 
 ### `cograph_collection_search`
 
@@ -155,9 +155,9 @@ Exact content for something already identified by a search or an outline.
 
 ### `cograph_read_node`
 
-Read one code node's body with its AST citation. The body is a whitespace-collapsed excerpt of at most snippet_chars (default 600, max 4000), and `content_truncated` says whether anything was cut — if a node is larger than the maximum, read its line range with cograph_read_file_range instead.
+Read one code node's exact source (a function, method or type) with its AST citation. The body keeps its real lines from provenance.start_line, at most snippet_chars (default 6000, max 16000) cut on a line boundary; if `content_truncated`, continue with cograph_read_file_range.
 
-Use when: you have a known node_id (typically from cograph_search_code or cograph_retrieve) and need the actual code, not a list of hits.
+Use when: you have a node_id (from cograph_search_code, cograph_retrieve or cograph_related) and need its code. Prefer it to cograph_read_file_range for a whole function: it returns exactly the node, no guessed line window.
 
 Do NOT use to search by name (use cograph_search_code) or to explore neighbours by graph (use cograph_related). Pass with_graph=true / with_summary=true / with_linked_docs=true only when you actually need the heavier payload — defaults skip them to keep tokens bounded.
 
@@ -168,15 +168,15 @@ Do NOT use to search by name (use cograph_search_code) or to explore neighbours 
 | `with_graph` | boolean | no | `false` | — |
 | `with_summary` | boolean | no | `false` | — |
 | `with_linked_docs` | boolean | no | `false` | — |
-| `snippet_chars` | integer | no | `600` | 80–4000 |
+| `snippet_chars` | integer | no | `6000` | 80–16000 |
 
 ### `cograph_read_file_range`
 
 Read a 1-indexed line range of a source file by repo slug + path.
 
-Use when: you have a `file_path` (typically from `provenance` on a cograph_retrieve / cograph_search_code / cograph_read_node result) and need a few dozen lines of surrounding context that a node-bounded read won't capture.
+Use when: you have a `file_path` (typically from `provenance` on a cograph_retrieve / cograph_search_code / cograph_read_node result) and need the lines around a hit that a node-bounded read won't capture. Aim at the hit: start ~20 lines above provenance.start_line and stop ~20 below end_line; do not start at line 1 unless you need the imports. Do not re-read lines already in your context.
 
-Do NOT use to dump whole files (the range is capped at 1000 lines) or to search by content (use cograph_retrieve).
+Do NOT use to read one function or type (use cograph_read_node — exact body, no guessed window), to guess a path you have not seen in a result, to dump whole files (the range is capped at 1000 lines) or to search by content (use cograph_retrieve).
 
 | Parameter | Type | Required | Default | Bounds |
 | --- | --- | --- | --- | --- |

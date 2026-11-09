@@ -11,12 +11,15 @@ from backend.app.mcp.services import (
     search_code_payload,
     tool_args,
 )
+from backend.app.mcp.tools.retrieve import MAX_TOP_K
 
 
 class SearchCodeToolArgs(BaseModel):
     repository: str
     query: str = Field(min_length=1)
-    top_k: int = Field(default=10, ge=1, le=100)
+    # Clamped like cograph_retrieve: hits past ~25 are rarely followed up,
+    # yet each one costs the agent context for the rest of the session.
+    top_k: int = Field(default=10, ge=1)
 
     @field_validator("query")
     @classmethod
@@ -26,14 +29,20 @@ class SearchCodeToolArgs(BaseModel):
             raise ValueError("query must not be blank")
         return stripped
 
+    @field_validator("top_k")
+    @classmethod
+    def _clamp_top_k(cls, value: int) -> int:
+        return min(value, MAX_TOP_K)
+
 
 def register(server: MCPServer, services: MCPServices) -> None:
     @server.tool(
         name="cograph_search_code",
         description=(
             "Lexical + fuzzy symbol search over a repository's code nodes. "
-            "Returns names + line ranges (no body) so the agent can pick the "
-            "right node, then read it with cograph_read_node.\n"
+            "Returns signatures + line ranges (no body), at most 25 hits, so "
+            "the agent can pick the right node, then read it with "
+            "cograph_read_node(node_id=provenance.node_id).\n"
             "Use when: agent has a probable symbol name (class, function, "
             "qualified path) and wants a symbol-exact lookup.\n"
             "Do NOT use for natural-language questions (use cograph_retrieve "
