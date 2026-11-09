@@ -32,18 +32,19 @@ RetrieveMode = Literal["code", "wiki", "mixed"]
 MAX_TOP_K = 25
 
 _MODE_TO_LAYERS: dict[RetrieveMode, set[RetrievalLayer]] = {
-    "code": {RetrievalLayer.CODE, RetrievalLayer.AST, RetrievalLayer.AST_SUMMARY},
+    # No bare AST layer: a node's signature row is dropped from the output
+    # whenever its body row is there, so asking for it only spent top_k.
+    "code": {RetrievalLayer.CODE, RetrievalLayer.AST_SUMMARY},
     "wiki": {RetrievalLayer.REPO_DOC},
-    # `mixed` drops the bare AST layer (signature duplicates the CODE body
-    # row for the same node) — see BROAD_RETRIEVAL_LAYERS.
     "mixed": set(BROAD_RETRIEVAL_LAYERS),
 }
 
 _RETRIEVE_DESCRIPTION = (
     "Hybrid search across code, AST summaries, and checked-in docs of one "
-    "repository. Returns query-anchored excerpts with citations; an excerpt "
-    "is not the whole code, so read the best one or two hits with "
-    "cograph_read_node.\n"
+    "repository. Returns one record per place: a code hit as {node_id, name, "
+    "at: path:start-end, code, summary}, a doc as {heading_path, at, text}.\n"
+    "`code` is a query-anchored excerpt, not the whole body; read the best "
+    "one or two hits with cograph_read_node(node_id).\n"
     "`repository` is required, as host/owner/name. Unknown repository: pick "
     "one with cograph_repositories or cograph_route. `top_k` bounds the "
     "results (clamped to 25); the default 10 is usually enough.\n"
@@ -170,7 +171,7 @@ def register(server: MCPServer, services: MCPServices) -> None:
             repository_id=repository_id,
             top_k=args.top_k,
         ) as log_bucket:
-            response = await retrieve_payload(
+            payload = await retrieve_payload(
                 services=services,
                 query=args.query,
                 repository_id=repository_id,
@@ -187,5 +188,5 @@ def register(server: MCPServer, services: MCPServices) -> None:
                 mode=args.mode,
                 usage_sink=log_bucket,
             )
-            log_bucket["result_count"] = count_response_results(response)
-            return encode_payload(response)
+            log_bucket["result_count"] = count_response_results(payload)
+            return encode_payload(payload)

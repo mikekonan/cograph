@@ -56,9 +56,9 @@ def register(server: MCPServer, services: MCPServices) -> None:
         ),
         description=(
             "Lexical + fuzzy symbol search over a repository's code nodes. "
-            "Returns signatures + line ranges (no body), at most 25 hits, so "
-            "the agent can pick the right node, then read it with "
-            "cograph_read_node(node_id=provenance.node_id).\n"
+            "Returns at most 25 records {node_id, name, at: path:start-end, "
+            "code}, where `code` is the signature, not the body. Pick the "
+            "right node, then read it with cograph_read_node(node_id).\n"
             "path_prefix (a folder from the repository root, e.g. "
             "internal/shipping/) keeps only hits under it.\n"
             "Use when: you have a word from the code: a name (class, "
@@ -97,12 +97,12 @@ def register(server: MCPServer, services: MCPServices) -> None:
             repository_id=repo.id,
             top_k=args.top_k,
         ) as log_bucket:
-            response = await search_code_payload(
+            payload = await search_code_payload(
                 services=services,
                 repository_id=repo.id,
                 query=args.query,
                 top_k=args.top_k,
                 path_prefix=args.path_prefix or "",
             )
-            log_bucket["result_count"] = count_response_results(response)
-            return encode_payload(response)
+            log_bucket["result_count"] = count_response_results(payload)
+            return encode_payload(payload)

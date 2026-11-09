@@ -53,52 +53,52 @@ on DNS-rebinding protection for the MCP transport.
 
 ## Response envelope
 
-`cograph_retrieve` and `cograph_search_code` return this shape:
+`cograph_retrieve` and `cograph_search_code` return one record per place, in
+rank order: a code node or a doc section.
 
 ```jsonc
 {
-  "results": [ /* … */ ],
-  "total_tokens_estimate": 2840,
-  "mode": "code"            // or "wiki" / "mixed"; null for non-retrieve tools
+  "results": [
+    {
+      "node_id": "uuid",
+      "name": "shipping.label.Print",
+      "at": "shipping/label.go:42-58",
+      "code": "≤ snippet_chars characters",
+      "truncated": true,
+      "summary": "what the function does"
+    },
+    {
+      "heading_path": ["Labels", "Printing"],
+      "at": "docs/labels.md",
+      "text": "≤ snippet_chars characters"
+    }
+  ],
+  "note": "Hits marked truncated are cut. Read a code hit in full with cograph_read_node(node_id)."
 }
 ```
 
-Each result:
+- **One place, one record.** The search finds a code node as up to three rows:
+  its body, its signature and its summary. They come out as one record. The
+  signature stands in as `code` only when there is no body row, so
+  `cograph_search_code` shows signatures, not bodies.
+- **`code`** and **`text`** are query-anchored excerpts, never a full body.
+  Default 600 characters (~150 tokens); override with `snippet_chars` in
+  `[80, 4000]`.
+- **`truncated`** is set when the excerpt is cut, and then the top-level `note`
+  appears. Follow up with `cograph_read_node(node_id)` only when the answer needs
+  the rest.
+- **`at`** is the citation: `path:start-end` for code, with 1-indexed inclusive
+  lines. A doc cites `at` and `heading_path`.
+- Docs that mention a code hit (`include_chunks=true`, the default) come as doc
+  records right after it.
+- Only when asked: `score` with `include_scores=true`, `last_changed_at` when the
+  call passed `as_of`, `since` or `until`, and the graph `nodes` with
+  `include_graph=true`.
+- `cograph_search_code` leaves out whole-file module nodes (`…#module`). They
+  match any name in their file and would take a slot from the function itself.
 
-```jsonc
-{
-  "layer": "code | ast | ast_summary | repo_doc",
-  "score": 0.81,
-  "snippet": "≤ snippet_chars characters",
-  "content_truncated": true,
-  "provenance": {
-    "node_id": "uuid-or-null",
-    "qualified_name": "module.symbol-or-null",
-    "file_path": "src/auth/middleware.py",
-    "start_line": 42,
-    "end_line": 58,
-    "document_id": "uuid-or-null",
-    "heading_path": ["Errors"],
-    "first_seen_commit": "sha-or-null",
-    "last_changed_commit": "sha-or-null",
-    "last_changed_at": "iso-8601-or-null"
-  },
-  "metadata": {
-    "rerank_score": null,
-    "candidate_from": ["vector", "lexical"]
-  },
-  "related_repo_doc_chunks": [ /* … */ ]
-}
-```
-
-- **`snippet`** — a query-anchored excerpt, never a full body. Default 600
-  characters (~150 tokens); override with `snippet_chars` in `[80, 4000]`.
-- **`content_truncated`** — `true` when the source was longer than the snippet.
-  Follow up with `cograph_read_node` or `cograph_read_chunk` only when the answer
-  actually needs the rest.
-- **`provenance`** — what makes the answer quotable. Line numbers are 1-indexed
-  and inclusive.
-- **`metadata.candidate_from`** — which retrieval streams nominated this hit.
+The REST `/api/retrieve` and the web UI keep the full response: one row per layer,
+with provenance, commit SHAs and stream metadata.
 
 Every tool result is compact JSON. Below the top level, `null` fields and empty
 lists or objects are left out, so a missing key means "not set". The exception is
@@ -106,34 +106,21 @@ a graph node's `callers` and `callees`: when the graph was requested, an empty l
 is kept and means "looked, found none". Top-level keys always stay, so an empty
 `results` still reads as "no hits".
 
-::: warning `vector_score` and `bm25_score` are not populated
-The result metadata declares them, but only `rerank_score` is ever filled in. Use
-`candidate_from` and the fused ordering to reason about why a hit surfaced.
-:::
-
 ::: info `cograph_collection_search` has its own shape
-It is not this envelope. Collection results carry the collection's metadata and
-flat per-result fields, with no `mode` and no nested `provenance` object — cite
-them as `collection/<id>#<heading>`. Treat each tool's response as its own
-contract rather than assuming one universal schema.
+Collection results carry the collection's metadata and one row per chunk, with
+its ids, heading path and snippet. Cite them as `collection/<id>#<heading>`.
+Treat each tool's response as its own contract rather than assuming one
+universal schema.
 :::
 
-## Token-budget contract
+## Token budget
 
-An agent should be able to budget without tokenizing anything:
-
-- `total_tokens_estimate` is `sum(len(snippet)) // 4` across the response — a
-  deliberately conservative proxy.
-- `top_k=10` at the default snippet width caps snippet payload at roughly 1.5k
-  tokens regardless of how large the underlying files are.
+- `top_k=10` at the default snippet width caps the payload at roughly 1.5k
+  tokens, however large the underlying files are.
 - `top_k` is clamped to **25** and bounds the result count.
-- If `total_tokens_estimate` exceeds ~8000, react: lower `top_k`, narrow the
-  query, or turn off `include_graph` / `include_chunks`.
-
-::: info Result count is the lever, not snippet width
-A single chunk can produce more than one result row, because it may be returned at
-several layers. Reduce `top_k` before reducing `snippet_chars`.
-:::
+- Result count is the lever, not snippet width. If a response is too large,
+  lower `top_k`, narrow the query, or turn off `include_graph` /
+  `include_chunks`.
 
 ## Tool catalog
 
@@ -163,7 +150,7 @@ response.
 | `cograph_search_code` | Lexical and fuzzy-symbol lookup over code nodes. Names and line ranges, **no bodies** |
 | `cograph_collection_search` | Hybrid search inside one collection |
 
-`mode` maps to layers: `code` → code + signatures + summaries, `wiki` →
+`mode` maps to layers: `code` → code and summaries, `wiki` →
 repository documents, `mixed` → the broad set. A **non-empty** `stores` list
 replaces that selection; an empty list is accepted and ignored, so omit `stores`
 rather than passing `[]`.

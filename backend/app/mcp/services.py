@@ -341,6 +341,83 @@ def count_response_results(response: object) -> int | None:
         return None
 
 
+def compact_hits(
+    response: RetrievalResponse,
+    *,
+    with_dates: bool = False,
+    with_graph: bool = False,
+) -> dict[str, object]:
+    """A search response as the agent reads it: one record per place.
+
+    The builder returns one code node as up to three rows (body, signature,
+    summary), each with the same citation, two commit SHAs and stream
+    metadata, and repeats the docs linked to the node on every row. Here a
+    node becomes one record and a doc section another, in the order each
+    first appears. REST and the web UI keep the full response.
+    """
+
+    places: dict[object, dict[str, Any]] = {}
+    for row in response.results:
+        cite = row.provenance
+        if cite.node_id is None:
+            _add_doc(places, cite.file_path, cite.heading_path, row.snippet, row.content_truncated)
+            continue
+        record = places.get(cite.node_id)
+        if record is None:
+            record = places[cite.node_id] = {
+                "node_id": cite.node_id,
+                "name": cite.qualified_name,
+                "at": _at(cite.file_path, cite.start_line, cite.end_line),
+                "score": row.score,
+                "last_changed_at": cite.last_changed_at if with_dates else None,
+            }
+        if row.layer is RetrievalLayer.AST_SUMMARY:
+            record["summary"] = row.snippet
+        elif row.layer is RetrievalLayer.CODE or "code" not in record:
+            # The signature row stands in only for a node with no body row.
+            record["code"] = row.snippet
+            record["truncated"] = row.content_truncated or None
+        for linked in row.related_repo_doc_chunks:
+            _add_doc(places, linked.file_path, linked.heading_path, linked.snippet, False)
+
+    records = list(places.values())
+    payload: dict[str, object] = {"results": records}
+    if any(record.get("truncated") for record in records):
+        payload["note"] = (
+            "Hits marked truncated are cut. Read a code hit in full with "
+            "cograph_read_node(node_id)."
+        )
+    if with_graph:
+        payload["nodes"] = response.nodes
+    return payload
+
+
+def _at(path: str | None, start: int | None, end: int | None) -> str | None:
+    return path if start is None else f"{path}:{start}-{end}"
+
+
+def _add_doc(
+    places: dict[object, dict[str, Any]],
+    path: str | None,
+    heading_path: list[str] | None,
+    text: str,
+    truncated: bool,
+) -> None:
+    key = (path, tuple(heading_path or ()))
+    record = places.get(key)
+    if record is None:
+        places[key] = {
+            "heading_path": heading_path,
+            "at": path,
+            "text": text,
+            "truncated": truncated or None,
+        }
+    elif text not in record["text"]:
+        # Two chunks of one long section share the citation: one record.
+        record["text"] += " … " + text
+        record["truncated"] = record["truncated"] or truncated or None
+
+
 async def retrieve_payload(
     *,
     services: MCPServices,
@@ -358,7 +435,7 @@ async def retrieve_payload(
     snippet_chars: int = DEFAULT_SNIPPET_CHARS,
     mode: str | None = None,
     usage_sink: dict | None = None,
-) -> RetrievalResponse:
+) -> dict[str, object]:
     async with services.session_manager.session() as session:
         embed_provider = services.embed_provider
         if embed_provider is None:
@@ -367,7 +444,7 @@ async def retrieve_payload(
                 settings=services.settings,
             )
             embed_provider = runtime_providers.embed_provider
-        return await retrieve_composite(
+        response = await retrieve_composite(
             session,
             query=query,
             repository_id=repository_id,
@@ -386,6 +463,11 @@ async def retrieve_payload(
             mode=mode,
             usage_sink=usage_sink,
         )
+    return compact_hits(
+        response,
+        with_dates=any(when is not None for when in (as_of, since, until)),
+        with_graph=include_graph,
+    )
 
 
 async def node_payload(
@@ -460,7 +542,7 @@ async def search_code_payload(
     query: str,
     top_k: int,
     path_prefix: str = "",
-) -> RetrievalResponse:
+) -> dict[str, object]:
     async with services.session_manager.session() as session:
         await require_ready_repository(session=session, repository_id=repository_id)
         lexical_hits = await services.lexical.search(
@@ -484,15 +566,24 @@ async def search_code_payload(
             candidate_cap=top_k,
             stream_names=["lexical", "symbol"],
         )
-        return await services.context_builder.build(
+        # A whole-file module node matches any name in its file, so it took a
+        # slot from the function the agent was looking for. Drop it before
+        # the cut: both streams were asked for top_k, so real hits fill in.
+        named = [
+            hit
+            for hit in merged
+            if not str(hit.metadata.get("qualified_name", "")).endswith("#module")
+        ]
+        response = await services.context_builder.build(
             session,
-            chunks=merged[:top_k],
+            chunks=named[:top_k],
             requested_layers={RetrievalLayer.AST},
             repository_id=repository_id,
             include_chunks=False,
             include_graph=False,
-            include_scores=True,
+            include_scores=False,
         )
+    return compact_hits(response)
 
 
 # Hard ceiling on nodes returned by `cograph_related`. Without it a BFS
@@ -945,9 +1036,8 @@ _WIKI_PAGE_MAX_CHARS = 12000
 
 
 def _approx_tokens(text: str) -> int:
-    # Coarse 4-chars-per-token estimate — a self-budgeting signal for the
-    # agent, not an accounting figure (matches the spirit of the search tools'
-    # total_tokens_estimate without pulling a tokenizer onto the read path).
+    # Coarse 4-chars-per-token estimate of a page, not an accounting figure:
+    # no tokenizer on the read path.
     return (len(text) + 3) // 4
 
 
