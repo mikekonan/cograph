@@ -203,8 +203,10 @@ evidence about nothing, so it contributes nothing.
 | Repositories | slug (`host/owner/name`), branch, the first 2000 characters of the **root** README, and a corpus of module-level qualified names and file paths (capped at 1500 per repository) |
 | Collections | name, description, flattened heading tree (within a 64 KB budget), and chunk body text via the full-text index |
 
-Matching is substring-based rather than whole-word, so a query term hits inside a
-dotted qualified name.
+Matching is by whole word. A word is a run of letters and digits, and each
+camelCase part of it: `tracker` matches `ShipmentTracker`, `card` matches
+`rate_card`, and `get` does not match `target`. Question and function words
+("how", "the", "with") are dropped from the query first.
 
 ### Two deliberate asymmetries
 
@@ -212,7 +214,9 @@ dotted qualified name.
   up to the requested count, even at score zero — a low-confidence collection is
   marked `(weak/fallback)` in its rationale. Glossaries and requirement documents
   frequently answer a question whose vocabulary does not appear in them, so
-  surfacing them cheaply is worth more than a clean cutoff.
+  surfacing them cheaply is worth more than a clean cutoff. A caller who can
+  read only one collection gets it with no score: there is nothing to rank it
+  against, and a large docs mirror would match most of any question's words.
 - **Access control is applied in the database**, inside the same query that
   scores. It is not a post-filter and cannot be bypassed by a caller: an agent
   never learns that a repository it cannot read exists.

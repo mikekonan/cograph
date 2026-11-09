@@ -48,7 +48,8 @@ def _hit_payload(hit: RouteHit) -> dict[str, object]:
         "kind": hit.kind,
         "id": hit.id,
         "label": hit.label,
-        "score": round(hit.score, 3),
+        # None (the only collection, not ranked) drops out in encode_payload.
+        "score": None if hit.score is None else round(hit.score, 3),
         "why": hit.why,
     }
 

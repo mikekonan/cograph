@@ -29,6 +29,16 @@ v3 (this commit) adds:
      SEES that a collection exists, even when lexical search finds
      nothing.
 
+A caller who can read exactly one collection gets it back with no score:
+with N=1 every idf is 0, the formula falls back to plain coverage, and a
+large docs mirror covers most of any question's words, so a score there
+would say "relevant" for questions that have nothing to do with docs.
+
+Query words match whole words of the source text, never substrings: `get`
+does not match `target`. A word is a run of letters and digits, and each
+camelCase part of it, so `tracker` matches `ShipmentTracker` and `card`
+matches `rate_card`.
+
 Searchable fields:
 
 * **Repositories**: `host/owner/name` slug + `branch` + the first ~2K
@@ -82,6 +92,7 @@ from backend.app.models.enums import CodeNodeType
 from backend.app.models.md_collection import MdCollection, MdDocument
 from backend.app.models.repository import Repository
 from backend.app.models.user import User
+from backend.app.rag.snippet import STOPWORDS
 from backend.app.repo_docs.queries import load_root_readmes
 
 
@@ -91,15 +102,10 @@ from backend.app.repo_docs.queries import load_root_readmes
 _MIN_TOKEN = 2
 _MAX_TOKEN = 64
 
-# Words too generic to discriminate sources. IDF would push these to near
-# zero weight anyway, but pre-filtering keeps the df-counting loop cheap.
-_STOPWORDS: frozenset[str] = frozenset(
-    {
-        "the", "and", "for", "with", "this", "that", "from", "what",
-        "where", "which", "how", "when", "is", "in", "on", "to", "of",
-        "a", "an", "are", "do", "does", "can", "could", "would",
-    }
-)
+# Words of the source text: whole runs of letters and digits, plus each
+# camelCase part of a run ("HTTPServer" -> "HTTP", "Server").
+_RUN_RE = re.compile(r"[A-Za-z0-9]+")
+_CAMEL_PART_RE = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z0-9]+")
 
 # How much of a README to inspect. 2000 chars covers the "what is this"
 # intro block on virtually every project; beyond it README content drifts
@@ -132,7 +138,7 @@ class RouteHit:
     kind: str  # "repository" or "collection"
     id: str
     label: str  # slug for a repo, name for a collection
-    score: float  # normalised to [0, 1]
+    score: float | None  # normalised to [0, 1]; None = not ranked
     why: str  # one-line "matched on '<tokens>' in <field>"
 
 
@@ -144,22 +150,25 @@ def _tokenise(query: str) -> list[str]:
     return [
         t
         for t in raw
-        if _MIN_TOKEN <= len(t) <= _MAX_TOKEN and t not in _STOPWORDS
+        if _MIN_TOKEN <= len(t) <= _MAX_TOKEN and t not in STOPWORDS
     ]
 
 
 def _matches_in(tokens: set[str], text: str) -> set[str]:
-    """Return the subset of `tokens` that appear as a substring in `text`
-    (case-insensitive). Substring match — not whole-word — so `parcelco` hits
-    inside `domain.shipping.parcelco.rate_card`, and a slug fragment like
-    `dispatch` hits inside `git.example.com/team/dispatch`.
+    """Return the subset of `tokens` that are whole words of `text`
+    (case-insensitive). `parcelco` hits `domain.shipping.parcelco.rate_card`
+    and `tracker` hits `ShipmentTracker`; `get` does not hit `target`.
 
     Scoring lives in `_combine_score`; this is just the field-level
     matcher."""
     if not tokens or not text:
         return set()
-    lowered = text.lower()
-    return {tok for tok in tokens if tok in lowered}
+    # Costs a few ms per full 1500-module symbol corpus, against ~0.2 ms for
+    # the substring scan it replaced. Cache word sets per repo if route
+    # latency starts to matter on large instances.
+    words = {w.lower() for w in _RUN_RE.findall(text)}
+    words.update(w.lower() for w in _CAMEL_PART_RE.findall(text))
+    return tokens & words
 
 
 def _why_line(
@@ -230,9 +239,7 @@ async def route_sources(
     )
     # Don't normalise across both pools — repos and collections are
     # independent verticals (an agent uses them differently). Caller
-    # gets the two ranked lists side by side. The top_k=3 each gives the
-    # agent up to 6 candidates total, which the playbook's "≥0.7 take all,
-    # else top-2" rule handles independently per kind.
+    # gets the two ranked lists side by side.
     return repo_hits + coll_hits
 
 
@@ -241,16 +248,15 @@ async def _load_symbol_corpus(
 ) -> dict[UUID, str]:
     """For each repo, pull a single text blob containing distinct module-
     level `qualified_name` and `file_path` strings — separated by spaces so
-    `_matches_in`'s substring scan can hit individual path/dotted
-    tokens.
+    `_matches_in` can hit individual path/dotted words.
 
     Module-level rows only (`node_type = 'module'`) — that's the one-row-
     per-file structural skeleton. We deliberately ignore functions / classes
     / methods: each file typically has dozens, the names repeat, and adding
     them would balloon the corpus to 50× the size with marginal new
-    information. The substring search in `_matches_in` matches a
-    token like `parcelco` against any qualified_name fragment it appears in,
-    so the module rows alone are enough to surface `domain.shipping.parcelco.*`.
+    information. `_matches_in` matches a token like `parcelco` against any
+    dotted or slashed part of a qualified_name, so the module rows alone
+    are enough to surface `domain.shipping.parcelco.*`.
 
     Rows per repo are capped at `_SYMBOL_CORPUS_PER_REPO_CAP` — sorted by
     `qualified_name` for determinism (alphabetical hits the prefix tree of
@@ -521,6 +527,19 @@ async def _route_collections(
     collections = list((await session.scalars(scoped)).all())
     if not collections:
         return []
+    if len(collections) == 1:
+        # Nothing to rank against (see the module docstring): list it so the
+        # agent knows docs exist, without claiming they are relevant.
+        only = collections[0]
+        return [
+            RouteHit(
+                kind="collection",
+                id=str(only.id),
+                label=only.name,
+                score=None,
+                why="the only collection; not ranked against the query",
+            )
+        ]
 
     collection_ids = [c.id for c in collections]
     heading_rows = await session.execute(
