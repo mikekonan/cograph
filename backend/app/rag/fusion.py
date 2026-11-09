@@ -1,9 +1,7 @@
 """N-way Reciprocal Rank Fusion for hybrid retrieval (Phase 7d).
 
-The 2-way ``_rrf_merge`` in retriever.py only fuses {vector, BM25}.  HybridRetriever
-needs to fuse {vector, lexical, symbol} — and the door must stay open for more
-streams later (e.g., ``ast_summary`` in Phase 7e).  ``rrf_merge_streams`` is a
-generic, deterministic, capped N-way RRF that supersedes the 2-way helper.
+HybridRetriever fuses {vector, lexical, symbol}, and the door stays open for more
+streams.  ``rrf_merge_streams`` is a generic, deterministic, capped N-way RRF.
 
 Score formula (standard RRF, Cormack et al. 2009):
 
@@ -34,8 +32,7 @@ def rrf_merge_streams(
         streams: per-source ranked candidate lists.  Each list is treated as
             its own ranking starting from rank 1.  Empty inner lists are fine.
         k: RRF constant.  Higher k flattens contribution of top ranks; 60 is
-            the canonical default from the paper and matches the existing
-            ``_rrf_merge``.  Must be > 0.
+            the canonical default from the paper.  Must be > 0.
         candidate_cap: per-stream truncation applied BEFORE fusion.  ``None``
             disables capping.  Useful to bound the cost of merging long tails.
         stream_names: optional labels recorded in each merged chunk's metadata

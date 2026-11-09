@@ -1,9 +1,7 @@
 """Unit tests for N-way Reciprocal Rank Fusion (Phase 7d).
 
-The 2-way ``_rrf_merge`` in retriever.py only handles vector + BM25.  Phase 7d
-needs a generic N-way merge to fuse {vector, lexical, symbol} streams (and to
-keep the door open for future stores).  These tests pin the contract so the
-HybridRetriever can rely on deterministic, capped, golden-stable output.
+HybridRetriever fuses {vector, lexical, symbol} streams.  These tests pin the
+contract so it can rely on deterministic, capped, golden-stable output.
 """
 from __future__ import annotations
 

@@ -1,8 +1,7 @@
 """HybridRetriever — fan-out vector + lexical + symbol → RRF → optional rerank.
 
-The Phase 7c retriever (``RagRetriever``) fuses 2 streams (vector + BM25) per
-store.  Phase 7d generalises to 3 streams (adds pg_trgm symbol lookup) and
-adds an optional cross-encoder rerank gated by ``RerankRouter``.
+Fuses 3 streams (vector, BM25 and pg_trgm symbol lookup) and adds an optional
+cross-encoder rerank gated by ``RerankRouter``.
 
 This module is the orchestration layer; the heavy lifting lives in:
   * ``vector`` — :class:`VectorRetriever` (kNN over pgvector)
@@ -109,12 +108,12 @@ class _Router(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# VectorRetriever — adapter around the SQL queries in retriever.py
+# VectorRetriever — kNN over pgvector, one query per store
 # ---------------------------------------------------------------------------
 
 
 class VectorRetriever:
-    """Vector kNN search per store, sharing the SQL with ``RagRetriever``.
+    """Vector kNN search per store.
 
     Kept as a separate class so HybridRetriever can swap it for stubs in tests
     and so the search dispatch reads naturally (vector.search(store=...)).

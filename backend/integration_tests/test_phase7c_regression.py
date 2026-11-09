@@ -1,8 +1,6 @@
-"""Phase 7c regression tests — locks Phase 7b retrieval shape and migration round-trip.
+"""Phase 7c regression tests — locks the migration round-trip.
 
 Guards:
-  - Pipeline run through EMBED_REPO_DOCS (no summaries step) still produces retrieval
-    results whose provenance ∈ {code, repo_docs, banks} with no ast_summary fragments.
   - Alembic downgrade 0017→0016 drops the two new tables; upgrade restores them cleanly.
 
 Run:
@@ -17,13 +15,6 @@ from pathlib import Path
 
 import pytest
 
-from backend.app.llm.code_embedder import CodeEmbedderService
-from backend.app.llm.embedder import FakeEmbedProvider
-from backend.app.llm.repo_document_embedder import RepoDocumentEmbedderService
-from backend.app.models.enums import RepositoryStatus, SyncSchedule
-from backend.app.models.repository import Repository
-from backend.app.pipeline.processor import RepoSyncProcessor
-from backend.app.rag.retriever import RagRetriever
 
 pytestmark = pytest.mark.integration
 
@@ -54,84 +45,6 @@ def _checkout_with_code_and_docs(tmp_path: Path) -> Path:
 # ---------------------------------------------------------------------------
 # Regression: Phase 7b retrieval shape unchanged after Phase 7c
 # ---------------------------------------------------------------------------
-
-
-async def test_retriever_provenance_unchanged_after_phase7c(
-    integration_session_manager,
-    tmp_path,
-):
-    """Pipeline through EMBED_REPO_DOCS (no summaries) still returns Phase 7b provenance.
-
-    Invariant: all result.store values must be in {"code", "repo_docs", "banks"}.
-    No "ast_summary" provenance must appear — Phase 7c wires summaries into retrieval
-    only in Phase 7d.
-    """
-    provider = FakeEmbedProvider(dims=_DIMS)
-    checkout = _checkout_with_code_and_docs(tmp_path)
-
-    async with integration_session_manager.session() as session:
-        repo = Repository(
-            git_url="git@github.com:test/phase7c-regression-provenance.git",
-            host="example.com",
-            name="phase7c-regression-provenance",
-            owner="test",
-            branch="main",
-            status=RepositoryStatus.PENDING,
-            sync_schedule=SyncSchedule.MANUAL,
-        )
-        session.add(repo)
-        await session.flush()
-        repo_id = repo.id
-
-        # Run pipeline WITHOUT summary_generator to validate 7b-shape is preserved.
-        processor = RepoSyncProcessor(
-            code_embedder_service=CodeEmbedderService(provider, batch_size=64),
-            repo_document_embedder_service=RepoDocumentEmbedderService(
-                provider, batch_size=64
-            ),
-            summary_generator=None,  # Phase 7c step explicitly disabled
-        )
-        sync_result = await processor.process_checkout(
-            session=session,
-            repository_id=repo_id,
-            checkout_path=checkout,
-        )
-
-    assert sync_result.summary_result is None, (
-        "summary_result must be None when summary_generator is not configured"
-    )
-
-    # Build a query vector from a known text so at least one code chunk is returned.
-    query_text = "greet"
-    query_embedding = (await provider.embed(["function greet\ndef greet(name): pass"]))[
-        0
-    ]
-
-    async with integration_session_manager.session() as session:
-        retriever = RagRetriever()
-        results = await retriever.retrieve(
-            session,
-            query_text=query_text,
-            query_embedding=query_embedding,
-            repository_id=repo_id,
-            stores={"code", "repo_docs"},
-            top_k=10,
-        )
-
-    assert results, "retriever must return at least one result after pipeline"
-
-    allowed_stores = {"code", "repo_docs", "banks"}
-    for r in results:
-        assert r.store in allowed_stores, (
-            f"result store '{r.store}' is not in {allowed_stores!r}; "
-            "Phase 7c must not introduce ast_summary provenance before Phase 7d"
-        )
-        assert r.store != "ast_summary", (
-            "ast_summary provenance must not appear until Phase 7d wires it into retrieval"
-        )
-        assert "ast_summary" not in r.metadata, (
-            "metadata must not contain ast_summary fragment"
-        )
 
 
 # ---------------------------------------------------------------------------
