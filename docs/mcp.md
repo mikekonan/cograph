@@ -189,8 +189,8 @@ confusion, and the `cograph_retrieve` description warns agents about it.
 | `cograph_read_node` | One code node's exact source with its citation, real lines, up to 16 000 characters |
 | `cograph_read_file_range` | A 1-indexed line range of a source file, ≤ 1000 lines |
 | `cograph_wiki_page` | One generated wiki page, or one named section — verbatim, cut at 12 000 characters |
-| `cograph_collection_document` | One full collection document plus parsed metadata, untruncated |
-| `cograph_read_chunk` | The full content of one collection chunk |
+| `cograph_collection_document` | One full collection document plus parsed metadata; past 12 000 characters, cut on a chunk boundary with the next chunk named |
+| `cograph_read_chunk` | The full content of one collection chunk, and the id of the next one |
 
 ### Traverse
 

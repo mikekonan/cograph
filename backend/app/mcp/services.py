@@ -629,6 +629,34 @@ async def collections_payload(
         }
 
 
+# A whole document longer than this comes back cut on a chunk boundary. Same
+# budget as a full wiki page: the answer also repeats code blocks and tables.
+_DOCUMENT_MAX_CHARS = 12000
+
+
+def _document_head(
+    chunks: list[Any],
+) -> tuple[str, Any] | None:
+    """Leading whole chunks that fit the budget, and the first chunk left out.
+
+    None when every chunk fits: then the document goes out whole. A first
+    chunk that alone is over the budget (one huge table or code block) is cut
+    on a line, and it is also the chunk to read next, in full.
+    """
+
+    parts: list[str] = []
+    size = 0
+    for chunk in chunks:
+        size += len(chunk.content) + 2
+        if size > _DOCUMENT_MAX_CHARS:
+            if not parts:
+                head, _ = truncate_markdown(chunk.content, max_chars=_DOCUMENT_MAX_CHARS)
+                return head, chunk
+            return "\n\n".join(parts), chunk
+        parts.append(chunk.content)
+    return None
+
+
 async def collection_document_payload(
     *,
     services: MCPServices,
@@ -659,25 +687,53 @@ async def collection_document_payload(
             )
             or 0
         )
-        return {
+        cut = None
+        if len(document.content) > _DOCUMENT_MAX_CHARS:
+            chunks = (
+                await session.execute(
+                    select(MdChunk.id, MdChunk.chunk_index, MdChunk.content)
+                    .where(MdChunk.document_id == document.id)
+                    .order_by(MdChunk.chunk_index)
+                )
+            ).all()
+            cut = _document_head(chunks)
+        head, next_chunk = cut or (document.content, None)
+        payload: dict[str, object] = {
             "id": document.id,
             "collection_id": document.collection_id,
             "collection_name": collection.name,
             "source_key": document.source_key,
             "title": document.title,
-            "content": document.content,
+            "content": head,
+            "content_truncated": next_chunk is not None,
             "bytes": document.bytes,
             "word_count": document.word_count,
             "line_count": document.line_count,
             "frontmatter": document.frontmatter,
-            "heading_tree": document.heading_tree,
-            "code_blocks": document.code_blocks,
-            "tables": document.tables,
-            "links": document.links,
             "chunk_count": chunk_count,
             "created_at": document.created_at,
             "updated_at": document.updated_at,
         }
+        if next_chunk is None:
+            payload.update(
+                heading_tree=document.heading_tree,
+                code_blocks=document.code_blocks,
+                tables=document.tables,
+                links=document.links,
+            )
+        else:
+            # The parsed lists describe the whole document and copy its code
+            # and tables, so they would undo the cut.
+            payload.update(
+                next_chunk_id=next_chunk.id,
+                next_chunk_index=next_chunk.chunk_index,
+                note=(
+                    "Document cut on a chunk boundary. Continue with "
+                    "cograph_read_chunk(chunk_id=next_chunk_id); every chunk "
+                    "names its own next_chunk_id."
+                ),
+            )
+        return payload
 
 
 async def collection_search_payload(
@@ -782,6 +838,16 @@ async def read_chunk_payload(
         if chunk is None:
             raise ToolError("NOT_FOUND: Chunk not found")
         document = await session.get(MdDocument, chunk.document_id)
+        # Lets an agent walk a cut document chunk by chunk; null after the last.
+        next_chunk_id = await session.scalar(
+            select(MdChunk.id)
+            .where(
+                MdChunk.document_id == chunk.document_id,
+                MdChunk.chunk_index > chunk.chunk_index,
+            )
+            .order_by(MdChunk.chunk_index)
+            .limit(1)
+        )
         return {
             "collection_id": collection.id,
             "collection_name": collection.name,
@@ -790,6 +856,7 @@ async def read_chunk_payload(
             "chunk_index": chunk.chunk_index,
             "heading_path": chunk.heading_path,
             "content": chunk.content,
+            "next_chunk_id": next_chunk_id,
             "source_key": document.source_key if document is not None else None,
             "title": document.title if document is not None else None,
         }
