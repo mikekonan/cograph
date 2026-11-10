@@ -195,7 +195,7 @@ async def test_clean_run_recomputes_fingerprints_without_embedding(
 # ---------------------------------------------------------------------------
 
 
-async def test_rollup_prices_known_model_and_keeps_unknown_null() -> None:
+async def test_rollup_unpriced_stage_voids_the_total() -> None:
     rollup = rollup_stages(
         {
             "wiki.write": StageUsage(
@@ -209,9 +209,9 @@ async def test_rollup_prices_known_model_and_keeps_unknown_null() -> None:
     assert rollup is not None
     assert rollup.tokens_input == 1_001_000
     assert rollup.tokens_output == 100_000
-    # gpt-4o-mini: 1M × $0.15/1M + 0.1M × $0.60/1M = $0.21 = 210_000 µUSD.
-    # The unpriced fake embed model contributes tokens but no cost.
-    assert rollup.cost_usd_micros == 210_000
+    # A partial sum would read as the whole bill; the breakdown keeps
+    # the priced stage. gpt-4o-mini: 1M × $0.15 + 0.1M × $0.60 = $0.21.
+    assert rollup.cost_usd_micros is None
     assert rollup.llm_model == "gpt-4o-mini"  # most tokens moved
     assert rollup.cost_breakdown["wiki.write"]["cost_usd_micros"] == 210_000
     assert rollup.cost_breakdown["wiki.retrieval"]["cost_usd_micros"] is None
@@ -349,3 +349,26 @@ async def test_complete_step_skips_steps_with_no_recorded_stages(
     assert job.tokens_input is None
     assert job.cost_usd_micros is None
     assert job.cost_breakdown is None
+
+
+async def test_fail_step_still_stamps_usage(db_session: AsyncSession) -> None:
+    """A wiki step that burns tokens and then fails still books them."""
+    tally = LlmUsageTally()
+    # gpt-6-sol: 200k uncached × $2 + 800k cached × $0.20 + 100k out × $10
+    # per 1M = $0.40 + $0.16 + $1.00 = $1.56.
+    tally.record(
+        stage="wiki.write",
+        model="gpt-6-sol",
+        tokens_in=1_000_000,
+        tokens_cached=800_000,
+        tokens_out=100_000,
+    )
+    processor = RepoSyncProcessor(usage_tally=tally)
+    job = await _make_job(db_session, SyncStep.GENERATE_WIKI)
+    await processor._fail_step(
+        session=db_session, job_id=job.id, error_code="timeout", error_msg="x"
+    )
+
+    assert job.status == SyncJobStatus.ERROR
+    assert job.cost_usd_micros == 1_560_000
+    assert job.llm_model == "gpt-6-sol"
