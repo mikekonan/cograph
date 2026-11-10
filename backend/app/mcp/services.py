@@ -351,6 +351,7 @@ def compact_hits(
     with_dates: bool = False,
     with_graph: bool = False,
     called_by: dict[UUID, tuple[list[dict[str, Any]], int]] | None = None,
+    tail_terms: list[str] | None = None,
 ) -> dict[str, object]:
     """A search response as the agent reads it: one record per place.
 
@@ -363,6 +364,10 @@ def compact_hits(
     `called_by` maps a node to its first callers and their total, from
     `_called_by`. Without it the records carry no `called_by` field: the
     graph was not looked at.
+
+    With `tail_terms`, code hits after the third show a short excerpt around
+    these words: the answer sits in the first three, and the rest only need
+    enough to decide whether to read them.
     """
 
     places: dict[object, dict[str, Any]] = {}
@@ -395,13 +400,14 @@ def compact_hits(
         for linked in row.related_repo_doc_chunks:
             _add_doc(places, linked.file_path, linked.heading_path, linked.snippet, False)
 
-    records = list(places.values())
-    payload: dict[str, object] = {"results": records}
-    if any(record.get("truncated") for record in records):
-        payload["note"] = (
-            "Hits marked truncated are cut. Read a code hit in full with "
-            "cograph_read_node(node_id)."
-        )
+    if tail_terms is not None:
+        code_hits = [record for record in places.values() if "code" in record]
+        for record in code_hits[_FULL_CODE_HITS:]:
+            record["code"], cut = make_snippet(
+                record["code"], tail_terms, chars=_TAIL_CODE_CHARS
+            )
+            record["truncated"] = record["truncated"] or cut or None
+    payload: dict[str, object] = {"results": list(places.values())}
     if with_graph:
         payload["nodes"] = {
             key: node.model_dump(exclude={"summary"}) for key, node in response.nodes.items()
@@ -410,10 +416,13 @@ def compact_hits(
 
 
 _CALLERS_SHOWN = 3
+_FULL_CODE_HITS = 3
+_TAIL_CODE_CHARS = 160
 
 
 # Generated-wiki pages attached to one search: each is a title and a
-# ~400-char lead, about 120 tokens. The whole page is a cograph_wiki_page call.
+# ~200-char lead, about 60 tokens: enough to decide whether to open it.
+# The whole page is a cograph_wiki_page call.
 _WIKI_PAGES_PER_SEARCH = 2
 
 
@@ -494,7 +503,7 @@ async def _wiki_pages(
         {
             "page": slug,
             "title": title,
-            "lead": extract_lead(content.get(slug) or "", max_chars=400),
+            "lead": extract_lead(content.get(slug) or "", max_chars=200),
         }
         for *_, slug, title in picked
     ]
@@ -538,7 +547,6 @@ async def _called_by(
     ranked = (
         select(
             pairs.c.callee,
-            CodeNode.id,
             CodeNode.qualified_name,
             CodeNode.file_path,
             CodeNode.start_line,
@@ -561,8 +569,8 @@ async def _called_by(
     for row in rows:
         callers, _ = found.get(row.callee, ([], 0))
         callers.append(
+            # No node_id: `at` is what the agent reads next, by range.
             {
-                "node_id": row.id,
                 "name": row.qualified_name,
                 "at": _at(row.file_path, row.start_line, row.end_line),
             }
@@ -658,6 +666,7 @@ async def retrieve_payload(
         with_dates=any(when is not None for when in (as_of, since, until)),
         with_graph=include_graph,
         called_by=called_by,
+        tail_terms=extract_query_terms(query),
     )
     if wiki:
         payload["wiki"] = wiki

@@ -131,7 +131,6 @@ def test_one_place_is_one_record_without_service_fields() -> None:
     }
     assert records[2]["code"] == "func Stack(c Crate)"  # signature only without a body row
     assert records[3]["truncated"] is True
-    assert "cograph_read_node(node_id)" in payload["note"]
 
     text = encode_payload(payload)
     assert text.count("Print a label") == 1
@@ -150,8 +149,24 @@ def test_one_place_is_one_record_without_service_fields() -> None:
         "summary",
         "Prints a parcel label.",
         "called_by",
+        "note",
     ):
         assert f'"{gone}' not in text, gone
+
+
+def test_code_after_the_third_hit_is_a_short_excerpt() -> None:
+    body = "func Load(p Pallet) { " + "stack(p); " * 40 + "seal(p) }"
+    nodes = [uuid4() for _ in range(4)]
+    rows = [_code_row(RetrievalLayer.CODE, body, node) for node in nodes]
+    rows.insert(1, _doc_row("README.md", (), "Pallets wait in bay 4."))
+    response = RetrievalResponse(results=rows)
+
+    assert compact_hits(response)["results"][4]["code"] == body
+    records = compact_hits(response, tail_terms=["seal"])["results"]
+    # Docs do not count: three code hits keep their excerpt.
+    assert [r.get("code") for r in records[:4]] == [body, None, body, body]
+    assert len(records[4]["code"]) < 200 and "seal(p)" in records[4]["code"]
+    assert records[4]["truncated"] is True
 
 
 def test_scores_dates_and_graph_stay_when_asked() -> None:

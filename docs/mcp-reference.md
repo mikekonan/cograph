@@ -94,9 +94,9 @@ Ranked candidates within one source. Returns snippets, not whole files.
 
 Hybrid search across the code and checked-in docs of one repository. Returns one record per place: a code hit as {node_id, name, at: path:start-end, called_by, code}, a doc as {heading_path, at, text}.
 
-`code` is a query-anchored excerpt, not the whole body; read the best one or two hits with cograph_read_node(node_id).
+`code` is a query-anchored excerpt, not the whole body: up to ~600 chars for the first 3 hits, ~160 for the rest. Read the best one or two hits with cograph_read_node(node_id) or their `at` with cograph_read_file_range.
 
-`called_by` lists up to 3 callers {node_id, name, at}; called_by_more counts the rest; [] means no callers. When a hit is only a helper, follow called_by to the code that uses it.
+`called_by` lists up to 3 callers {name, at}; called_by_more counts the rest; [] means no callers. When a hit is only a helper, follow called_by to the code that uses it.
 
 `repository` is required, as host/owner/name. Unknown repository: pick one with cograph_repositories or cograph_route. `top_k` bounds the results (clamped to 25); the default 10 is usually enough.
 
@@ -130,7 +130,7 @@ Do NOT use for a name from the code (use cograph_search_code) or to read a known
 
 Lexical + fuzzy symbol search over a repository's code nodes. Returns at most 25 records {node_id, name, at: path:start-end, called_by, code}, where `code` is the signature, not the body. Pick the right node, then read it with cograph_read_node(node_id).
 
-`called_by` lists up to 3 callers {node_id, name, at}; called_by_more counts the rest; [] means no callers.
+`called_by` lists up to 3 callers {name, at}; called_by_more counts the rest; [] means no callers.
 
 No hits: `reason` names the words searched for.
 
