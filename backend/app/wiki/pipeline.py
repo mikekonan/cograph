@@ -3606,6 +3606,11 @@ async def run_wiki_generation(
     )
 
     # --- Stages 4 / 4b / 5 over the (possibly restricted) write set -------
+    # Pages take minutes and use their own sessions. Left open, this read
+    # transaction idles all that time and a server-side
+    # idle_in_transaction_session_timeout closes the connection under us.
+    # Everything above only read, so ending it loses nothing.
+    await session.commit()
     bundles_by_slug: dict[str, PageBundle] = {}
     drafts, page_failures = await write_pages(
         llm=llm,
