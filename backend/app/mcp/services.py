@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import posixpath
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -420,18 +421,20 @@ async def _wiki_pages(
     session: AsyncSession,
     *,
     repository_id: UUID,
-    node_ids: list[UUID],
+    hits: dict[str, str],
     query: str,
 ) -> list[dict[str, str]]:
-    """Generated-wiki pages about a search's hits.
+    """Generated-wiki pages about a search's code hits (`hits`: node id -> file).
 
-    A page that cites a hit describes that code. Pages rank by how many hits
-    they cite, then by query words in their title and listed questions. With
-    no cited hit a page needs two query words (one, for a one-word query):
-    a single shared word like "service" matches half the wiki.
+    A page cites the code it describes. It qualifies when it cites a hit or
+    the hit's file, or when its title and listed questions share two query
+    words (one, for a one-word query). With none of these, a page whose
+    cited code shares a folder with two or more hits is the fallback; one
+    shared folder alone is too loose, a flat folder holds unrelated code.
 
-    A wiki is ~20 pages, so ranking reads only titles and citations; the
-    content loads for the winners alone.
+    A page citing an exact hit only cites its file too, so the file count
+    already ranks it; exact hits break ties. A wiki is ~20 pages, so ranking
+    reads only titles and citations; the content loads for the winners alone.
     """
 
     rows = (
@@ -440,6 +443,7 @@ async def _wiki_pages(
                 Document.slug,
                 Document.title,
                 Document.source_node_ids,
+                Document.citations,
                 Document.quality,
             ).where(
                 Document.repository_id == repository_id,
@@ -449,19 +453,30 @@ async def _wiki_pages(
     ).all()
     if not rows:
         return []
-    # source_node_ids is a JSON list of UUID strings.
-    hits = {str(node_id) for node_id in node_ids}
+    files = [path for path in hits.values() if path]
     words = set(extract_query_terms(query))
     need = min(2, len(words))
-    ranked: list[tuple[int, int, str, str]] = []
+    primary: list[tuple[int, int, int, str, str]] = []
+    fallback: list[tuple[int, int, int, str, str]] = []
     for row in rows:
-        cited = len(hits.intersection(row.source_node_ids or []))
+        page_files = {
+            cite.get("file_path")
+            for cite in row.citations or []
+            if isinstance(cite, dict) and cite.get("kind") == "node"
+        }
+        page_dirs = {posixpath.dirname(path) for path in page_files if path} - {""}
+        same_file = sum(path in page_files for path in files)
+        cited = len(hits.keys() & set(row.source_node_ids or []))
         quality = row.quality if isinstance(row.quality, dict) else {}
         about = " ".join([row.title, *map(str, quality.get("covers_questions") or [])])
         named = len(words.intersection(extract_query_terms(about, max_terms=10_000)))
-        if cited or (need and named >= need):
-            ranked.append((-cited, -named, row.slug, row.title))
-    picked = sorted(ranked)[:_WIKI_PAGES_PER_SEARCH]
+        if same_file or cited or (need and named >= need):
+            primary.append((-same_file, -cited, -named, row.slug, row.title))
+            continue
+        same_dir = sum(posixpath.dirname(path) in page_dirs for path in files)
+        if same_dir >= 2:
+            fallback.append((-same_dir, 0, -named, row.slug, row.title))
+    picked = sorted(primary or fallback)[:_WIKI_PAGES_PER_SEARCH]
     if not picked:
         return []
     content = dict(
@@ -470,7 +485,7 @@ async def _wiki_pages(
                 select(Document.slug, Document.content).where(
                     Document.repository_id == repository_id,
                     Document.doc_type == "wiki",
-                    Document.slug.in_([slug for _, _, slug, _ in picked]),
+                    Document.slug.in_([slug for *_, slug, _ in picked]),
                 )
             )
         ).all()
@@ -481,8 +496,17 @@ async def _wiki_pages(
             "title": title,
             "lead": extract_lead(content.get(slug) or "", max_chars=400),
         }
-        for _, _, slug, title in picked
+        for *_, slug, title in picked
     ]
+
+
+def _code_hits(response: RetrievalResponse) -> dict[str, str]:
+    """Code hits as node id (the form wiki citations store) -> file path."""
+    return {
+        str(row.provenance.node_id): row.provenance.file_path or ""
+        for row in response.results
+        if row.provenance.node_id is not None
+    }
 
 
 async def _called_by(
@@ -624,7 +648,10 @@ async def retrieve_payload(
         node_ids = _node_ids(response)
         called_by = await _called_by(session, node_ids)
         wiki = await _wiki_pages(
-            session, repository_id=repository_id, node_ids=node_ids, query=query
+            session,
+            repository_id=repository_id,
+            hits=_code_hits(response),
+            query=query,
         )
     payload = compact_hits(
         response,
@@ -757,7 +784,10 @@ async def search_code_payload(
         node_ids = _node_ids(response)
         called_by = await _called_by(session, node_ids)
         wiki = await _wiki_pages(
-            session, repository_id=repository_id, node_ids=node_ids, query=query
+            session,
+            repository_id=repository_id,
+            hits=_code_hits(response),
+            query=query,
         )
     payload = compact_hits(response, called_by=called_by)
     if wiki:
