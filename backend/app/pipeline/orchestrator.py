@@ -131,7 +131,7 @@ class RepoSyncOrchestrator:
             trigger=trigger_batch,
             label=label,
             repository_id=repository_id,
-            run_id=sync_run.id,
+            run=sync_run,
             status=SyncJobStatus.QUEUED,
         )
         session.add(sync_batch)

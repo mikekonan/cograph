@@ -54,7 +54,6 @@ from backend.app.models.md_collection import (
     MdJob,
     MdLink,
 )
-from backend.app.models.module_embedding import ModuleEmbedding
 from backend.app.models.oidc_login_state import OIDCLoginState
 from backend.app.models.refresh_token_family import RefreshTokenFamily
 from backend.app.models.repo_document import RepoDocument, RepoDocumentChunk
@@ -109,7 +108,6 @@ __all__ = [
     "QueryLog",
     "QueryLogSource",
     "QueryLogStatus",
-    "ModuleEmbedding",
     "OIDCLoginState",
     "RefreshTokenFamily",
     "RepoDocument",

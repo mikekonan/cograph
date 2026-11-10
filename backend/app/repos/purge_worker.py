@@ -5,7 +5,7 @@ row's `status -> DELETING` and stamps `deleted_at = now()`, returning
 204 immediately. This worker does the actual cascade drain:
 
 1. Delete the HNSW-vector-indexed embedding tables (`code_embeddings`,
-   `module_embeddings`, `repo_document_chunks`) in chunked transactions.
+   `repo_document_chunks`) in chunked transactions.
    HNSW rebalancing is per-row and is the single slowest part of a
    real-repo cascade; splitting it across N short transactions lets
    autovacuum interleave instead of holding one long open transaction.
@@ -39,7 +39,6 @@ from backend.app.db.session import SessionManager
 from backend.app.graph._chunking import chunked
 from backend.app.models.code_embedding import CodeEmbedding
 from backend.app.models.code_node import CodeNode
-from backend.app.models.module_embedding import ModuleEmbedding
 from backend.app.models.repo_document import RepoDocument, RepoDocumentChunk
 from backend.app.models.repository import Repository
 
@@ -83,16 +82,7 @@ async def _purge(
             await session.commit()
             code_embeddings_deleted += result.rowcount or 0
 
-    # 2. module_embeddings — FK is directly on repository_id, no chunking
-    # needed (one repo typically has <a few k modules).
-    async with session_manager.session() as session:
-        result = await session.execute(
-            delete(ModuleEmbedding).where(ModuleEmbedding.repository_id == repository_id)
-        )
-        await session.commit()
-        module_embeddings_deleted = result.rowcount or 0
-
-    # 3. repo_document_chunks — chunked by document_id (also HNSW).
+    # 2. repo_document_chunks — chunked by document_id (also HNSW).
     doc_ids = await _all_repo_document_ids(session_manager, repository_id)
     repo_doc_chunks_deleted = 0
     for batch in chunked(doc_ids):
@@ -105,7 +95,7 @@ async def _purge(
             await session.commit()
             repo_doc_chunks_deleted += result.rowcount or 0
 
-    # 4. Final DELETE on `repositories` — the FK CASCADE on every
+    # 3. Final DELETE on `repositories` — the FK CASCADE on every
     # remaining child (code_nodes, code_edges, summaries, repo_documents,
     # source_files, sync_runs, sync_batches, sync_jobs, etc.) does the
     # rest. With the HNSW tables already drained, the cascade is no
@@ -120,7 +110,6 @@ async def _purge(
 
     return {
         "code_embeddings_deleted": code_embeddings_deleted,
-        "module_embeddings_deleted": module_embeddings_deleted,
         "repo_document_chunks_deleted": repo_doc_chunks_deleted,
         "repositories_deleted": repositories_deleted,
     }
@@ -177,12 +166,6 @@ async def purge_repository_in_session(
         await session.commit()
         code_embeddings_deleted += result.rowcount or 0
 
-    result = await session.execute(
-        delete(ModuleEmbedding).where(ModuleEmbedding.repository_id == repository_id)
-    )
-    await session.commit()
-    module_embeddings_deleted = result.rowcount or 0
-
     doc_ids = list(
         (
             await session.scalars(
@@ -210,7 +193,6 @@ async def purge_repository_in_session(
 
     return {
         "code_embeddings_deleted": code_embeddings_deleted,
-        "module_embeddings_deleted": module_embeddings_deleted,
         "repo_document_chunks_deleted": repo_doc_chunks_deleted,
         "repositories_deleted": repositories_deleted,
     }

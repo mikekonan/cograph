@@ -454,6 +454,7 @@ async def test_repo_sync_orchestrator_creates_sync_batch_and_jobs_on_enqueue(
     batch = await db_session.get(SyncBatch, result.batch_id)
     assert batch is not None
     assert batch.repository_id == repository.id
+    assert batch.run_id == result.sync_run_id
     assert batch.status == SyncJobStatus.QUEUED
     assert batch.trigger.value == "initial"
 

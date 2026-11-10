@@ -174,10 +174,20 @@ async def test_sweep_stale_md_jobs_requeues_embed_and_marks_upload_error(
                 result_summary={},
                 started_at=datetime.now(UTC) - timedelta(minutes=10),
             )
-            session.add_all([stale_embed, stale_upload, fresh_embed])
+            never_started_upload = MdJob(
+                collection_id=collection.id,
+                kind=MdJobKind.UPLOAD,
+                status=MdJobStatus.QUEUED,
+                result_summary={},
+                created_at=cutoff,
+            )
+            session.add_all(
+                [stale_embed, stale_upload, fresh_embed, never_started_upload]
+            )
             await session.commit()
             stale_embed_id = stale_embed.id
             stale_upload_id = stale_upload.id
+            never_started_id = never_started_upload.id
             fresh_embed_id = fresh_embed.id
 
         await _sweep_stale_md_jobs(session_manager, settings)
@@ -186,6 +196,7 @@ async def test_sweep_stale_md_jobs_requeues_embed_and_marks_upload_error(
             re_embed = await session.get(MdJob, stale_embed_id)
             re_upload = await session.get(MdJob, stale_upload_id)
             untouched = await session.get(MdJob, fresh_embed_id)
+            never_started = await session.get(MdJob, never_started_id)
 
         assert re_embed is not None
         assert re_embed.status is MdJobStatus.QUEUED
@@ -197,6 +208,9 @@ async def test_sweep_stale_md_jobs_requeues_embed_and_marks_upload_error(
 
         assert untouched is not None
         assert untouched.status is MdJobStatus.RUNNING
+
+        assert never_started is not None
+        assert never_started.status is MdJobStatus.ERROR
 
         assert ("embed_md_collection", (str(stale_embed_id).replace("-", ""),)) not in fake_pool.enqueued
         # arq enqueue receives stringified UUIDs in canonical 8-4-4-4-12 form.

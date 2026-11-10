@@ -11,6 +11,7 @@ from backend.app.db.base import Base, CreatedAtMixin
 from backend.app.models.enums import SyncBatchKind, SyncBatchTrigger, SyncJobStatus
 
 if TYPE_CHECKING:
+    from backend.app.models.repo_sync_run import RepoSyncRun
     from backend.app.models.sync_job import SyncJob
 
 
@@ -63,11 +64,9 @@ class SyncBatch(CreatedAtMixin, Base):
         nullable=True,
     )
 
-    # The repo_sync_run this batch belongs to. Set in
-    # RepoSyncOrchestrator.enqueue_repository_sync after the run is flushed
-    # so its id is available; NULL on legacy batches that pre-date
-    # migration 0051 and on rows whose run got hard-deleted (the FK is
-    # ON DELETE SET NULL so batch history survives independently).
+    # The repo_sync_run this batch belongs to. Set through `run` below, so
+    # the ORM inserts the run first and copies its id; NULL when the run
+    # was deleted (ON DELETE SET NULL).
     run_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("repo_sync_runs.id", ondelete="SET NULL"),
@@ -87,6 +86,8 @@ class SyncBatch(CreatedAtMixin, Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    # No back-reference: this only orders the INSERTs (run before batch).
+    run: Mapped["RepoSyncRun | None"] = relationship("RepoSyncRun")
     # Relationship uses string ref to avoid circular import.
     jobs: Mapped[list["SyncJob"]] = relationship(  # noqa: F821
         "SyncJob",
