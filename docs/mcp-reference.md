@@ -102,6 +102,8 @@ Hybrid search across the code and checked-in docs of one repository. Returns one
 
 No hits and a code name in the query: `next` is the cograph_search_code call to run.
 
+`wiki` (only when a generated-wiki page covers the hits) lists up to 2 pages {page, title, lead}; read one with cograph_wiki_page(page).
+
 Use when: a question in words, one topic per call. mode='code' for 'where is X implemented'. mode='wiki' searches the repository's checked-in docs (README, docs/), not the generated wiki. mode='mixed' when unsure.
 
 Do NOT use for a name from the code (use cograph_search_code) or to read a known node fully (use cograph_read_node).
@@ -131,6 +133,8 @@ Lexical + fuzzy symbol search over a repository's code nodes. Returns at most 25
 `called_by` lists up to 3 callers {node_id, name, at}; called_by_more counts the rest; [] means no callers.
 
 No hits: `reason` names the words searched for.
+
+`wiki` (only when a generated-wiki page covers the hits) lists up to 2 pages {page, title, lead}; read one with cograph_wiki_page(page).
 
 path_prefix (a folder from the repository root, e.g. internal/shipping/) keeps only hits under it.
 
@@ -203,7 +207,7 @@ Do NOT use to read one function or type (use cograph_read_node — exact body, n
 
 Read ONE generated-wiki page — or a single named section of it — on demand. The body is cut at a line boundary after 12000 characters with structure preserved; `content_truncated` says whether that happened, and the fix is to re-read one `section` rather than to retry the page.
 
-Use when: you need a generated-wiki page's prose, diagrams, or code samples. `page` is a slug from cograph_outline's `wiki_pages`; pass `section` (a heading from that page's `sections` list) to pull just that section and save tokens.
+Use when: you need a generated-wiki page's prose, diagrams, or code samples. `page` is a slug from a search result's `wiki` or from cograph_outline's `wiki_pages`; pass `section` (a heading from that page's `sections` list) to pull just that section and save tokens.
 
 Do NOT use to search code (use cograph_retrieve / cograph_search_code).
 

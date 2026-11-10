@@ -54,6 +54,8 @@ _RETRIEVE_DESCRIPTION = (
     "results (clamped to 25); the default 10 is usually enough.\n"
     "No hits and a code name in the query: `next` is the cograph_search_code "
     "call to run.\n"
+    "`wiki` (only when a generated-wiki page covers the hits) lists up to 2 "
+    "pages {page, title, lead}; read one with cograph_wiki_page(page).\n"
     "Use when: a question in words, one topic per call. mode='code' for "
     "'where is X implemented'. mode='wiki' searches the repository's "
     "checked-in docs (README, docs/), not the generated wiki. mode='mixed' "

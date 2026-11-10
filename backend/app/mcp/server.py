@@ -13,7 +13,7 @@ from backend.app.graph.traversal import GraphTraversalService
 from backend.app.llm.runtime_providers import assert_embedding_runtime_configured
 from backend.app.mcp.instructions import INSTRUCTIONS
 from backend.app.mcp.resources import register_resources
-from backend.app.mcp.services import MCPServices
+from backend.app.mcp.services import MCPServices, mcp_query_log_scope
 from backend.app.mcp.tools import register_tools
 from backend.app.rag.context_builder import ContextBuilder
 from backend.app.rag.lexical import LexicalRetriever, SymbolLookup
@@ -89,12 +89,35 @@ def _canonical_arguments(
     return arguments
 
 
+# These write their own query_log row, with result count and token usage.
+_SELF_LOGGED_TOOLS = frozenset(
+    {"cograph_retrieve", "cograph_search_code", "cograph_collection_search"}
+)
+
+
 class _CographMCPServer(MCPServer):
     async def call_tool(
         self,
         name: str,
         arguments: dict[str, Any],
         context: Context | None = None,
+    ) -> Any:
+        if name in _SELF_LOGGED_TOOLS:
+            return await self._call_tool(name, arguments, context)
+        # One row per call for every other tool, so the log shows which
+        # tools agents use, not only the searches.
+        async with mcp_query_log_scope(
+            ctx=context,
+            tool_name=name[:64],
+            query_text=" ".join(f"{key}={value}" for key, value in arguments.items()),
+        ):
+            return await self._call_tool(name, arguments, context)
+
+    async def _call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        context: Context | None,
     ) -> Any:
         # Every transport routes `tools/call` through here, before the SDK
         # validates and drops what it does not know.
