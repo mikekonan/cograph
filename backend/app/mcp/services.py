@@ -39,6 +39,7 @@ from backend.app.llm.embedder import EmbedProvider
 from backend.app.llm.runtime_providers import build_runtime_providers
 from backend.app.models.code_edge import CodeEdge
 from backend.app.models.code_node import CodeNode
+from backend.app.models.document import Document
 from backend.app.models.enums import CodeEdgeType, RepositoryStatus
 from backend.app.models.md_collection import MdChunk, MdCollection, MdDocument
 from backend.app.models.repository import Repository
@@ -60,6 +61,7 @@ from backend.app.rag.snippet import (
 )
 from backend.app.wiki import WikiQueryService
 from backend.app.wiki.compact import (
+    extract_lead,
     extract_section,
     extract_sections,
     truncate_markdown,
@@ -409,6 +411,80 @@ def compact_hits(
 _CALLERS_SHOWN = 3
 
 
+# Generated-wiki pages attached to one search: each is a title and a
+# ~400-char lead, about 120 tokens. The whole page is a cograph_wiki_page call.
+_WIKI_PAGES_PER_SEARCH = 2
+
+
+async def _wiki_pages(
+    session: AsyncSession,
+    *,
+    repository_id: UUID,
+    node_ids: list[UUID],
+    query: str,
+) -> list[dict[str, str]]:
+    """Generated-wiki pages about a search's hits.
+
+    A page that cites a hit describes that code. Pages rank by how many hits
+    they cite, then by query words in their title and listed questions. With
+    no cited hit a page needs two query words (one, for a one-word query):
+    a single shared word like "service" matches half the wiki.
+
+    A wiki is ~20 pages, so ranking reads only titles and citations; the
+    content loads for the winners alone.
+    """
+
+    rows = (
+        await session.execute(
+            select(
+                Document.slug,
+                Document.title,
+                Document.source_node_ids,
+                Document.quality,
+            ).where(
+                Document.repository_id == repository_id,
+                Document.doc_type == "wiki",
+            )
+        )
+    ).all()
+    if not rows:
+        return []
+    # source_node_ids is a JSON list of UUID strings.
+    hits = {str(node_id) for node_id in node_ids}
+    words = set(extract_query_terms(query))
+    need = min(2, len(words))
+    ranked: list[tuple[int, int, str, str]] = []
+    for row in rows:
+        cited = len(hits.intersection(row.source_node_ids or []))
+        quality = row.quality if isinstance(row.quality, dict) else {}
+        about = " ".join([row.title, *map(str, quality.get("covers_questions") or [])])
+        named = len(words.intersection(extract_query_terms(about, max_terms=10_000)))
+        if cited or (need and named >= need):
+            ranked.append((-cited, -named, row.slug, row.title))
+    picked = sorted(ranked)[:_WIKI_PAGES_PER_SEARCH]
+    if not picked:
+        return []
+    content = dict(
+        (
+            await session.execute(
+                select(Document.slug, Document.content).where(
+                    Document.repository_id == repository_id,
+                    Document.doc_type == "wiki",
+                    Document.slug.in_([slug for _, _, slug, _ in picked]),
+                )
+            )
+        ).all()
+    )
+    return [
+        {
+            "page": slug,
+            "title": title,
+            "lead": extract_lead(content.get(slug) or "", max_chars=400),
+        }
+        for _, _, slug, title in picked
+    ]
+
+
 async def _called_by(
     session: AsyncSession, node_ids: list[UUID]
 ) -> dict[UUID, tuple[list[dict[str, Any]], int]]:
@@ -545,13 +621,20 @@ async def retrieve_payload(
             mode=mode,
             usage_sink=usage_sink,
         )
-        called_by = await _called_by(session, _node_ids(response))
-    return compact_hits(
+        node_ids = _node_ids(response)
+        called_by = await _called_by(session, node_ids)
+        wiki = await _wiki_pages(
+            session, repository_id=repository_id, node_ids=node_ids, query=query
+        )
+    payload = compact_hits(
         response,
         with_dates=any(when is not None for when in (as_of, since, until)),
         with_graph=include_graph,
         called_by=called_by,
     )
+    if wiki:
+        payload["wiki"] = wiki
+    return payload
 
 
 def _node_ids(response: RetrievalResponse) -> list[UUID]:
@@ -671,8 +754,15 @@ async def search_code_payload(
             include_graph=False,
             include_scores=False,
         )
-        called_by = await _called_by(session, _node_ids(response))
-    return compact_hits(response, called_by=called_by)
+        node_ids = _node_ids(response)
+        called_by = await _called_by(session, node_ids)
+        wiki = await _wiki_pages(
+            session, repository_id=repository_id, node_ids=node_ids, query=query
+        )
+    payload = compact_hits(response, called_by=called_by)
+    if wiki:
+        payload["wiki"] = wiki
+    return payload
 
 
 # Hard ceiling on nodes returned by `cograph_related`. Without it a BFS
