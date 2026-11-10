@@ -19,7 +19,6 @@ from backend.app.models.enums import (
     SyncBatchTrigger,
     SyncJobStatus,
 )
-from backend.app.models.git_credential import GitCredential
 from backend.app.models.repo_sync_run import RepoSyncRun
 from backend.app.models.repository import Repository
 from backend.app.models.sync_batch import SyncBatch
@@ -321,19 +320,13 @@ class RepoSyncOrchestrator:
         or no default credential exists) so existing tests that don't
         wire credentials continue to work unchanged.
         """
-        if self._settings is None or repository.host_id is None:
+        if self._settings is None:
             return None
-        credential = await session.scalar(
-            select(GitCredential).where(
-                GitCredential.host_id == repository.host_id,
-                GitCredential.is_default.is_(True),
-            )
-        )
-        if credential is None:
-            return None
-        from backend.app.git.credentials import GitCredentialCipher
+        from backend.app.git.credentials import default_clone_token
 
-        return GitCredentialCipher(self._settings).decrypt(credential.token_encrypted)
+        return await default_clone_token(
+            repository.host_id, session=session, settings=self._settings
+        )
 
     async def _get_active_sync_run(
         self,

@@ -15,6 +15,7 @@ import base64
 import hashlib
 import re
 import urllib.parse
+from uuid import UUID
 
 from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy import select
@@ -90,6 +91,26 @@ async def resolve_credential_for_url(
             GitCredential.is_default.is_(True),
         )
     )
+
+
+async def default_clone_token(
+    host_id: UUID | None, *, session: AsyncSession, settings: Settings
+) -> str | None:
+    """Decrypt the default PAT for `host_id`.
+
+    Returns None for the public-clone path: no host or no default credential.
+    """
+    if host_id is None:
+        return None
+    credential = await session.scalar(
+        select(GitCredential).where(
+            GitCredential.host_id == host_id,
+            GitCredential.is_default.is_(True),
+        )
+    )
+    if credential is None:
+        return None
+    return GitCredentialCipher(settings).decrypt(credential.token_encrypted)
 
 
 async def resolve_host_for_url(url: str, *, session: AsyncSession) -> GitHost | None:

@@ -2104,7 +2104,9 @@ async def test_create_repository_duplicate_detected_when_branch_omitted(
     import backend.app.api.repos as repos_module
 
     # Stub the remote probe to return "trunk" without touching the network.
-    monkeypatch.setattr(repos_module, "_detect_default_branch", lambda _url: "trunk")
+    monkeypatch.setattr(
+        repos_module, "_detect_default_branch", lambda _url, **_kw: "trunk"
+    )
 
     admin = User(
         email="branchdet@example.com", password_hash="hashed", role=UserRole.ADMIN
@@ -2147,3 +2149,107 @@ async def test_create_repository_duplicate_detected_when_branch_omitted(
     assert r2.json()["error"]["code"] == "REPOSITORY_EXISTS", (
         "Expected REPOSITORY_EXISTS but got: " + r2.json()["error"]["code"]
     )
+
+
+async def test_create_repository_branch_probe_uses_host_token(
+    client, app, db_session, settings, monkeypatch
+):
+    """A private repo answers ls-remote only with a token. Without it the
+    probe silently fell back to "main" and the first clone failed."""
+    import backend.app.api.repos as repos_module
+    from backend.app.git.credentials import GitCredentialCipher
+    from backend.app.models.git_credential import GitCredential
+    from backend.app.models.git_host import GitHost
+
+    seen: dict[str, Any] = {}
+
+    def _probe(url: str, **kwargs: Any) -> str:
+        seen.update(kwargs)
+        return "master"
+
+    monkeypatch.setattr(repos_module, "_detect_default_branch", _probe)
+
+    admin = User(email="probe@example.com", password_hash="h", role=UserRole.ADMIN)
+    host = GitHost(
+        slug="example-com",
+        display_name="example",
+        kind="github",
+        base_url="https://example.com",
+        api_url="https://api.example.com",
+        git_host="example.com",
+        enabled=True,
+    )
+    db_session.add_all([admin, host])
+    await db_session.flush()
+    db_session.add(
+        GitCredential(
+            host_id=host.id,
+            owner_user_id=admin.id,
+            label="ops",
+            token_encrypted=GitCredentialCipher(settings).encrypt("tok-123"),
+            token_prefix="tok",
+            is_default=True,
+        )
+    )
+    await db_session.commit()
+    await _authenticate_admin(client, settings, admin)
+    orchestrator = _FakeOrchestrator(
+        result=RepoSyncEnqueueResult(
+            repository_id=uuid4(),
+            sync_run_id=uuid4(),
+            batch_id=None,
+            status=RepoSyncRunStatus.QUEUED,
+            requested_ref=None,
+            deduplicated=False,
+        )
+    )
+    app.dependency_overrides[get_repo_sync_orchestrator] = lambda: orchestrator
+
+    response = await client.post(
+        "/api/repos",
+        json={"git_url": "https://example.com/acme/private.git"},
+        headers={"X-CSRF-Token": _TEST_CSRF},
+    )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 202
+    assert response.json()["branch"] == "master"
+    assert seen == {"plaintext_token": "tok-123"}
+
+
+async def test_create_repository_unexpected_enqueue_error_marks_repo_error(
+    client, app, db_session, settings, monkeypatch
+):
+    """The row is committed before the first sync is queued. An unexpected
+    error there used to leave it PENDING forever, with no run and no message."""
+    import backend.app.api.repos as repos_module
+
+    monkeypatch.setattr(
+        repos_module, "_detect_default_branch", lambda _url, **_kw: "main"
+    )
+    admin = User(email="boom@example.com", password_hash="h", role=UserRole.ADMIN)
+    db_session.add(admin)
+    await db_session.commit()
+    await _authenticate_admin(client, settings, admin)
+    app.dependency_overrides[get_repo_sync_orchestrator] = lambda: _FakeOrchestrator(
+        error=RuntimeError("redis went away")
+    )
+
+    try:
+        response = await client.post(
+            "/api/repos",
+            json={"git_url": "https://example.com/acme/boom.git"},
+            headers={"X-CSRF-Token": _TEST_CSRF},
+        )
+        assert response.status_code == 500
+    except RuntimeError:
+        pass  # the test client re-raises server errors
+    app.dependency_overrides.clear()
+
+    repo = await db_session.scalar(
+        select(Repository).where(Repository.name == "boom")
+    )
+    assert repo is not None
+    await db_session.refresh(repo)
+    assert repo.status is RepositoryStatus.ERROR
+    assert repo.error_msg == "redis went away"
