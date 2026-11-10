@@ -574,3 +574,35 @@ async def test_reindex_keeps_orphan_for_failed_pages(
     assert "architecture" in by_slug
     assert by_slug["architecture"].content == "# Architecture\n\nprior body"
     assert "index" in by_slug
+
+
+async def test_page_writing_starts_without_an_open_transaction(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pages take minutes; the run's own session must not idle in a transaction.
+
+    A server with idle_in_transaction_session_timeout closes such a
+    connection, and the next stage fails on it.
+    """
+    from backend.app.wiki import pipeline
+
+    repo = await _make_repo(db_session)
+    fake = FakeStructuredProvider()
+    _queue_fake_pipeline(fake, slugs=["index", "architecture", "getting-started"])
+    seen: list[bool] = []
+    original = pipeline.write_pages
+
+    async def _spy(**kwargs: Any) -> Any:
+        seen.append(kwargs["session"].in_transaction())
+        return await original(**kwargs)
+
+    monkeypatch.setattr(pipeline, "write_pages", _spy)
+    await run_wiki_generation(
+        session=db_session,
+        repository_id=repo.id,
+        source_commit="cafef00d",
+        sync_run_id=None,
+        llm=fake,
+        retriever=_retriever(),
+    )
+    assert seen == [False]

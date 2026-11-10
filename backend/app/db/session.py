@@ -25,9 +25,9 @@ class SessionManager:
                 # A client whose socket dies silently (node network fault,
                 # killed pod) otherwise leaves its session holding row locks
                 # for the OS keepalive default of ~2h11m. Probe after 60s idle
-                # so the server drops it in ~2min. Not
-                # idle_in_transaction_session_timeout: the wiki step keeps a
-                # read transaction open for the whole page-writing stage.
+                # so the server drops it in ~2min. Servers may also set
+                # idle_in_transaction_session_timeout (5min in prod), so no
+                # step may leave a transaction idle across a long LLM stage.
                 "tcp_keepalives_idle": "60",
                 "tcp_keepalives_interval": "10",
                 "tcp_keepalives_count": "6",
