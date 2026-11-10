@@ -16,6 +16,7 @@ from backend.tests.test_query_logs_mcp_pat_attribution import _wire_inline_recor
 
 
 def _page(repo_id, slug, title, *, cites=(), questions=()) -> Document:
+    """`cites`: (node id, file path) pairs."""
     return Document(
         repository_id=repo_id,
         doc_type="wiki",
@@ -25,47 +26,67 @@ def _page(repo_id, slug, title, *, cites=(), questions=()) -> Document:
         content_hash=slug,
         source_hash=slug,
         model="m",
-        citations=[],
-        source_node_ids=[str(node) for node in cites],
+        citations=[
+            {"id": str(node), "kind": "node", "file_path": path}
+            for node, path in cites
+        ],
+        source_node_ids=[str(node) for node, _ in cites],
         source_repo_doc_chunk_ids=[],
         quality={"covers_questions": list(questions)},
     )
 
 
-async def test_pages_rank_by_cited_hits_then_query_words(db_session) -> None:
+async def test_pages_rank_by_cited_files_then_query_words(db_session) -> None:
     await _seed(db_session)
     repo_id = await db_session.scalar(select(Repository.id))
-    a, b = uuid.uuid4(), uuid.uuid4()
+    a, b, c, d = (uuid.uuid4() for _ in range(4))
     db_session.add_all(
         [
-            _page(repo_id, "dock", "Dock scheduling", cites=[a]),
-            _page(repo_id, "carrier", "Carrier handoff", cites=[a, b]),
+            _page(repo_id, "dock", "Dock scheduling", cites=[(a, "carrier/handoff.go")]),
+            _page(
+                repo_id,
+                "carrier",
+                "Carrier handoff",
+                cites=[(a, "carrier/handoff.go"), (b, "carrier/route.go")],
+            ),
             _page(
                 repo_id,
                 "pallets",
                 "Pallet routing",
                 questions=["Which lane does a pallet take?"],
             ),
-            _page(repo_id, "retry", "Retry policy"),
+            _page(repo_id, "retry", "Retry policy", cites=[(c, "retry/policy.go")]),
+            _page(repo_id, "lanes", "Lane table", cites=[(d, "lanes/table.go")]),
         ]
     )
     await db_session.commit()
 
-    async def pages(node_ids, query):
+    async def pages(hits, query):
         found = await _wiki_pages(
-            db_session, repository_id=repo_id, node_ids=node_ids, query=query
+            db_session,
+            repository_id=repo_id,
+            hits={str(node): path for node, path in hits},
+            query=query,
         )
         return [page["page"] for page in found]
 
-    # Most cited hits first; two pages at most.
-    assert await pages([a, b], "pallet lane") == ["carrier", "dock"]
-    # No cited hit: the page needs two query words in its title or questions.
+    other = uuid.uuid4
+    # Pages citing more of the hits' files first; two pages at most.
+    hits = [(a, "carrier/handoff.go"), (b, "carrier/route.go")]
+    assert await pages(hits, "pallet lane") == ["carrier", "dock"]
+    # A hit in a cited file counts without being the cited node itself.
+    assert await pages([(other(), "retry/policy.go")], "x") == ["retry"]
+    # No cited file: the page needs two query words in its title or questions.
     assert await pages([], "which lane for a pallet") == ["pallets"]
     assert await pages([], "pallet retry") == []
     # A one-word query needs one.
     assert await pages([], "retry") == ["retry"]
+    # Last resort: two hits in a folder the page cites; one is not enough.
+    two = [(other(), "lanes/a.go"), (other(), "lanes/b.go")]
+    assert await pages(two, "x") == ["lanes"]
+    assert await pages(two[:1], "x") == []
     found = await _wiki_pages(
-        db_session, repository_id=repo_id, node_ids=[b], query="x"
+        db_session, repository_id=repo_id, hits={str(b): "carrier/route.go"}, query="x"
     )
     assert found == [
         {"page": "carrier", "title": "Carrier handoff", "lead": "How carrier handoff works."}
