@@ -46,7 +46,7 @@ class ModelPrice:
     cached_input_per_million: float | None = None
 
 
-# Pricing snapshot — public OpenAI list price as of 2026-06.
+# Pricing snapshot — public OpenAI list price (Standard tier) as of 2026-11.
 # Update with a PR when OpenAI bumps prices; keep keys lowercase.
 _PRICES: dict[str, ModelPrice] = {
     # Embeddings — output cost is N/A.
@@ -56,9 +56,14 @@ _PRICES: dict[str, ModelPrice] = {
     # Chat — input / cached-input / output split. gpt-5.x bills cached
     # prompt reads at 90% off; gpt-4o-era models at 50% off. Models
     # predating prompt caching keep cached=None (billed as full input).
-    # NB: gpt-5.5 charges 2x input / 1.5x output for prompts >272K
-    # tokens — not modelled here; the wiki loop's input budget caps a
-    # single prompt well below that.
+    # NB: gpt-5.5 and later charge more for prompts >272K tokens — not
+    # modelled here; the wiki loop's input budget caps a single prompt
+    # well below that.
+    "gpt-6-astra": ModelPrice(10.00, 50.00, 1.00),
+    "gpt-6-sol": ModelPrice(2.00, 10.00, 0.20),
+    "gpt-6-luna": ModelPrice(0.10, 0.50, 0.01),
+    "gpt-6.1-sol": ModelPrice(2.00, 10.00, 0.10),
+    "gpt-6.1-terra": ModelPrice(1.00, 5.00, 0.05),
     "gpt-5.5": ModelPrice(5.00, 30.00, 0.50),
     "gpt-5.4": ModelPrice(2.50, 15.00, 0.25),
     "gpt-5.4-mini": ModelPrice(0.75, 4.50, 0.075),

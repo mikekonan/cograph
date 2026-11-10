@@ -120,7 +120,7 @@ class StepUsageRollup:
     tokens_input: int
     tokens_output: int
     tokens_cached: int
-    # None when no stage has a price on file — "no price", not "free".
+    # None when any stage has no price on file — "no price", not "free".
     cost_usd_micros: int | None
     llm_model: str | None
     cost_breakdown: dict[str, dict[str, object]]
@@ -139,7 +139,7 @@ def rollup_stages(stages: dict[str, StageUsage]) -> StepUsageRollup | None:
         return None
 
     breakdown: dict[str, dict[str, object]] = {}
-    total_cost: int | None = None
+    total_cost: int | None = 0
     for label in sorted(stages):
         usage = stages[label]
         stage_cost = cost_micros(
@@ -156,8 +156,14 @@ def rollup_stages(stages: dict[str, StageUsage]) -> StepUsageRollup | None:
             "model": usage.model,
             "cost_usd_micros": stage_cost,
         }
-        if stage_cost is not None:
-            total_cost = (total_cost or 0) + stage_cost
+        # One unpriced stage voids the total: a partial sum reads as the
+        # whole bill (a new chat model next to a priced embedder showed
+        # the embedder's cents). The breakdown keeps per-stage costs.
+        if stage_cost is None:
+            if usage.tokens_in or usage.tokens_out:
+                total_cost = None
+        elif total_cost is not None:
+            total_cost += stage_cost
 
     top = max(stages.values(), key=lambda u: u.tokens_in + u.tokens_out)
     return StepUsageRollup(

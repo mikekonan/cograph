@@ -767,6 +767,8 @@ class RepoSyncProcessor:
         job.finished_at = datetime.now(UTC)
         job.error_code = error_code
         job.error_msg = error_msg
+        # The tokens were spent even though the step failed.
+        self._stamp_usage(job)
         await session.commit()
 
     async def _fail_batch(
