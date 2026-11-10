@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from typing import Literal
 from uuid import UUID
@@ -51,12 +52,21 @@ _RETRIEVE_DESCRIPTION = (
     "`repository` is required, as host/owner/name. Unknown repository: pick "
     "one with cograph_repositories or cograph_route. `top_k` bounds the "
     "results (clamped to 25); the default 10 is usually enough.\n"
+    "No hits and a code name in the query: `next` is the cograph_search_code "
+    "call to run.\n"
     "Use when: a question in words, one topic per call. mode='code' for "
     "'where is X implemented'. mode='wiki' searches the repository's "
     "checked-in docs (README, docs/), not the generated wiki. mode='mixed' "
     "when unsure.\n"
     "Do NOT use for a name from the code (use cograph_search_code) or "
     "to read a known node fully (use cograph_read_node)."
+)
+
+
+# A name from the code: a dotted or `::` path, snake_case, camelCase or
+# PascalCase. Prose words, acronyms and "e.g." do not match.
+_CODE_NAME = re.compile(
+    r"\b[A-Za-z_]\w+(?:(?:\.|::)[A-Za-z_]\w*)+|\b\w*(?:_|[a-z0-9][A-Z])\w*"
 )
 
 
@@ -197,5 +207,11 @@ def register(server: MCPServer, services: MCPServices) -> None:
                 mode=args.mode,
                 usage_sink=log_bucket,
             )
+            name = None if payload["results"] else _CODE_NAME.search(args.query)
+            if name:
+                payload["next"] = (
+                    f"cograph_search_code(repository='{repo.host}/{repo.owner}/"
+                    f"{repo.name}', query='{name.group()}')"
+                )
             log_bucket["result_count"] = count_response_results(payload)
             return encode_payload(payload)

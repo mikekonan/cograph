@@ -16,6 +16,7 @@ from backend.app.mcp.services import (
     tool_args,
 )
 from backend.app.mcp.tools.retrieve import MAX_TOP_K
+from backend.app.rag.snippet import extract_query_terms
 
 
 class SearchCodeToolArgs(BaseModel):
@@ -61,6 +62,7 @@ def register(server: MCPServer, services: MCPServices) -> None:
             "Pick the right node, then read it with cograph_read_node(node_id).\n"
             "`called_by` lists up to 3 callers {node_id, name, at}; "
             "called_by_more counts the rest; [] means no callers.\n"
+            "No hits: `reason` names the words searched for.\n"
             "path_prefix (a folder from the repository root, e.g. "
             "internal/shipping/) keeps only hits under it.\n"
             "Use when: you have a word from the code: a name (class, "
@@ -106,5 +108,12 @@ def register(server: MCPServer, services: MCPServices) -> None:
                 top_k=args.top_k,
                 path_prefix=args.path_prefix or "",
             )
+            if not payload["results"]:
+                # The same words the lexical stream searched for.
+                words = ", ".join(extract_query_terms(args.query)) or (
+                    "none, every word is too short or too common"
+                )
+                where = f" under path_prefix '{args.path_prefix}'" if args.path_prefix else ""
+                payload["reason"] = f"No code{where} matches any of the words: {words}."
             log_bucket["result_count"] = count_response_results(payload)
             return encode_payload(payload)

@@ -103,6 +103,11 @@ rank order: a code node or a doc section.
   `include_graph=true`.
 - `cograph_search_code` leaves out whole-file module nodes (`…#module`). They
   match any name in their file and would take a slot from the function itself.
+- An empty answer says why. `cograph_search_code` adds `reason`: the words it
+  searched for, and the `path_prefix` when one was set. `cograph_retrieve` adds
+  `next`, a `cograph_search_code` call, when the query holds a name from the
+  code (`snake_case`, `camelCase`, `pkg.Name`, `ns::Name`). A repository that
+  has not finished its first index is a `REPO_NOT_READY` error, not an empty list.
 
 The REST `/api/retrieve` and the web UI keep the full response: one row per layer,
 with provenance, commit SHAs and stream metadata.
@@ -274,7 +279,7 @@ Errors are typed so an agent can react rather than retry blindly.
 
 | Code | Meaning | What the agent should do |
 | --- | --- | --- |
-| `REPO_NOT_READY` | Never finished a first successful index | Report it; do not retry in a loop |
+| `REPO_NOT_READY` | Never finished a first successful index; the message says whether it is still running or failed | Report it; do not retry in a loop |
 | `NOT_FOUND` | Unknown slug, node, page or section | For a wrong `section`, the error **includes the available section list** — retry with one of those |
 | `LLM_ROLE_UNCONFIGURED` | A required LLM role has no assignment | Operator action; not retryable |
 | `INSUFFICIENT_SCOPE` | Token lacks `mcp` or `api:read` | Not retryable |
