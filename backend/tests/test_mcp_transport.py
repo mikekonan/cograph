@@ -179,7 +179,6 @@ async def _seed_transport_fixture(
             content="def raise_repo_not_ready() -> None:\n    raise RuntimeError('E_REPO_NOT_READY')",
             signature="def raise_repo_not_ready() -> None",
             doc_comment=None,
-            summary=None,
             role=None,
             parent_id=None,
             callers=[],

@@ -208,7 +208,6 @@ async def _seed_code_nodes(
                 content=content,
                 signature=content.splitlines()[0].rstrip(":"),
                 doc_comment=None,
-                summary=None,
                 role=None,
                 parent_id=None,
                 callers=[],

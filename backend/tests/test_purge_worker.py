@@ -25,7 +25,6 @@ from backend.app.graph._chunking import IN_CHUNK_SIZE
 from backend.app.models.code_embedding import CodeEmbedding
 from backend.app.models.code_node import CodeNode
 from backend.app.models.enums import CodeNodeType, RepositoryStatus
-from backend.app.models.module_embedding import ModuleEmbedding
 from backend.app.models.repo_document import RepoDocument, RepoDocumentChunk
 from backend.app.models.repository import Repository
 from backend.app.models.source_file import SourceFile
@@ -170,7 +169,6 @@ async def test_purge_is_idempotent_on_missing_repo(db_session):
 
     assert counts == {
         "code_embeddings_deleted": 0,
-        "module_embeddings_deleted": 0,
         "repo_document_chunks_deleted": 0,
         "repositories_deleted": 0,
     }
@@ -198,69 +196,3 @@ async def test_purge_replay_after_partial_run_completes_cleanly(db_session):
 
     assert counts["code_embeddings_deleted"] == 0  # already wiped
     assert counts["repositories_deleted"] == 1  # finishes the drop
-
-
-async def test_purge_handles_module_embeddings_directly_by_repo_id(db_session):
-    """module_embeddings has a direct repository_id FK, so it gets a
-    single-statement delete rather than a chunked one. Make sure that
-    branch reports the correct count and clears the rows.
-    """
-    repo = _make_repo()
-    db_session.add(repo)
-    await db_session.commit()
-
-    source_file = SourceFile(
-        repository_id=repo.id,
-        file_path="app/main.py",
-        language="python",
-        kind="code",
-        raw_bytes=b"x = 1",
-        content_hash="sf",
-        bytes=5,
-    )
-    db_session.add(source_file)
-    await db_session.commit()
-
-    module_nodes = [
-        CodeNode(
-            repository_id=repo.id,
-            source_file_id=source_file.id,
-            file_path=f"app/mod_{i}.py",
-            qualified_name=f"app.mod_{i}",
-            node_type=CodeNodeType.MODULE,
-            name=f"mod_{i}",
-            language="python",
-            start_line=1,
-            end_line=1,
-            content="",
-            content_hash=f"mh_{i}",
-        )
-        for i in range(2)
-    ]
-    db_session.add_all(module_nodes)
-    await db_session.commit()
-
-    db_session.add_all(
-        [
-            ModuleEmbedding(
-                repository_id=repo.id,
-                module_node_id=mn.id,
-                embedding=b"\x00" * 4,
-                model="fake-embed-v1",
-            )
-            for mn in module_nodes
-        ]
-    )
-    await db_session.commit()
-
-    counts = await purge_repository_in_session(db_session, repository_id=repo.id)
-
-    assert counts["module_embeddings_deleted"] == 2
-    assert (
-        await db_session.scalar(
-            select(func.count(ModuleEmbedding.id)).where(
-                ModuleEmbedding.repository_id == repo.id
-            )
-        )
-        == 0
-    )

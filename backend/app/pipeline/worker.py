@@ -287,10 +287,11 @@ async def _sweep_stale_md_jobs(
     session_manager: SessionManager,
     settings: Settings,
 ) -> None:
-    """Recover md_jobs rows stuck in ``running`` past the 4h cutoff."""
+    """Recover md_jobs rows stuck in ``running`` past the 4h cutoff, and
+    close uploads that were opened but never got a single batch."""
     from datetime import UTC, datetime, timedelta
 
-    from sqlalchemy import select
+    from sqlalchemy import and_, or_, select
 
     from backend.app.models.enums import MdJobKind, MdJobStatus
     from backend.app.models.md_collection import MdJob
@@ -303,10 +304,20 @@ async def _sweep_stale_md_jobs(
             (
                 await session.execute(
                     select(MdJob)
-                    .where(MdJob.status == MdJobStatus.RUNNING)
-                    .where(MdJob.started_at.is_not(None))
-                    .where(MdJob.started_at < cutoff)
-                    .order_by(MdJob.started_at.asc())
+                    .where(
+                        or_(
+                            and_(
+                                MdJob.status == MdJobStatus.RUNNING,
+                                MdJob.started_at < cutoff,
+                            ),
+                            and_(
+                                MdJob.kind == MdJobKind.UPLOAD,
+                                MdJob.status == MdJobStatus.QUEUED,
+                                MdJob.created_at < cutoff,
+                            ),
+                        )
+                    )
+                    .order_by(MdJob.created_at.asc())
                     .limit(sweep_cap)
                 )
             )
@@ -708,6 +719,71 @@ async def prune_query_logs(ctx: dict[str, Any]) -> dict[str, int]:
     return {"rows_deleted": int(rows_deleted)}
 
 
+SYNC_HISTORY_DAYS = 60
+_PRUNE_CHUNK = 1000
+
+
+async def prune_sync_history(ctx: dict[str, Any]) -> dict[str, int]:
+    """Daily: drop finished sync batches and runs older than 60 days,
+    and expired OIDC login states.
+
+    Batches go first; their step rows cascade. Chunked, one commit per
+    chunk: the first sweep on an old install removes ~10^5 runs and
+    ~10^6 step rows, too much for one statement under statement_timeout.
+    """
+
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import delete, select
+
+    from backend.app.api.auth_oidc import prune_expired_states
+    from backend.app.models.enums import RepoSyncRunStatus, SyncJobStatus
+    from backend.app.models.repo_sync_run import RepoSyncRun
+    from backend.app.models.sync_batch import SyncBatch
+
+    session_manager = ctx.get("session_manager")
+    assert isinstance(session_manager, SessionManager)
+    cutoff = datetime.now(UTC) - timedelta(days=SYNC_HISTORY_DAYS)
+
+    async def _drain(model: Any, active: tuple[Any, ...]) -> int:
+        old = (
+            select(model.id)
+            .where(model.created_at < cutoff, model.status.not_in(active))
+            .limit(_PRUNE_CHUNK)
+        )
+        total = 0
+        while True:
+            async with session_manager.session() as session:
+                result = await session.execute(
+                    delete(model).where(model.id.in_(old))
+                )
+                await session.commit()
+            total += result.rowcount or 0
+            if (result.rowcount or 0) < _PRUNE_CHUNK:
+                return total
+
+    batches = await _drain(
+        SyncBatch,
+        (SyncJobStatus.QUEUED, SyncJobStatus.RUNNING, SyncJobStatus.PAUSED),
+    )
+    runs = await _drain(
+        RepoSyncRun, (RepoSyncRunStatus.QUEUED, RepoSyncRunStatus.RUNNING)
+    )
+    async with session_manager.session() as session:
+        login_states = await prune_expired_states(session)
+
+    logger.info(
+        "sync history retention sweep completed",
+        extra={
+            "batches_deleted": batches,
+            "runs_deleted": runs,
+            "login_states_deleted": login_states,
+            "cutoff": cutoff.isoformat(),
+        },
+    )
+    return {"batches": batches, "runs": runs, "login_states": login_states}
+
+
 async def _get_repo_sync_scheduler(ctx: dict[str, Any]) -> RepoSyncScheduler:
     scheduler = ctx.get("repo_sync_scheduler")
     if isinstance(scheduler, RepoSyncScheduler):
@@ -747,6 +823,7 @@ class WorkerSettings:
         purge_repository,
         record_query_log,
         prune_query_logs,
+        prune_sync_history,
     ]
     on_startup = worker_startup
     on_shutdown = worker_shutdown
@@ -776,6 +853,14 @@ class WorkerSettings:
             second=0,
             microsecond=0,
             job_id="query-logs-retention-prune",
+        ),
+        cron(
+            prune_sync_history,
+            hour=3,
+            minute=30,
+            second=0,
+            microsecond=0,
+            job_id="sync-history-retention-prune",
         ),
     ]
     # Dropped 10→4 after a 2026-05-12 OOMKill: ten concurrent wiki-gen

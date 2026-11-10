@@ -70,7 +70,6 @@ class CodeNode(CreatedAtMixin, Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     signature: Mapped[str | None] = mapped_column(Text)
     doc_comment: Mapped[str | None] = mapped_column(Text)
-    summary: Mapped[str | None] = mapped_column(Text)
     role: Mapped[str | None] = mapped_column(Text)
     # index=True needed for fresh-create environments (test fixtures, dev
     # setups using Base.metadata.create_all) — prod gets the partial index
