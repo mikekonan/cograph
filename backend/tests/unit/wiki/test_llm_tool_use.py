@@ -1065,3 +1065,150 @@ async def test_other_400_errors_still_raise() -> None:
             max_turns=2,
             max_input_chars=None,
         )
+
+
+@pytest.mark.asyncio
+async def test_tools_move_to_responses_api_when_chat_refuses_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Chat Completions 400 "use /v1/responses" → the loop runs on Responses.
+
+    The reasoning item and the call go back as returned, the tool output is
+    keyed by call_id, and the next call for the same model skips Chat.
+    """
+    import openai
+    from openai.types.responses import (
+        Response,
+        ResponseFunctionToolCall,
+        ResponseOutputMessage,
+        ResponseOutputText,
+        ResponseReasoningItem,
+        ResponseUsage,
+    )
+
+    from backend.app.wiki import llm_client
+
+    monkeypatch.setattr(llm_client, "_TOOLS_VIA_RESPONSES", set())
+
+    def _usage_r(n_in: int, n_out: int) -> ResponseUsage:
+        return ResponseUsage.model_construct(
+            input_tokens=n_in,
+            output_tokens=n_out,
+            input_tokens_details=SimpleNamespace(cached_tokens=0),
+        )
+
+    def _text(text: str) -> Response:
+        return Response.model_construct(
+            output=[
+                ResponseOutputMessage.model_construct(
+                    id="msg_1",
+                    type="message",
+                    role="assistant",
+                    status="completed",
+                    content=[
+                        ResponseOutputText.model_construct(
+                            type="output_text", text=text, annotations=[]
+                        )
+                    ],
+                )
+            ],
+            usage=_usage_r(7, 3),
+            incomplete_details=None,
+        )
+
+    chat_calls: list[dict[str, Any]] = []
+    resp_calls: list[dict[str, Any]] = []
+    scripted = [
+        Response.model_construct(
+            output=[
+                ResponseReasoningItem.model_construct(
+                    id="rs_1", type="reasoning", summary=[], encrypted_content="enc"
+                ),
+                ResponseFunctionToolCall.model_construct(
+                    type="function_call",
+                    call_id="call_1",
+                    name="grep",
+                    arguments='{"pattern": "Shipment"}',
+                ),
+            ],
+            usage=_usage_r(10, 5),
+            incomplete_details=None,
+        ),
+        _text("page body"),
+        _text("second page"),
+    ]
+
+    async def _chat(**kwargs: Any) -> Any:
+        chat_calls.append(kwargs)
+        raise openai.BadRequestError(
+            message=(
+                "Function tools with reasoning_effort are not supported for "
+                "this model in /v1/chat/completions. To use function tools, "
+                "use /v1/responses or set reasoning_effort to 'none'."
+            ),
+            response=SimpleNamespace(
+                status_code=400, headers={}, request=SimpleNamespace()
+            ),
+            body=None,
+        )
+
+    async def _responses(**kwargs: Any) -> Any:
+        resp_calls.append({**kwargs, "input": list(kwargs["input"])})
+        return scripted.pop(0)
+
+    provider = OpenAICompatibleStructuredProvider(
+        api_url="https://example.invalid/v1",
+        api_key="test-key",
+        model="gpt-6-sol",
+        max_attempts=1,
+    )
+    provider._client = SimpleNamespace(  # type: ignore[attr-defined]
+        chat=SimpleNamespace(completions=SimpleNamespace(create=_chat)),
+        responses=SimpleNamespace(create=_responses),
+    )
+    dispatched: list[tuple[str, dict[str, Any]]] = []
+
+    async def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        dispatched.append((name, args))
+        return {"hits": 1}
+
+    kwargs: dict[str, Any] = {
+        "system": "sys",
+        "blocks": [CacheBlock(text="ctx")],
+        "tools": [
+            ToolDefinition(
+                name="grep", description="d", input_schema={"type": "object"}
+            )
+        ],
+        "tool_dispatch": _dispatch,
+        "max_turns": 4,
+    }
+    result = await provider.complete_with_tools(**kwargs)
+
+    assert result.final_text == "page body"
+    assert result.stop_reason == "end_turn"
+    assert result.tools_called == {"grep": 1}
+    assert (result.tokens_in, result.tokens_out) == (17, 8)
+    assert dispatched == [("grep", {"pattern": "Shipment"})]
+    first = resp_calls[0]
+    assert first["instructions"] == "sys"
+    assert first["store"] is False
+    assert first["tools"][0]["strict"] is False
+    assert "temperature" not in first
+    echoed = resp_calls[1]["input"]
+    assert [i.get("type") for i in echoed[1:]] == [
+        "reasoning",
+        "function_call",
+        "function_call_output",
+    ]
+    assert echoed[1]["encrypted_content"] == "enc"
+    assert echoed[3] == {
+        "type": "function_call_output",
+        "call_id": "call_1",
+        "output": '{"hits": 1}',
+    }
+
+    # The model is remembered: no second refused Chat request.
+    second = await provider.complete_with_tools(**kwargs)
+    assert second.final_text == "second page"
+    assert len(chat_calls) == 1
