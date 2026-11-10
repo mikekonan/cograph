@@ -739,6 +739,37 @@ async def test_route_matches_whole_words_not_substrings(
     assert "symbols" in hits[0].why
 
 
+@pytest.mark.asyncio
+async def test_route_folds_plurals_and_skips_filler(db_session, settings) -> None:
+    """`secret` finds `secrets`; `already` and `every` in a README do not
+    outrank it."""
+    await _make_public_repo(
+        db_session,
+        host="git.example.com",
+        owner="team",
+        name="handbook",
+        readme="# Handbook\n\nEvery step is already described here.",
+    )
+    await _make_public_repo(
+        db_session,
+        host="git.example.com",
+        owner="team",
+        name="vault",
+        readme="# Vault\n\nStores secrets for the warehouse.",
+    )
+    await db_session.commit()
+
+    hits = await route_sources(
+        db_session,
+        query="is the secret already kept on every start",
+        current_user=None,
+        settings=settings,
+        top_k=3,
+    )
+    labels = [h.label for h in hits if h.kind == "repository"]
+    assert labels == ["git.example.com/team/vault"], hits
+
+
 # ---------- REST mirror tests -------------------------------------------------
 
 

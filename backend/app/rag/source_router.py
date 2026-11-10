@@ -37,7 +37,10 @@ would say "relevant" for questions that have nothing to do with docs.
 Query words match whole words of the source text, never substrings: `get`
 does not match `target`. A word is a run of letters and digits, and each
 camelCase part of it, so `tracker` matches `ShipmentTracker` and `card`
-matches `rate_card`.
+matches `rate_card`. A plural `s` is ignored on both sides: `secret` matches
+`secrets`. Question filler (`every`, `already`, `only`) is not a routing word:
+in a long README it matches by chance and outranks the repository that holds
+the answer.
 
 Searchable fields:
 
@@ -107,6 +110,19 @@ _MAX_TOKEN = 64
 _RUN_RE = re.compile(r"[A-Za-z0-9]+")
 _CAMEL_PART_RE = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z0-9]+")
 
+# English filler on top of the shared STOPWORDS: NLTK's stop list plus a few
+# adverbs it misses. Router-only: retrieve anchors snippets on the shared list.
+_FILLER = frozenset(
+    """
+    am did doing had having myself ours ourselves yours yourself yourselves he him
+    his himself she her hers herself itself they them theirs themselves whom
+    been being but because until while against between through during before
+    after above below up down out off over under again further then once here
+    all any both each few more most other some such no nor not only own same
+    so than too very just don now already every also still whether
+    """.split()
+)
+
 # How much of a README to inspect. 2000 chars covers the "what is this"
 # intro block on virtually every project; beyond it README content drifts
 # into installation/CI/license boilerplate that adds match-noise.
@@ -150,8 +166,17 @@ def _tokenise(query: str) -> list[str]:
     return [
         t
         for t in raw
-        if _MIN_TOKEN <= len(t) <= _MAX_TOKEN and t not in STOPWORDS
+        if _MIN_TOKEN <= len(t) <= _MAX_TOKEN
+        and t not in STOPWORDS
+        and t not in _FILLER
     ]
+
+
+def _stem(word: str) -> str:
+    """Drop a plural `s`: `secrets` -> `secret`. Leaves `class`, `bus`."""
+    if len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
+        return word[:-1]
+    return word
 
 
 def _matches_in(tokens: set[str], text: str) -> set[str]:
@@ -168,7 +193,8 @@ def _matches_in(tokens: set[str], text: str) -> set[str]:
     # latency starts to matter on large instances.
     words = {w.lower() for w in _RUN_RE.findall(text)}
     words.update(w.lower() for w in _CAMEL_PART_RE.findall(text))
-    return tokens & words
+    stems = {_stem(w) for w in words}
+    return {t for t in tokens if _stem(t) in stems}
 
 
 def _why_line(
