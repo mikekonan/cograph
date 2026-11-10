@@ -143,7 +143,7 @@ async def test_callers_of_every_hit_come_from_one_indexed_query(pg_engine, pg_se
         "shipping.Reprint",
         "warehouse.Audit",
     ]
-    assert label["called_by"][0]["at"] == "shipping/order.go:1-3"
+    assert label["called_by"][0] == {"name": "shipping.ShipOrder", "at": "shipping/order.go:1-3"}
     assert label["called_by_more"] == 1
     assert len(statements) == 1
 

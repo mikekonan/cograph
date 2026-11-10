@@ -60,7 +60,7 @@ def register(server: MCPServer, services: MCPServices) -> None:
             "Returns at most 25 records {node_id, name, at: path:start-end, "
             "called_by, code}, where `code` is the signature, not the body. "
             "Pick the right node, then read it with cograph_read_node(node_id).\n"
-            "`called_by` lists up to 3 callers {node_id, name, at}; "
+            "`called_by` lists up to 3 callers {name, at}; "
             "called_by_more counts the rest; [] means no callers.\n"
             "No hits: `reason` names the words searched for.\n"
             "`wiki` (only when a generated-wiki page covers the hits) lists up "
