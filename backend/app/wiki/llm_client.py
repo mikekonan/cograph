@@ -17,7 +17,8 @@ Cograph is OpenAI-compatible only — provider config (`api_url`, `api_key`,
 worker boot via `resolve_runtime_provider_assignments`. The provider class
 below talks to any OpenAI Chat Completions endpoint (api.openai.com,
 self-hosted vLLM, Azure OpenAI, etc.) and uses function-calling for the
-agent loop.
+agent loop. When Chat Completions refuses function tools for a model and
+points at /v1/responses, the agent loop moves to the Responses API.
 """
 
 from __future__ import annotations
@@ -35,6 +36,20 @@ from backend.app.llm.usage import LlmUsageTally
 T = TypeVar("T", bound=BaseModel)
 
 _TOOL_RESULT_COMPACT_CHAR_CAP = 4_000
+
+# Models whose function tools Chat Completions refused with a pointer to
+# /v1/responses (gpt-6 sol/luna with reasoning on). Learned from the error,
+# so a new model needs no code change: one refused request per model per
+# process, then the tool loop goes straight to the Responses API.
+_TOOLS_VIA_RESPONSES: set[str] = set()
+
+_BUDGET_REACHED_NOTE = (
+    "Context budget reached — DO NOT call any more "
+    "tools. Produce the final markdown body now using "
+    "the evidence you already have. Cite only the "
+    "qualified names and file paths you have already "
+    "verified via prior tool calls."
+)
 
 
 class StructuredCompletionError(RuntimeError):
@@ -448,28 +463,20 @@ class OpenAICompatibleStructuredProvider:
         return "\n\n".join(block.text for block in blocks if block.text)
 
     def _record_usage(self, resp: Any) -> None:
-        if self._tally is None:
+        if self._tally is None or getattr(resp, "usage", None) is None:
             return
-        usage = getattr(resp, "usage", None)
-        if usage is None:
-            return
-        details = getattr(usage, "prompt_tokens_details", None)
+        tokens_in, tokens_out, tokens_cached = _usage_counts(resp)
         self._tally.record(
             model=self._model,
-            tokens_in=int(getattr(usage, "prompt_tokens", 0) or 0),
-            tokens_out=int(getattr(usage, "completion_tokens", 0) or 0),
-            tokens_cached=int(getattr(details, "cached_tokens", 0) or 0),
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            tokens_cached=tokens_cached,
         )
 
-    async def _create(
-        self,
-        *,
-        system: str,
-        blocks: list[CacheBlock],
-        max_tokens: int,
-        temperature: float,
-        json_mode: bool,
-    ) -> str:
+    async def _retrying(
+        self, create: Callable[..., Awaitable[Any]], kwargs: dict[str, Any]
+    ) -> Any:
+        """`await create(**kwargs)`, retrying rate limits, timeouts and 5xx."""
         import openai
         from tenacity import (
             AsyncRetrying,
@@ -485,7 +492,37 @@ class OpenAICompatibleStructuredProvider:
             openai.APITimeoutError,
             openai.InternalServerError,
         )
+        resp = None
+        try:
+            async for attempt in AsyncRetrying(
+                retry=retry_if_exception_type(retryable),
+                stop=stop_after_attempt(self._max_attempts),
+                wait=wait_exponential_jitter(
+                    initial=self._wait_initial, max=self._wait_max
+                ),
+                reraise=False,
+            ):
+                with attempt:
+                    resp = await create(**kwargs)
+        except RetryError as exc:
+            raise StructuredCompletionError(
+                f"OpenAICompatibleStructuredProvider exhausted {self._max_attempts} attempts"
+            ) from exc
+        if resp is None:
+            raise StructuredCompletionError(
+                "retry budget exhausted with no successful attempt"
+            )
+        return resp
 
+    async def _create(
+        self,
+        *,
+        system: str,
+        blocks: list[CacheBlock],
+        max_tokens: int,
+        temperature: float,
+        json_mode: bool,
+    ) -> str:
         request_kwargs: dict[str, Any] = {
             "model": self._model,
             "messages": [
@@ -502,33 +539,16 @@ class OpenAICompatibleStructuredProvider:
         if json_mode:
             request_kwargs["response_format"] = {"type": "json_object"}
 
-        resp = None
         try:
-            async for attempt in AsyncRetrying(
-                retry=retry_if_exception_type(retryable),
-                stop=stop_after_attempt(self._max_attempts),
-                wait=wait_exponential_jitter(
-                    initial=self._wait_initial, max=self._wait_max
-                ),
-                reraise=False,
-            ):
-                with attempt:
-                    resp = await self._client.chat.completions.create(**request_kwargs)
-        except RetryError as exc:
-            raise StructuredCompletionError(
-                f"OpenAICompatibleStructuredProvider exhausted {self._max_attempts} attempts"
-            ) from exc
+            resp = await self._retrying(
+                self._client.chat.completions.create, request_kwargs
+            )
         except Exception as exc:
             if _is_context_length_exceeded(exc):
                 raise StructuredCompletionError(
                     "LLM input exceeded the model context window"
                 ) from exc
             raise
-
-        if resp is None:
-            raise StructuredCompletionError(
-                "retry budget exhausted with no successful attempt"
-            )
         self._record_usage(resp)
         return resp.choices[0].message.content or ""
 
@@ -602,21 +622,19 @@ class OpenAICompatibleStructuredProvider:
         only exposes `prompt_tokens_details.cached_tokens` (read), so we
         record reads only.
         """
-        import openai
-        from tenacity import (
-            AsyncRetrying,
-            RetryError,
-            retry_if_exception_type,
-            stop_after_attempt,
-            wait_exponential_jitter,
-        )
-
-        retryable = (
-            openai.RateLimitError,
-            openai.APIConnectionError,
-            openai.APITimeoutError,
-            openai.InternalServerError,
-        )
+        call: dict[str, Any] = {
+            "system": system,
+            "blocks": blocks,
+            "tools": tools,
+            "tool_dispatch": tool_dispatch,
+            "max_turns": max_turns,
+            "soft_turn_budget": soft_turn_budget,
+            "max_tokens_per_turn": max_tokens_per_turn,
+            "temperature": temperature,
+            "max_input_chars": max_input_chars,
+        }
+        if self._model in _TOOLS_VIA_RESPONSES:
+            return await self._complete_with_tools_responses(**call)
 
         anchor_system = system
         anchor_first_user = self._join_blocks(blocks)
@@ -672,18 +690,7 @@ class OpenAICompatibleStructuredProvider:
                 )
                 if _measure_messages_chars(messages) > max_input_chars:
                     budget_exceeded = True
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                "Context budget reached — DO NOT call any more "
-                                "tools. Produce the final markdown body now using "
-                                "the evidence you already have. Cite only the "
-                                "qualified names and file paths you have already "
-                                "verified via prior tool calls."
-                            ),
-                        }
-                    )
+                    messages.append({"role": "user", "content": _BUDGET_REACHED_NOTE})
 
             request_kwargs: dict[str, Any] = {
                 "model": self._model,
@@ -702,58 +709,29 @@ class OpenAICompatibleStructuredProvider:
             else:
                 request_kwargs["max_tokens"] = max_tokens_per_turn
 
-            resp = None
             try:
-                async for attempt in AsyncRetrying(
-                    retry=retry_if_exception_type(retryable),
-                    stop=stop_after_attempt(self._max_attempts),
-                    wait=wait_exponential_jitter(
-                        initial=self._wait_initial, max=self._wait_max
-                    ),
-                    reraise=False,
-                ):
-                    with attempt:
-                        resp = await self._client.chat.completions.create(
-                            **request_kwargs
-                        )
-            except RetryError as exc:
-                raise StructuredCompletionError(
-                    f"OpenAICompatibleStructuredProvider exhausted {self._max_attempts} attempts"
-                ) from exc
-            except openai.BadRequestError as exc:
-                # 400 with `code: context_length_exceeded` means our
-                # accumulated messages array overflowed the model's
-                # context window despite the input-budget guard. Bail out
-                # of the loop instead of failing the whole repo sync —
-                # the caller decides whether the partial output is
-                # usable. Other 400s (schema validation, malformed tool
-                # args) keep raising so they get surfaced.
-                if _is_context_length_exceeded(exc):
-                    stop_reason = "budget_exhausted"
-                    break
-                raise
-            except Exception as exc:
-                # Some openai/tenacity combinations surface non-retryable
-                # 400s from AsyncRetrying.__anext__ instead of the inner
-                # create() await. Keep context-window overflow recoverable
-                # regardless of that call-stack shape.
-                if _is_context_length_exceeded(exc):
-                    stop_reason = "budget_exhausted"
-                    break
-                raise
-
-            if resp is None:
-                raise StructuredCompletionError(
-                    "retry budget exhausted with no successful attempt"
+                resp = await self._retrying(
+                    self._client.chat.completions.create, request_kwargs
                 )
+            except Exception as exc:
+                # 400 `context_length_exceeded`: the messages outgrew the
+                # context window despite the input-budget guard. Stop with
+                # what we have instead of failing the whole repo sync; the
+                # caller decides whether the partial output is usable.
+                if _is_context_length_exceeded(exc):
+                    stop_reason = "budget_exhausted"
+                    break
+                # The model takes tools only on the Responses API. Nothing
+                # was dispatched yet, so starting over repeats no tool call.
+                if not tools_called and _wants_responses_api(exc):
+                    _TOOLS_VIA_RESPONSES.add(self._model)
+                    return await self._complete_with_tools_responses(**call)
+                raise
 
-            usage = getattr(resp, "usage", None)
-            if usage is not None:
-                tokens_in += int(getattr(usage, "prompt_tokens", 0) or 0)
-                tokens_out += int(getattr(usage, "completion_tokens", 0) or 0)
-                details = getattr(usage, "prompt_tokens_details", None)
-                if details is not None:
-                    cache_read += int(getattr(details, "cached_tokens", 0) or 0)
+            turn_in, turn_out, turn_cached = _usage_counts(resp)
+            tokens_in += turn_in
+            tokens_out += turn_out
+            cache_read += turn_cached
             self._record_usage(resp)
 
             choice = resp.choices[0]
@@ -771,22 +749,9 @@ class OpenAICompatibleStructuredProvider:
 
             messages.append(_assistant_tool_call_message(message))
             for tc in tool_calls:
-                name = tc.function.name
-                raw_args = tc.function.arguments or "{}"
-                try:
-                    payload_obj = json.loads(raw_args)
-                    if not isinstance(payload_obj, dict):
-                        payload_obj = {}
-                except json.JSONDecodeError:
-                    payload_obj = {}
-                tools_called[name] = tools_called.get(name, 0) + 1
-                try:
-                    raw = await tool_dispatch(name, payload_obj)
-                    if not isinstance(raw, dict):
-                        raw = {"result": raw}
-                    body_str = json.dumps(raw, default=str)
-                except Exception as exc:
-                    body_str = json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+                body_str = await _run_tool(
+                    tool_dispatch, tc.function.name, tc.function.arguments, tools_called
+                )
                 messages.append(
                     {
                         "role": "tool",
@@ -796,16 +761,7 @@ class OpenAICompatibleStructuredProvider:
                 )
 
             if turns >= soft_turn_budget and turns < max_turns:
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            f"You've used {turns}/{max_turns} turns. "
-                            "Wrap up your investigation now and produce the "
-                            "final output."
-                        ),
-                    }
-                )
+                messages.append(_wrap_up_note(turns, max_turns))
         else:
             stop_reason = "budget_exhausted"
 
@@ -819,6 +775,196 @@ class OpenAICompatibleStructuredProvider:
             cache_creation_tokens=0,
             stop_reason=stop_reason,
         )
+
+    async def _complete_with_tools_responses(
+        self,
+        *,
+        system: str,
+        blocks: list[CacheBlock],
+        tools: list[ToolDefinition],
+        tool_dispatch: ToolDispatcher,
+        max_turns: int,
+        soft_turn_budget: int,
+        max_tokens_per_turn: int,
+        temperature: float,
+        max_input_chars: int | None,
+    ) -> ToolUseResult:
+        """The same tool loop on the Responses API.
+
+        Chat Completions refuses function tools on some reasoning models
+        (gpt-6 sol/luna unless reasoning is off); Responses keeps reasoning
+        on. Stateless (`store=False`): every output item, encrypted
+        reasoning included, goes back into `input` exactly as returned, so
+        the model keeps its reasoning across turns and the provider stores
+        nothing. `strict: False` keeps the non-strict tool schemas that
+        Chat Completions uses.
+        """
+        items: list[dict[str, Any]] = [
+            {"role": "user", "content": self._join_blocks(blocks)}
+        ]
+        response_tools = [
+            {
+                "type": "function",
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.input_schema,
+                "strict": False,
+            }
+            for tool in tools
+        ]
+
+        tools_called: dict[str, int] = {}
+        last_text = ""
+        tokens_in = 0
+        tokens_out = 0
+        cache_read = 0
+        stop_reason = "end_turn"
+        turns = 0
+        budget_exceeded = False
+
+        while turns < max_turns:
+            turns += 1
+            if (
+                not budget_exceeded
+                and max_input_chars is not None
+                and _measure_messages_chars(items) > max_input_chars
+            ):
+                _compact_tool_messages(items, cap=_TOOL_RESULT_COMPACT_CHAR_CAP)
+                if _measure_messages_chars(items) > max_input_chars:
+                    budget_exceeded = True
+                    items.append({"role": "user", "content": _BUDGET_REACHED_NOTE})
+
+            request_kwargs: dict[str, Any] = {
+                "model": self._model,
+                "instructions": system,
+                "input": items,
+                "store": False,
+                "include": ["reasoning.encrypted_content"],
+                "max_output_tokens": max_tokens_per_turn,
+            }
+            if _supports_temperature(self._model):
+                request_kwargs["temperature"] = temperature
+            if not budget_exceeded:
+                request_kwargs["tools"] = response_tools
+                request_kwargs["tool_choice"] = "auto"
+
+            try:
+                resp = await self._retrying(
+                    self._client.responses.create, request_kwargs
+                )
+            except Exception as exc:
+                if _is_context_length_exceeded(exc):
+                    stop_reason = "budget_exhausted"
+                    break
+                raise
+
+            turn_in, turn_out, turn_cached = _usage_counts(resp)
+            tokens_in += turn_in
+            tokens_out += turn_out
+            cache_read += turn_cached
+            self._record_usage(resp)
+
+            if resp.output_text:
+                last_text = resp.output_text
+            calls = [item for item in resp.output if item.type == "function_call"]
+            cut = getattr(getattr(resp, "incomplete_details", None), "reason", None)
+            if calls:
+                stop_reason = "tool_use"
+            elif cut == "max_output_tokens":
+                stop_reason = "max_tokens"
+            else:
+                stop_reason = cut or "end_turn"
+            if not calls:
+                break
+
+            items.extend(item.model_dump(exclude_none=True) for item in resp.output)
+            for item in calls:
+                items.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": item.call_id,
+                        "output": await _run_tool(
+                            tool_dispatch, item.name, item.arguments, tools_called
+                        ),
+                    }
+                )
+
+            if turns >= soft_turn_budget and turns < max_turns:
+                items.append(_wrap_up_note(turns, max_turns))
+        else:
+            stop_reason = "budget_exhausted"
+
+        return ToolUseResult(
+            final_text=last_text,
+            turns_used=turns,
+            tools_called=tools_called,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            cache_read_tokens=cache_read,
+            cache_creation_tokens=0,
+            stop_reason=stop_reason,
+        )
+
+
+async def _run_tool(
+    tool_dispatch: ToolDispatcher,
+    name: str,
+    raw_args: str | None,
+    tools_called: dict[str, int],
+) -> str:
+    """Dispatch one tool call and return its JSON reply (or an error envelope)."""
+    try:
+        payload = json.loads(raw_args or "{}")
+    except json.JSONDecodeError:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    tools_called[name] = tools_called.get(name, 0) + 1
+    try:
+        raw = await tool_dispatch(name, payload)
+        if not isinstance(raw, dict):
+            raw = {"result": raw}
+        return json.dumps(raw, default=str)
+    except Exception as exc:
+        return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+
+
+def _wrap_up_note(turns: int, max_turns: int) -> dict[str, str]:
+    return {
+        "role": "user",
+        "content": (
+            f"You've used {turns}/{max_turns} turns. "
+            "Wrap up your investigation now and produce the final output."
+        ),
+    }
+
+
+def _usage_counts(resp: Any) -> tuple[int, int, int]:
+    """(input, output, cached) tokens of a Chat Completions or Responses reply."""
+    usage = getattr(resp, "usage", None)
+    if usage is None:
+        return 0, 0, 0
+    details = getattr(usage, "prompt_tokens_details", None) or getattr(
+        usage, "input_tokens_details", None
+    )
+    return (
+        int(
+            getattr(usage, "prompt_tokens", None)
+            or getattr(usage, "input_tokens", 0)
+            or 0
+        ),
+        int(
+            getattr(usage, "completion_tokens", None)
+            or getattr(usage, "output_tokens", 0)
+            or 0
+        ),
+        int(getattr(details, "cached_tokens", 0) or 0),
+    )
+
+
+def _wants_responses_api(exc: BaseException) -> bool:
+    """Chat Completions refused the request and named /v1/responses instead."""
+    return "/v1/responses" in str(exc)
 
 
 def _assistant_tool_call_message(message: Any) -> dict[str, Any]:
@@ -871,6 +1017,11 @@ def _measure_messages_chars(messages: list[dict[str, Any]]) -> int:
             args = fn.get("arguments")
             if isinstance(args, str):
                 total += len(args)
+        # Responses API items: a function call and its output.
+        for key in ("arguments", "output"):
+            value = msg.get(key)
+            if isinstance(value, str):
+                total += len(value)
     return total
 
 
@@ -882,11 +1033,15 @@ def _compact_tool_messages(messages: list[dict[str, Any]], *, cap: int) -> None:
     preserves page quality better than forcing an immediate final answer.
     """
     for msg in messages:
-        if msg.get("role") != "tool":
+        if msg.get("role") == "tool":
+            key = "content"
+        elif msg.get("type") == "function_call_output":
+            key = "output"
+        else:
             continue
-        content = msg.get("content")
+        content = msg.get(key)
         if isinstance(content, str) and len(content) > cap:
-            msg["content"] = _compact_tool_result_content(content, cap=cap)
+            msg[key] = _compact_tool_result_content(content, cap=cap)
 
 
 def _compact_tool_result_content(content: str, *, cap: int) -> str:
