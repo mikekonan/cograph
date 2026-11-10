@@ -501,7 +501,7 @@ async def retrieve_payload(
     *,
     services: MCPServices,
     query: str,
-    repository_id: UUID | None,
+    repository_id: UUID,
     requested_layers: set[RetrievalLayer],
     top_k: int,
     as_of: datetime | None,
@@ -516,6 +516,9 @@ async def retrieve_payload(
     usage_sink: dict | None = None,
 ) -> dict[str, object]:
     async with services.session_manager.session() as session:
+        # retrieve_composite answers a not-ready repository with no rows,
+        # which the agent cannot tell from "nothing matched".
+        await require_ready_repository(session=session, repository_id=repository_id)
         embed_provider = services.embed_provider
         if embed_provider is None:
             runtime_providers = await build_runtime_providers(
@@ -1199,7 +1202,13 @@ async def require_ready_repository(
         repository_id=repository_id,
     )
     if repository.status is not RepositoryStatus.READY:
-        raise ToolError("REPO_NOT_READY: Repository is not ready")
+        # A failed re-sync snaps back to READY, so ERROR means the first
+        # index failed and nothing is indexed.
+        why = {
+            RepositoryStatus.ERROR: "its first index failed, nothing is indexed",
+            RepositoryStatus.DELETING: "it is being deleted",
+        }.get(repository.status, "its indexing has not finished yet")
+        raise ToolError(f"REPO_NOT_READY: Repository is not ready: {why}")
     return repository
 
 
