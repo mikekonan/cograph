@@ -651,12 +651,14 @@ async def record_query_log(
                 duration_ms=int(payload.get("duration_ms") or 0),
                 status=payload["status"],
                 error_code=payload.get("error_code"),
+                error_msg=payload.get("error_msg"),
                 client_label=payload.get("client_label"),
                 tokens_input=tokens_input,
                 tokens_output=tokens_output,
                 cost_usd_micros=cost_total,
                 embed_model=embed_model,
                 completion_model=completion_model,
+                wiki_pages=payload.get("wiki_pages"),
                 created_at=datetime.now(UTC),
             )
             session.add(row)

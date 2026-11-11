@@ -2,7 +2,17 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import BigInteger, Boolean, Enum, ForeignKey, Integer, String, Uuid
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    Enum,
+    ForeignKey,
+    Integer,
+    String,
+    Uuid,
+)
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.app.db.base import Base, CreatedAtMixin
@@ -92,9 +102,15 @@ class QueryLog(CreatedAtMixin, Base):
         nullable=False,
     )
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # The exception message; `error_code` is only its class or domain code.
+    error_msg: Mapped[str | None] = mapped_column(String(512), nullable=True)
     client_label: Mapped[str | None] = mapped_column(String(128), nullable=True)
     tokens_input: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tokens_output: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cost_usd_micros: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     embed_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     completion_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Generated-wiki slugs the search result carried in `wiki`.
+    wiki_pages: Mapped[list | None] = mapped_column(
+        JSONB().with_variant(JSON(), "sqlite"), nullable=True
+    )

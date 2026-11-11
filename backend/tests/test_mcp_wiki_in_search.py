@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from sqlalchemy import select
 
-from backend.app.mcp.services import _wiki_pages
+from backend.app.mcp.services import _wiki_excerpt, _wiki_pages
 from backend.app.models.document import Document
 from backend.app.models.query_log import QueryLog
 from backend.app.models.repository import Repository
@@ -67,6 +67,7 @@ async def test_pages_rank_by_cited_files_then_query_words(db_session) -> None:
             repository_id=repo_id,
             hits={str(node): path for node, path in hits},
             query=query,
+            chars=200,
         )
         return [page["page"] for page in found]
 
@@ -86,11 +87,36 @@ async def test_pages_rank_by_cited_files_then_query_words(db_session) -> None:
     assert await pages(two, "x") == ["lanes"]
     assert await pages(two[:1], "x") == []
     found = await _wiki_pages(
-        db_session, repository_id=repo_id, hits={str(b): "carrier/route.go"}, query="x"
+        db_session,
+        repository_id=repo_id,
+        hits={str(b): "carrier/route.go"},
+        query="x",
+        chars=200,
     )
     assert found == [
-        {"page": "carrier", "title": "Carrier handoff", "lead": "How carrier handoff works."}
+        {
+            "page": "carrier",
+            "title": "Carrier handoff",
+            "excerpt": "How carrier handoff works.",
+        }
     ]
+
+
+def test_excerpt_comes_from_the_section_naming_the_query() -> None:
+    page = (
+        "# Dock\n\nDocks take trucks.\n\n"
+        "## Overview\n\nA dock has doors and a yard.\n\n"
+        "## Scheduling\n\nSlots are booked a day ahead.\n\n"
+        "### Late trucks\n\nA late truck loses its slot and waits.\n"
+    )
+    # The subsection names the word, and so does its parent; the shorter wins.
+    assert _wiki_excerpt(page, {"late", "truck"}, 600) == {
+        "section": "Late trucks",
+        "excerpt": "A late truck loses its slot and waits.",
+    }
+    assert _wiki_excerpt(page, {"slots"}, 600)["section"] == "Scheduling"
+    # No section names a query word: the page's opening prose.
+    assert _wiki_excerpt(page, {"forklift"}, 30) == {"excerpt": "Docks take trucks. A dock…"}
 
 
 async def test_every_tool_call_writes_one_query_log_row(
@@ -117,20 +143,29 @@ async def test_every_tool_call_writes_one_query_log_row(
         return response.json()["result"]
 
     async def _payload(**_kwargs):
-        return {"results": []}
+        return {"results": [], "wiki": [{"page": "dock", "title": "Dock"}]}
+
+    async def _broken(**_kwargs):
+        raise RuntimeError("index is rebuilding")
 
     with patch("backend.app.mcp.tools.search_code.search_code_payload", _payload):
         assert not (await call("cograph_repositories", {"search": "warehouse"})).get(
             "isError"
         )
         await call("cograph_search_code", {"repository": _SLUG, "query": "Pallet"})
+    with patch("backend.app.mcp.tools.search_code.search_code_payload", _broken):
+        assert (await call("cograph_search_code", {"repository": _SLUG, "query": "Crate"}))[
+            "isError"
+        ]
 
     rows = sorted(
-        (row.tool_name, row.query_text)
+        (row.tool_name, row.query_text, row.error_msg, row.wiki_pages)
         for row in await db_session.scalars(select(QueryLog))
     )
     assert rows == [
-        ("cograph_repositories", "search=warehouse"),
+        ("cograph_repositories", "search=warehouse", None, None),
+        # The failure's message, so a failed call can be read without logs.
+        ("cograph_search_code", "Crate", "index is rebuilding", None),
         # Logs itself; the server hook must not add a second row.
-        ("cograph_search_code", "Pallet"),
+        ("cograph_search_code", "Pallet", None, ["dock"]),
     ]

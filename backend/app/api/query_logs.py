@@ -64,12 +64,14 @@ class QueryLogItem(BaseModel):
     duration_ms: int
     status: str
     error_code: str | None
+    error_msg: str | None = None
     client_label: str | None
     tokens_input: int | None
     tokens_output: int | None
     cost_usd_micros: int | None
     embed_model: str | None
     completion_model: str | None
+    wiki_pages: list[str] | None = None
 
 
 class QueryLogPage(BaseModel):
@@ -163,12 +165,14 @@ def _to_item(row: QueryLog) -> QueryLogItem:
         duration_ms=row.duration_ms,
         status=str(row.status),
         error_code=row.error_code,
+        error_msg=row.error_msg,
         client_label=row.client_label,
         tokens_input=row.tokens_input,
         tokens_output=row.tokens_output,
         cost_usd_micros=row.cost_usd_micros,
         embed_model=row.embed_model,
         completion_model=row.completion_model,
+        wiki_pages=row.wiki_pages,
     )
 
 

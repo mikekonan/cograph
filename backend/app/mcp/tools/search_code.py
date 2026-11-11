@@ -64,8 +64,8 @@ def register(server: MCPServer, services: MCPServices) -> None:
             "called_by_more counts the rest; [] means no callers.\n"
             "No hits: `reason` names the words searched for.\n"
             "`wiki` (only when a generated-wiki page covers the hits) lists up "
-            "to 2 pages {page, title, lead}; read one with "
-            "cograph_wiki_page(page).\n"
+            "to 2 pages {page, title, section, excerpt}; read one with "
+            "cograph_wiki_page(page, section).\n"
             "path_prefix (a folder from the repository root, e.g. "
             "internal/shipping/) keeps only hits under it.\n"
             "Use when: you have a word from the code: a name (class, "
@@ -119,4 +119,5 @@ def register(server: MCPServer, services: MCPServices) -> None:
                 where = f" under path_prefix '{args.path_prefix}'" if args.path_prefix else ""
                 payload["reason"] = f"No code{where} matches any of the words: {words}."
             log_bucket["result_count"] = count_response_results(payload)
+            log_bucket["wiki_pages"] = [p["page"] for p in payload.get("wiki") or []]
             return encode_payload(payload)
