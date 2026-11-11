@@ -651,14 +651,17 @@ _EDITABLE_REASONS: frozenset[str] = frozenset(
 # coverage only where it fits, so this is a soft hint, not a mandate.
 _EDIT_NEW_SYMBOL_CAP: int = 6
 
-_TRAILING_MERMAID_RE = re.compile(r"\n*```mermaid\b.*?```\s*$", re.DOTALL)
+# The block body may not contain ```: a lazy `.*?` still starts at the
+# page's FIRST mermaid fence and runs to the end, so a page with an in-page
+# diagram that ended in any fence lost everything after that diagram.
+_TRAILING_MERMAID_RE = re.compile(r"\n*```mermaid\b(?:(?!```).)*```\s*$", re.DOTALL)
 
 
 def _strip_trailing_mermaid(body: str) -> str:
-    """Drop a trailing ```mermaid fence. Pages written before the separate
-    diagram stage was removed end in its generated diagram; stripping it here
-    lets the next edit pass drop it. Diagrams the writer put inside the page
-    are kept."""
+    """Drop the page's last block when it is a ```mermaid fence. Pages written
+    before the separate diagram stage was removed end in its generated
+    diagram; stripping it here lets the next edit pass drop it. Diagrams the
+    writer put inside the page are kept."""
     return _TRAILING_MERMAID_RE.sub("", body or "").rstrip()
 
 
@@ -1244,7 +1247,8 @@ async def write_pages(
                 exc,
             )
             return None
-        body = _strip_trailing_mermaid(raw.strip())  # editor told to omit; be safe
+        # The editor keeps the page's diagrams, a last one included.
+        body = raw.strip()
         if not body:
             logger.info("wiki edit: empty body for slug=%s — escalating", spec.slug)
             return None

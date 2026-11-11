@@ -181,6 +181,22 @@ def test_strip_trailing_mermaid_keeps_non_trailing_fence() -> None:
     assert _strip_trailing_mermaid(body) == body
 
 
+def test_strip_trailing_mermaid_keeps_the_page_before_it() -> None:
+    """Only the last diagram goes. The in-page diagram and the section after
+    it stay."""
+    head = (
+        "# T\n\n## Architecture\n\n```mermaid\nflowchart LR\n  dock --> shelf\n```\n\n"
+        "## Loading dock\n\nTrucks unload here."
+    )
+    tail = "\n\n```mermaid\nflowchart LR\n  truck --> dock\n```\n"
+    assert _strip_trailing_mermaid(head + tail) == head
+
+
+def test_strip_trailing_mermaid_ignores_a_page_ending_in_code() -> None:
+    body = "# T\n\n```mermaid\nflowchart LR\n  a --> b\n```\n\nRun it:\n\n```bash\nmake run\n```"
+    assert _strip_trailing_mermaid(body) == body
+
+
 def test_parse_cited_refs() -> None:
     src = (
         "# Page\n"
