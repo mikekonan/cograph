@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from tree_sitter import Tree
@@ -71,14 +71,16 @@ class ParsedFile:
     language: GraphLanguage
     source_text: str
     tree: Tree
+    # Encoded once: the extractor slices it for every node, and encoding
+    # per slice made a file's parse quadratic in its size.
+    source_bytes: bytes = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self.source_bytes = self.source_text.encode("utf-8")
 
     @property
     def root_node(self):
         return self.tree.root_node
-
-    @property
-    def source_bytes(self) -> bytes:
-        return self.source_text.encode("utf-8")
 
 
 class GraphParser:

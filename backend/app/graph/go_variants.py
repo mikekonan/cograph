@@ -46,6 +46,10 @@ _KNOWN_GOARCH = frozenset(
     }
 )
 _GO_BUILD_PREFIX = "//go:build "
+# The Go convention for generated code (`go help generate`): this line
+# before the package clause. Such files are skipped: their code is noise
+# for search and summaries, and a multi-megabyte one dominates the parse.
+_GENERATED_PATTERN = re.compile(r"^// Code generated .* DO NOT EDIT\.$")
 _VERSION_PATTERN = re.compile(r"^(?:go)?(?P<major>\d+)\.(?P<minor>\d+)(?:\.\d+)?$")
 _TOKEN_PATTERN = re.compile(r"\s*(&&|\|\||!|\(|\)|[A-Za-z0-9_.]+)")
 
@@ -126,6 +130,8 @@ def select_go_package_files(
     selected: list[GoSelectedFile] = []
     for file_path in sorted(files):
         source_text = file_path.read_text(encoding="utf-8")
+        if _is_generated(source_text):
+            continue
         truth = _evaluate_file_selection(
             file_path=file_path.relative_to(root_path),
             source_text=source_text,
@@ -153,6 +159,15 @@ def select_go_package_files(
         package_key=package_key,
         selected_files=tuple(selected),
     )
+
+
+def _is_generated(source_text: str) -> bool:
+    for line in source_text.splitlines():
+        if line.startswith("package "):
+            return False
+        if _GENERATED_PATTERN.match(line):
+            return True
+    return False
 
 
 def _first_go_mod_value(lines: list[str], key: str) -> str | None:
