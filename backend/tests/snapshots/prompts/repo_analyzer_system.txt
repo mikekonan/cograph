@@ -16,33 +16,33 @@ Business context — what to extract (REQUIRED):
 
   - `problem_statement` — one or two sentences in PLAIN BUSINESS LANGUAGE
     naming the problem this repo solves. Avoid implementation prose
-    ("a Python library that…"); prefer outcome prose ("issues invoices
-    to merchants and reconciles payments"). When the README spells it
+    ("a Python library that…"); prefer outcome prose ("books shipments
+    for sellers and tracks them to delivery"). When the README spells it
     out, paraphrase it. When it doesn't, INFER from:
       * The dominant domain nouns in qualified names (entry points,
         exported types, public API).
       * The shape of inbound and outbound boundaries (e.g. an
-        `http_route POST /v1/invoices` plus an `external_api` to a
-        payment processor is strong evidence the repo is "an invoice
-        issuance / billing service").
-      * Repo / module names (a path called `auth`, `billing`,
+        `http_route POST /v1/shipments` plus an `external_api` to a
+        carrier is strong evidence the repo is "a shipment booking
+        service").
+      * Repo / module names (a path called `auth`, `shipping`,
         `audit`, `webhook` carries domain signal).
     A weak `problem_statement` is acceptable — `confidence=low` is the
     correct tag for it. An EMPTY `problem_statement` is not — even a
     library deserves a one-sentence "this is what it does for callers".
   - `value_props` — 2 to 5 short bullet phrases naming the concrete
-    outcomes the repo delivers (e.g. "issues invoices via a single API
+    outcomes the repo delivers (e.g. "books a shipment with a single API
     call", "deduplicates webhook deliveries", "exposes an audit trail
     queryable by tenant"). Bullets are user-facing, not architectural.
   - `primary_users` — who interacts with the result. Be specific:
-    "merchant integrators", "internal finance ops", "platform SREs",
+    "seller integrators", "internal warehouse ops", "platform SREs",
     "downstream services that consume the audit stream". Not
     "developers" unless the repo is genuinely developer-tooling.
   - `domain_concepts` — 3 to 10 core BUSINESS nouns the code reasons
     about. Each entry has `name`, `definition` (one-sentence prose),
     optional `file_path` and `qualified_name` if a clear anchoring type
     or module exists. These are the language of the system —
-    Invoice / Webhook / Tenant / AuditEntry — not technical terms like
+    Shipment / Webhook / Tenant / AuditEntry — not technical terms like
     "service", "handler", "repository" (those belong in
     `key_concepts`). Ground each concept in evidence visible in the
     inputs.
@@ -54,7 +54,7 @@ Business context — what to extract (REQUIRED):
     surface it as orientation that the reader should refine.
   - `evidence` — short list of citations for the framing. Each entry
     is either a file path (README path, doc path) or a qualified name
-    (`pkg.module.Type` / `pkg.handler.CreateInvoice`) drawn from the
+    (`pkg.module.Type` / `pkg.handler.CreateShipment`) drawn from the
     inputs. Keep it tight (≤ 6 entries) — these anchor the framing,
     they don't restate it.
 
@@ -91,7 +91,7 @@ Service topology — what to extract:
   2. `outbound_boundaries` — every distinct side-effect the service
      emits past its process boundary. Recognise:
        * `http_client` / `grpc_client` / `external_api` — outbound HTTP
-         clients, gRPC stubs, third-party SDK calls (Stripe, Twilio,
+         clients, gRPC stubs, third-party SDK calls (Twilio, SendGrid,
          AWS SDK, etc.).
        * `queue_producer` / `pubsub_publisher` / `webhook_emitter` —
          producer / publish / fire-webhook calls.
@@ -102,8 +102,8 @@ Service topology — what to extract:
          logs). Only call these out when they are part of the
          externally-visible contract; routine internal logging is not
          a boundary.
-     `label` should describe the target succinctly ("Stripe API", "S3
-     bucket invoices", "table orders insert"). Same field shape as
+     `label` should describe the target succinctly ("carrier tracking API",
+     "S3 bucket labels", "table orders insert"). Same field shape as
      inbound.
 
   3. `infra_dependencies` — what must be RUNNING for this service to

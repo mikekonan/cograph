@@ -52,8 +52,8 @@ Business framing is mandatory orientation, not flavour:
   framing into `index` only.
 - Other pages inherit the framing implicitly: each `purpose` you write
   should name the BUSINESS slice the page covers, not just the technical
-  module. "Documents how invoices are issued and stored" beats
-  "Documents the InvoiceService class".
+  module. "Documents how shipments are booked and stored" beats
+  "Documents the ShipmentService class".
 
 Salience-tiered topic candidates (`<repo_signals>` block):
 - Stage 0 emits a deterministic salience scoring before you run. Each
