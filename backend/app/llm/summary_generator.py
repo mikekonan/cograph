@@ -115,19 +115,19 @@ class SummaryGenerator:
 
         id_to_qname: dict[str, str] = {str(n.id): n.qualified_name for n in nodes}
 
-        n_total = len(nodes)
+        # Generated nodes are never summarized, so they take no slot either.
+        hand_written = {n.id for n in nodes if not n.node_metadata.get("generated")}
+        n_total = len(hand_written)
         n_target = max(_MIN_NODES, min(_MAX_NODES, int(n_total * self._top_node_fraction)))
         top_ids: set[UUID] = {
             nid
             for nid, _ in sorted(
-                importance.scores.items(), key=lambda kv: kv[1], reverse=True
+                ((nid, s) for nid, s in importance.scores.items() if nid in hand_written),
+                key=lambda kv: kv[1],
+                reverse=True,
             )[:n_target]
         }
-        # The top set still ranks generated nodes, so marking a file generated
-        # frees no slot and summarizes nothing new: its own summaries just go.
-        candidates = [
-            n for n in nodes if n.id in top_ids and not n.node_metadata.get("generated")
-        ]
+        candidates = [n for n in nodes if n.id in top_ids]
 
         # Load existing summaries; capture primitive fields before any commit.
         # existing_meta: code_node_id -> (content_hash, neighbor_hash, model, summary_id)
@@ -223,7 +223,7 @@ class SummaryGenerator:
             await session.execute(
                 delete(CodeNodeSummary)
                 .where(CodeNodeSummary.repository_id == repository_id)
-                .where(CodeNodeSummary.code_node_id.notin_([n.id for n in candidates]))
+                .where(CodeNodeSummary.code_node_id.notin_(list(top_ids)))
             )
         ).rowcount
         await session.commit()

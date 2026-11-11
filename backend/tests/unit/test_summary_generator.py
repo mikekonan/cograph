@@ -234,20 +234,23 @@ async def test_top_node_selection_floor_with_20_nodes():
     assert result.skipped_nodes == 0
 
 
-async def test_generated_nodes_get_no_summary():
-    """A node from a generated file is never sent to the LLM."""
-    hand = _node(qualified_name="shipping.route")
-    gen_node = _node(qualified_name="shipping.route_gen", generated=True)
-    imp = _importance(gen_node, hand)
+async def test_generated_nodes_get_no_summary_and_take_no_slot():
+    """A generated node is never sent to the LLM, and the floor of 10 slots
+    still goes to hand-written nodes even when it ranks first."""
+    generated = _node(qualified_name="shipping.route_gen", generated=True)
+    hand = [_node(qualified_name=f"shipping.f{i}") for i in range(11)]
+    imp = _importance(generated, *hand)
 
     gen = SummaryGenerator(
-        llm=FakeCompletionProvider(), top_node_fraction=1.0, top_subgraph_count=0
+        llm=FakeCompletionProvider(), top_node_fraction=0.0, top_subgraph_count=0
     )
-    session = _make_session([gen_node, hand])
+    session = _make_session([generated, *hand])
     result = await _run(gen, session, imp)
 
-    assert result.generated_nodes == 1
-    assert [s.code_node_id for s in session._added] == [hand.id]
+    assert result.generated_nodes == 10
+    summarized = {s.code_node_id for s in session._added}
+    assert generated.id not in summarized
+    assert summarized == {n.id for n in hand[:10]}
 
 
 async def test_top_node_selection_fraction_with_100_nodes():
