@@ -110,3 +110,8 @@ class CodeNode(CreatedAtMixin, Base):
         server_default=sa.FetchedValue(),
         info={"derived": True},
     )
+
+
+# Nodes of a generated file: indexed and searchable, but no LLM stage
+# (summaries, wiki) reads them.
+GENERATED_NODE = CodeNode.node_metadata["generated"].as_string().is_not(None)

@@ -133,8 +133,6 @@ def select_go_package_files(
     selected: list[GoSelectedFile] = []
     for file_path in sorted(files):
         source_text = file_path.read_text(encoding="utf-8")
-        if _is_generated(source_text):
-            continue
         truth = _evaluate_file_selection(
             file_path=file_path.relative_to(root_path),
             source_text=source_text,
@@ -164,7 +162,8 @@ def select_go_package_files(
     )
 
 
-def _is_generated(source_text: str) -> bool:
+def is_generated(source_text: str) -> bool:
+    """A generator's "generated ... do not edit" line before the package clause."""
     for line in source_text.splitlines():
         if line.startswith("package "):
             return False

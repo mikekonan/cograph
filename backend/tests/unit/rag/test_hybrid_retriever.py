@@ -112,6 +112,30 @@ async def test_fan_out_invokes_all_three_streams_for_code_store():
     assert chunk_ids == {a, b, c}
 
 
+async def test_hand_written_only_drops_generated_code_hits():
+    hand, generated = uuid.uuid4(), uuid.uuid4()
+    retriever = HybridRetriever(
+        vector=_StubVector({"code": [_chunk(hand), _chunk(generated)]}),
+        lexical=_StubLexical({}),
+        symbol=_StubSymbol([]),
+        reranker=_CountingReranker(),
+        router=_NeverRouter(),
+    )
+    session = _session()
+    session.scalars = AsyncMock(return_value=[generated])
+
+    result = await retriever.retrieve(
+        session,
+        query_text="route",
+        query_embedding=[0.1] * 1536,
+        repository_id=uuid.uuid4(),
+        stores={"code"},
+        hand_written_only=True,
+    )
+
+    assert [c.chunk_id for c in result] == [hand]
+
+
 @pytest.mark.asyncio
 async def test_partial_failure_in_one_stream_degrades_gracefully():
     """A failed stream logs and is skipped — remaining streams must still merge."""

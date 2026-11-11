@@ -39,8 +39,10 @@ def _node(
     callees: list | None = None,
     signature: str | None = None,
     doc_comment: str | None = None,
+    generated: bool = False,
 ) -> MagicMock:
     n = MagicMock()
+    n.node_metadata = {"generated": True} if generated else {}
     n.id = uid or _uid()
     n.qualified_name = qualified_name
     n.content = content
@@ -230,6 +232,25 @@ async def test_top_node_selection_floor_with_20_nodes():
     # floor = 10, fraction = int(20*0.2) = 4, n_target = max(10,4) = 10
     assert result.generated_nodes == 10
     assert result.skipped_nodes == 0
+
+
+async def test_generated_nodes_get_no_summary_and_take_no_slot():
+    """A generated node is never sent to the LLM, and the floor of 10 slots
+    still goes to hand-written nodes even when it ranks first."""
+    generated = _node(qualified_name="shipping.route_gen", generated=True)
+    hand = [_node(qualified_name=f"shipping.f{i}") for i in range(11)]
+    imp = _importance(generated, *hand)
+
+    gen = SummaryGenerator(
+        llm=FakeCompletionProvider(), top_node_fraction=0.0, top_subgraph_count=0
+    )
+    session = _make_session([generated, *hand])
+    result = await _run(gen, session, imp)
+
+    assert result.generated_nodes == 10
+    summarized = {s.code_node_id for s in session._added}
+    assert generated.id not in summarized
+    assert summarized == {n.id for n in hand[:10]}
 
 
 async def test_top_node_selection_fraction_with_100_nodes():

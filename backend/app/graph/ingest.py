@@ -34,6 +34,7 @@ from backend.app.graph.go_variants import (
     GoBuildVariantConflictError,
     GoIndexProfile,
     GoPackageSelection,
+    is_generated,
     resolve_go_index_profile,
     select_go_package_files,
 )
@@ -821,6 +822,8 @@ class GraphIngestService:
             if node.node_type is GraphNodeType.MODULE:
                 node.metadata = {**node.metadata, "extractor_stamp": stamp}
         if parsed_file.language is GraphLanguage.GO and go_profile is not None:
+            # Generated code stays searchable, but no LLM stage reads it.
+            generated = {"generated": True} if is_generated(source_text) else {}
             for node in extracted_graph.nodes:
                 node.metadata = {
                     **node.metadata,
@@ -828,6 +831,7 @@ class GraphIngestService:
                     "effective_goos": go_profile.effective_goos,
                     "effective_goarch": go_profile.effective_goarch,
                     "effective_cgo": go_profile.effective_cgo,
+                    **generated,
                 }
         return extracted_graph
 

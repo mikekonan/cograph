@@ -486,6 +486,7 @@ async def search_code(
         repository_id=ctx.repository_id,
         top_k=args.top_k,
         stores={"code"},
+        hand_written_only=True,
     )
     # T6: domain-concept-aware rerank (additive; no-op when concepts empty).
     hits = apply_domain_rerank(
