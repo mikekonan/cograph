@@ -120,3 +120,48 @@ def test_extractor_pep695_generic_type_alias_strips_type_parameters():
     alias = nodes["service.Box"]
     assert alias.node_type is GraphNodeType.TYPE_ALIAS
     assert alias.name == "Box"
+
+
+def test_extractor_captures_go_package_level_const_and_var():
+    nodes = _extract(
+        "package shipping\n"
+        "\n"
+        "const (\n"
+        "\tPending Status = iota\n"
+        "\tSent\n"
+        "\t_\n"
+        ")\n"
+        "\n"
+        "const findParcel = `SELECT id FROM parcels WHERE id = $1`\n"
+        "\n"
+        "var (\n"
+        '\tErrLost = errors.New("lost")\n'
+        "\tlow, high = 1, 2\n"
+        ")\n"
+        "\n"
+        "var _ Printer = (*printer)(nil)\n"
+        "\n"
+        "func Send() {\n"
+        "\tconst local = 1\n"
+        "}\n",
+        file_path="internal/shipping/parcel.go",
+    )
+    values = {
+        name.removeprefix("internal.shipping."): (node.node_type, node.signature)
+        for name, node in nodes.items()
+        if node.node_type in {GraphNodeType.CONSTANT, GraphNodeType.VARIABLE}
+    }
+    # One node per name; `_` and constants inside a function are not nodes.
+    # The signature has no value, so a new value keeps the node's identity.
+    assert values == {
+        "Pending": (GraphNodeType.CONSTANT, "const Pending Status"),
+        "Sent": (GraphNodeType.CONSTANT, "const Sent"),
+        "findParcel": (GraphNodeType.CONSTANT, "const findParcel"),
+        "ErrLost": (GraphNodeType.VARIABLE, "var ErrLost"),
+        "low": (GraphNodeType.VARIABLE, "var low"),
+        "high": (GraphNodeType.VARIABLE, "var high"),
+    }
+    query = nodes["internal.shipping.findParcel"]
+    assert "FROM parcels" in query.content
+    assert query.start_line == query.end_line == 9
+    assert query.parent_qualified_name.endswith("#module")

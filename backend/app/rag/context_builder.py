@@ -46,6 +46,9 @@ BROAD_RETRIEVAL_LAYERS: frozenset[RetrievalLayer] = frozenset(
     {RetrievalLayer.CODE, RetrievalLayer.AST_SUMMARY, RetrievalLayer.REPO_DOC}
 )
 
+# Go nodes whose AST row shows the declaration, not the signature.
+_VALUE_NODE_TYPES = frozenset({CodeNodeType.CONSTANT, CodeNodeType.VARIABLE})
+
 
 class CandidateFrom(StrEnum):
     VECTOR = "vector"
@@ -217,8 +220,14 @@ class ContextBuilder:
                         )
                     )
                 if RetrievalLayer.AST in requested_layers:
+                    # A Go constant's signature leaves out its value (the
+                    # signature keys the node's id), and the value, a query
+                    # text say, is what the search was for. Python and
+                    # TypeScript signatures already hold it.
                     snippet, truncated = _excerpt(
-                        node.signature or node.qualified_name or node.name
+                        node.content
+                        if node.node_type in _VALUE_NODE_TYPES and node.language == "go"
+                        else node.signature or node.qualified_name or node.name
                     )
                     results.append(
                         RetrievalResult(

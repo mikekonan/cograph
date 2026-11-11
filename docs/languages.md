@@ -118,7 +118,7 @@ The walkers are not identical. Where they diverge:
 | Function | ✅ | ✅ | ✅ (incl. arrow/function-expression consts) |
 | Method | ✅ | ✅ (receiver in metadata) | ✅ (incl. arrow-valued fields) |
 | Attribute / field | ✅ class attributes | ❌ struct fields not emitted | ✅ field definitions |
-| Module-level variable / constant | ✅ | ❌ `const`/`var` blocks not extracted | ✅ |
+| Module-level variable / constant | ✅ | ✅ package-level `const`/`var`, one node per name; signature without the value | ✅ |
 | Type alias | ✅ (PEP 695) | ✅ | ✅ |
 | Imports | ✅ `import`, `from … import` | ✅ (path normalised) | ✅ incl. re-export barrels and CommonJS `require` |
 | Calls | ✅ | ✅ | ✅ (also inside nested functions) |

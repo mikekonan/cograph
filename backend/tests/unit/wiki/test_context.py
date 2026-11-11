@@ -42,12 +42,13 @@ async def _add_code_node(
     summary: str | None = None,
     importance: float = 0.0,
     language: str = "python",
+    node_type: CodeNodeType = CodeNodeType.FUNCTION,
 ) -> CodeNode:
     node = CodeNode(
         repository_id=repo_id,
         file_path=file_path,
         qualified_name=qn,
-        node_type=CodeNodeType.FUNCTION,
+        node_type=node_type,
         name=qn.rsplit(".", 1)[-1],
         language=language,
         start_line=1,
@@ -279,3 +280,35 @@ async def test_build_repo_context_truncates_long_readme(
     )
     assert context.readme_text is not None
     assert len(context.readme_text) == 500
+
+
+async def test_file_tree_weighs_files_by_code_not_constants(
+    db_session: AsyncSession,
+) -> None:
+    """The file list is part of the structural hash: new constants must not
+    push a file of code out of the tree."""
+    repo = await _make_repo(db_session)
+    await _add_source_file(
+        db_session, repo_id=repo.id, file_path="limits.py", content=b"A = 1\n" * 50
+    )
+    await _add_source_file(
+        db_session, repo_id=repo.id, file_path="route.py", content=b"def go(): pass\n"
+    )
+    for name in ("A", "B", "C"):
+        await _add_code_node(
+            db_session,
+            repo_id=repo.id,
+            qn=f"limits.{name}",
+            file_path="limits.py",
+            node_type=CodeNodeType.CONSTANT,
+        )
+    await _add_code_node(db_session, repo_id=repo.id, qn="route.go", file_path="route.py")
+
+    context = await build_repo_context(
+        session=db_session,
+        repository_id=repo.id,
+        commit_sha="cafef00d",
+        file_tree_cap=1,
+    )
+
+    assert [entry.file_path for entry in context.file_tree] == ["route.py"]

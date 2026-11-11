@@ -52,7 +52,7 @@ _GO_PREDECLARED_TYPES = frozenset(
 # when its text has not changed.
 EXTRACTOR_VERSIONS: dict[GraphLanguage, int] = {
     GraphLanguage.PYTHON: 1,
-    GraphLanguage.GO: 3,
+    GraphLanguage.GO: 4,
     GraphLanguage.TYPESCRIPT: 4,
     GraphLanguage.JAVASCRIPT: 4,
 }
@@ -430,6 +430,16 @@ def _extract_go_graph(
                 nodes.append(method_node)
                 edges.extend(method_edges)
             continue
+        if child.type in {"const_declaration", "var_declaration"}:
+            value_nodes, value_edges = _extract_go_values(
+                parsed_file=parsed_file,
+                module_name=module_name,
+                package_qualified_name=package_qualified_name,
+                declaration=child,
+            )
+            nodes.extend(value_nodes)
+            edges.extend(value_edges)
+            continue
         if child.type != "type_declaration":
             continue
 
@@ -445,6 +455,69 @@ def _extract_go_graph(
             edges.extend(declaration_edges)
 
     return ExtractedGraph(nodes=nodes, edges=edges)
+
+
+def _extract_go_values(
+    *,
+    parsed_file: ParsedFile,
+    module_name: str,
+    package_qualified_name: str,
+    declaration: Node,
+) -> tuple[list[ExtractedNode], list[ExtractedEdge]]:
+    """Package-level `const` and `var`: one node per name.
+
+    A constant holds an SQL text, a status or a sentinel error; inside the
+    `#module` node no search could return it on its own. The signature is
+    the name and the declared type, never the value: the symbol key hashes
+    the signature, and a new value must not give the node a new identity.
+    No call edges: `var x = f()` runs once, and an edge would move PageRank.
+    """
+    constant = declaration.type == "const_declaration"
+    keyword = "const" if constant else "var"
+    specs = [
+        spec
+        for child in declaration.named_children
+        for spec in (
+            child.named_children if child.type == "var_spec_list" else [child]
+        )
+        if spec.type in {"const_spec", "var_spec"}
+    ]
+    nodes: list[ExtractedNode] = []
+    edges: list[ExtractedEdge] = []
+    for spec in specs:
+        type_node = spec.child_by_field_name("type")
+        type_text = f" {_node_text(parsed_file, type_node)}" if type_node else ""
+        for name_node in spec.children_by_field_name("name"):
+            name = _node_text(parsed_file, name_node).strip()
+            if name == "_":
+                continue
+            qualified_name = f"{package_qualified_name}.{name}"
+            nodes.append(
+                ExtractedNode(
+                    node_type=(
+                        GraphNodeType.CONSTANT if constant else GraphNodeType.VARIABLE
+                    ),
+                    name=name,
+                    qualified_name=qualified_name,
+                    file_path=parsed_file.path.as_posix(),
+                    language=parsed_file.language,
+                    start_line=_start_line(spec),
+                    end_line=_end_line(spec),
+                    start_byte=spec.start_byte,
+                    end_byte=spec.end_byte,
+                    content=_node_text(parsed_file, spec),
+                    signature=_truncate(f"{keyword} {name}{type_text}".replace("\n", " ")),
+                    parent_qualified_name=module_name,
+                )
+            )
+            edges.append(
+                ExtractedEdge(
+                    edge_type=GraphEdgeType.DECLARES,
+                    source=module_name,
+                    target=qualified_name,
+                )
+            )
+    return nodes, edges
 
 
 def link_go_receiver_fields(graphs: Iterable[ExtractedGraph]) -> None:
