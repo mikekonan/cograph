@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.models.code_node import CodeNode
 from backend.app.models.code_node_summary import CodeNodeSummary
 from backend.app.models.document import Document
+from backend.app.models.enums import CodeNodeType
 from backend.app.models.repo_document import RepoDocument, RepoDocumentChunk
 from backend.app.models.source_file import SourceFile
 from backend.app.wiki.manifests import RepoManifests, build_repo_manifests
@@ -291,9 +292,18 @@ async def _file_code_node_counts(
     session: AsyncSession,
     repository_id: UUID,
 ) -> dict[str, int]:
+    """Code symbols per file: the weight that picks the file tree.
+
+    Constants and variables do not count: a file of fifty constants holds
+    little code to read, and the tree's file list is part of the structural
+    hash, so every new constant would re-plan the wiki.
+    """
     stmt = (
         select(CodeNode.file_path, func.count(CodeNode.id))
         .where(CodeNode.repository_id == repository_id)
+        .where(
+            CodeNode.node_type.not_in((CodeNodeType.CONSTANT, CodeNodeType.VARIABLE))
+        )
         .group_by(CodeNode.file_path)
     )
     rows = (await session.execute(stmt)).all()

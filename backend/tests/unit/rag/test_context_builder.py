@@ -76,6 +76,7 @@ async def test_build_expands_code_hit_into_composite_layers_and_graph():
                 id=node_id,
                 name="raise_repo_not_ready",
                 qualified_name="svc.raise_repo_not_ready",
+                node_type=CodeNodeType.FUNCTION,
                 file_path="svc.py",
                 start_line=1,
                 end_line=8,
@@ -254,3 +255,61 @@ async def test_build_caps_results_to_top_k():
     assert response.results[0].provenance.qualified_name == "m.a"
     assert response.results[1].layer is RetrievalLayer.AST_SUMMARY
     assert response.total_tokens_estimate == sum(len(r.snippet) for r in response.results) // 4
+
+
+@pytest.mark.asyncio
+async def test_ast_row_of_a_constant_shows_its_value():
+    # A Go constant's signature has no value; the search row shows the
+    # declaration, so the query text is in the result itself. A TypeScript
+    # signature already holds the value and stays the row.
+    const_id, ts_id = uuid4(), uuid4()
+    builder = ContextBuilder(graph_pivot=_StubGraphPivot({}))
+    builder._load_code_nodes = AsyncMock(  # type: ignore[method-assign]
+        return_value={
+            const_id: SimpleNamespace(
+                id=const_id,
+                name="findParcel",
+                qualified_name="store.findParcel",
+                node_type=CodeNodeType.CONSTANT,
+                language="go",
+                file_path="store/query.go",
+                start_line=4,
+                end_line=4,
+                content='findParcel = "SELECT * FROM parcels WHERE id = $1"',
+                signature="const findParcel",
+            ),
+            ts_id: SimpleNamespace(
+                id=ts_id,
+                name="Card",
+                qualified_name="web.Card",
+                node_type=CodeNodeType.VARIABLE,
+                language="typescript",
+                file_path="web/card.tsx",
+                start_line=1,
+                end_line=3,
+                content="Card = memo(() => {\n  return <Parcel />\n})",
+                signature="Card = memo(() => { return <Parcel /> })",
+            ),
+        }
+    )
+    builder._load_node_summaries = AsyncMock(return_value={})  # type: ignore[method-assign]
+    builder._load_linked_repo_doc_chunks = AsyncMock(return_value={})  # type: ignore[method-assign]
+    builder._load_repo_doc_chunks = AsyncMock(return_value={})  # type: ignore[method-assign]
+
+    response = await builder.build(
+        AsyncMock(),
+        chunks=[
+            RetrievedChunk(store="code", chunk_id=const_id, content="x", score=0.9, metadata={}),
+            RetrievedChunk(store="code", chunk_id=ts_id, content="x", score=0.5, metadata={}),
+        ],
+        requested_layers={RetrievalLayer.AST},
+        repository_id=uuid4(),
+        include_chunks=False,
+        include_graph=False,
+        include_scores=False,
+    )
+
+    assert [row.snippet for row in response.results] == [
+        'findParcel = "SELECT * FROM parcels WHERE id = $1"',
+        "Card = memo(() => { return <Parcel /> })",
+    ]
