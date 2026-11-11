@@ -86,8 +86,11 @@ SURFACE_SHA_HISTORY: dict[int, str] = {
     # page writer asks for concrete detail and a larger output cap. Old
     # pages stay correct, only less detailed, so they are not invalidated:
     # a repo picks the new writer up per dirty page, or all at once through
-    # its rebuild flag, instead of every repo paying for a rebuild at once.
-    1: "6a1a32a899dea037212ac6e6a491ae6c4f0d91d478400cd30c4bac21f174fa53",
+    # its rebuild flag, instead of every repo paying for a rebuild at once;
+    # (5) the separate diagram stage and its prompt are removed, and the
+    # editor keeps in-page diagrams. Old pages lose only their generated
+    # trailing diagram, on their next edit.
+    1: "8d37519b1b37f1cb00e74e5d428db846f0b9899e9c3f2a591f9ab3daa55772e4",
 }
 
 
@@ -133,7 +136,6 @@ def compute_quality_surface_sha() -> str:
             "page_editor_system": prompts.PAGE_EDITOR_SYSTEM,
             "page_outline_system": prompts.PAGE_OUTLINE_SYSTEM,
             "page_prose_system": prompts.PAGE_PROSE_SYSTEM,
-            "diagram_synthesizer_system": prompts.DIAGRAM_SYNTHESIZER_SYSTEM,
             "cross_linker_system": prompts.CROSS_LINKER_SYSTEM,
         },
         "budgets": {

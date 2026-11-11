@@ -82,7 +82,7 @@ after a schema change or a forced full sync pays the full price once.
 - **Per sync job**: input, output and cached token counts, an estimated cost in
   micro-USD, the model, and a per-step JSON breakdown. Wiki stages are attributed
   individually — `wiki.analyze`, `wiki.mindmap`, `wiki.plan`, `wiki.write`,
-  `wiki.diagram`, `wiki.retrieval` — as are `embed.code`, `embed.repo_docs` and
+  `wiki.retrieval` — as are `embed.code`, `embed.repo_docs` and
   `summaries`.
 - **Per query**: token counts and cost on user-facing search, in `query_logs`.
 

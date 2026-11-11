@@ -33,11 +33,10 @@ flowchart TD
   s25["2.5 · clustering"]
   s3["3 · plan pages<br/><small>LLM → PagePlan</small>"]
   s4["4 · write pages<br/><small>N agent loops in parallel</small>"]
-  s4b["4b · diagrams<br/><small>optional, per page</small>"]
   s5["5 · resolve<br/><small>citations + quality gates</small>"]
   s6["6 · persist"]
 
-  s0 --> s1 --> s1b --> s2 --> s15 --> s25 --> s3 --> s4 --> s4b --> s5 --> s6
+  s0 --> s1 --> s1b --> s2 --> s15 --> s25 --> s3 --> s4 --> s5 --> s6
   s1b -.->|"pages declared in steering"| s3
 ```
 
@@ -125,8 +124,8 @@ regenerated on the next sync.
 
 ### Diagrams
 
-Pages that warrant one get a Mermaid diagram synthesised in a separate pass.
-Diagram failure is non-fatal — the page ships without it.
+The page writer draws Mermaid diagrams inside the page where they explain a flow.
+There is no separate diagram pass.
 
 ## Cost and regeneration
 
@@ -205,7 +204,7 @@ instead of being dirtied by the planner's rewording.
 | Keeping the wiki **schema version** stable | A bump forces a full rebuild of every repository. |
 
 Per-run token and cost totals are recorded per step, with wiki stages broken out
-individually (`wiki.plan`, `wiki.write`, `wiki.diagram`, …). See
+individually (`wiki.plan`, `wiki.write`, …). See
 [Operations](/operations#cost).
 
 ::: warning There is no budget enforcement

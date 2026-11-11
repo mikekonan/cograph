@@ -1,18 +1,7 @@
-"""Tests for Stage 4b — `synthesize_diagrams` Mermaid append."""
+"""Tests for the Markdown and Mermaid clean-up passes run on page drafts."""
 
 from __future__ import annotations
 
-from uuid import UUID
-
-import pytest
-
-from backend.app.models.enums import CodeNodeType
-from backend.app.rag.pivot import PivotNode, PivotRelatedNode
-from backend.app.wiki.context import RepoContext
-from backend.app.wiki.llm_client import (
-    FakeStructuredProvider,
-    StructuredCompletionError,
-)
 from backend.app.wiki.manifests import (
     Dependency,
     ManifestEvidence,
@@ -22,183 +11,15 @@ from backend.app.wiki.manifests import (
 )
 from backend.app.wiki.citations import RepositorySlug
 from backend.app.wiki.pipeline import (
-    WikiGenerationConfig,
-    _extract_mermaid_block,
-    _flatten_pivot_to_triples,
     _select_manifest_lines,
     sanitize_mermaid_in_markdown,
     sanitize_page_links_in_markdown,
-    synthesize_diagrams,
     upgrade_multiline_inline_code,
 )
-from backend.app.wiki.retrieval import CodeChunk, PageBundle
 from backend.app.wiki.schemas import (
-    PageDraft,
-    PagePlan,
     PageSpec,
     ReaderQuestion,
 )
-
-# Async tests in this file are marked individually (the file mixes sync helper
-# tests with async orchestrator tests, so a file-level mark would warn on the
-# sync ones).
-
-
-_REPO_ID = UUID("00000000-0000-0000-0000-000000000abc")
-
-
-def _ctx(manifests: RepoManifests | None = None) -> RepoContext:
-    return RepoContext(
-        repository_id=_REPO_ID,
-        commit_sha="cafef00d",
-        readme_text="# fixture",
-        file_tree_hash="a" * 64,
-        docs_hash="b" * 64,
-        summaries_hash="c" * 64,
-        identity_hash="d" * 64,
-        manifests=manifests or RepoManifests(),
-    )
-
-
-def _draft(slug: str, body: str = "# Page\n\nbody.") -> PageDraft:
-    return PageDraft(slug=slug, title=slug.title(), body_md=body, model="fake-v1")
-
-
-def _page(slug: str, *, diagram: bool = False) -> PageSpec:
-    return PageSpec(
-        slug=slug,
-        title=slug.title(),
-        purpose=f"about {slug}",
-        diagram=diagram,
-    )
-
-
-def _bundle_with_seed(node_id: UUID) -> PageBundle:
-    return PageBundle(
-        code_chunks=[
-            CodeChunk(
-                qualified_name="src.pipeline.run",
-                file_path="src/pipeline.py",
-                start_line=10,
-                end_line=42,
-                language="python",
-                summary="Top-level orchestrator.",
-                snippet="def run(): pass",
-                code_node_id=node_id,
-                rank=1,
-                score=0.9,
-            )
-        ]
-    )
-
-
-class _StubPivot:
-    """Pivot double that returns canned `PivotNode`s without touching the DB."""
-
-    def __init__(self, pivots: dict[UUID, PivotNode] | None = None):
-        self._pivots = pivots or {}
-        self.calls = 0
-
-    async def expand(
-        self, *, session, repository_id, node_ids
-    ) -> dict[UUID, PivotNode]:
-        self.calls += 1
-        return {nid: self._pivots[nid] for nid in node_ids if nid in self._pivots}
-
-
-def _pivot_node(*, name: str, callers: list[str], callees: list[str]) -> PivotNode:
-    return PivotNode(
-        id=UUID("00000000-0000-0000-0000-00000000aaaa"),
-        name=name,
-        node_type=CodeNodeType.FUNCTION,
-        language="python",
-        file_path="src/pipeline.py",
-        start_line=10,
-        end_line=42,
-        signature=None,
-        callers=[
-            PivotRelatedNode(
-                id=UUID(f"00000000-0000-0000-0000-0000000{i:05x}"),
-                name=name,
-                node_type=CodeNodeType.FUNCTION,
-                file_path=f"src/{name}.py",
-                start_line=1,
-                end_line=10,
-                signature=None,
-            )
-            for i, name in enumerate(callers)
-        ],
-        callees=[
-            PivotRelatedNode(
-                id=UUID(f"00000000-0000-0000-0000-0000001{i:05x}"),
-                name=name,
-                node_type=CodeNodeType.FUNCTION,
-                file_path=f"src/{name}.py",
-                start_line=1,
-                end_line=10,
-                signature=None,
-            )
-            for i, name in enumerate(callees)
-        ],
-        parent=None,
-    )
-
-
-def test_extract_mermaid_block_picks_fenced_mermaid() -> None:
-    text = "Some prose.\n\n```mermaid\nflowchart LR\n  A --> B\n```\n\nTrailing prose."
-    body = _extract_mermaid_block(text)
-    assert body is not None
-    assert body.startswith("flowchart LR")
-    assert "A --> B" in body
-
-
-def test_extract_mermaid_block_accepts_bare_diagram_body() -> None:
-    body = _extract_mermaid_block("classDiagram\n  class A\n  class B\n  A <|-- B")
-    assert body is not None
-    assert "classDiagram" in body
-
-
-def test_extract_mermaid_block_rejects_garbage() -> None:
-    assert _extract_mermaid_block("just prose, no diagram") is None
-    assert _extract_mermaid_block("") is None
-    assert _extract_mermaid_block("```python\nprint('hi')\n```") is None
-
-
-def test_extract_mermaid_block_picks_first_diagram_fence() -> None:
-    text = (
-        "```python\nprint('not me')\n```\n\n```mermaid\nflowchart TD\n  X --> Y\n```\n"
-    )
-    body = _extract_mermaid_block(text)
-    assert body is not None
-    assert body.startswith("flowchart TD")
-
-
-def test_flatten_pivot_to_triples_emits_caller_callee_relations() -> None:
-    pivot_id = UUID("00000000-0000-0000-0000-00000000aaaa")
-    pivots = {
-        pivot_id: _pivot_node(
-            name="run",
-            callers=["main"],
-            callees=["build_summary"],
-        )
-    }
-    triples = _flatten_pivot_to_triples(pivots)
-    assert ("main", "calls", "run") in triples
-    assert ("run", "calls", "build_summary") in triples
-
-
-def test_flatten_pivot_to_triples_dedupes_repeated_relations() -> None:
-    pivot_id = UUID("00000000-0000-0000-0000-00000000aaaa")
-    pivots = {
-        pivot_id: _pivot_node(
-            name="run",
-            callers=["main", "main"],
-            callees=["build_summary"],
-        )
-    }
-    triples = _flatten_pivot_to_triples(pivots)
-    assert triples.count(("main", "calls", "run")) == 1
-
 
 def test_select_manifest_lines_picks_relevant_axes() -> None:
     manifests = RepoManifests(
@@ -243,160 +64,6 @@ def test_select_manifest_lines_picks_relevant_axes() -> None:
     assert any("[api] src.cli.main" in line for line in lines)
     assert any("[dep:python] fastapi 0.110.0" in line for line in lines)
     assert any("[run:docker] docker compose up" in line for line in lines)
-
-
-@pytest.mark.asyncio
-async def test_synthesize_diagrams_appends_mermaid_block() -> None:
-    seed = UUID("00000000-0000-0000-0000-00000000aaaa")
-    plan = PagePlan(pages=[_page("index", diagram=True), _page("api", diagram=False)])
-    drafts = [_draft("index"), _draft("api")]
-    bundles = {"index": _bundle_with_seed(seed)}
-
-    fake = FakeStructuredProvider()
-    fake.queue("```mermaid\nflowchart LR\n  main --> run\n```")
-
-    pivot = _StubPivot(
-        pivots={
-            seed: _pivot_node(name="run", callers=["main"], callees=["build_summary"])
-        }
-    )
-
-    updated = await synthesize_diagrams(
-        llm=fake,
-        session=None,  # type: ignore[arg-type]
-        repository_id=_REPO_ID,
-        context=_ctx(),
-        plan=plan,
-        drafts=drafts,
-        bundles_by_slug=bundles,
-        config=WikiGenerationConfig(),
-        pivot=pivot,  # type: ignore[arg-type]
-    )
-
-    assert len(updated) == 2
-    index_body = next(d.body_md for d in updated if d.slug == "index")
-    api_body = next(d.body_md for d in updated if d.slug == "api")
-
-    assert "```mermaid" in index_body
-    assert "flowchart LR" in index_body
-    assert "main --> run" in index_body
-    # `api` has diagram=False; body untouched.
-    assert api_body == "# Page\n\nbody."
-    # Only one LLM call (for `index`); `api` skipped.
-    assert len(fake.calls) == 1
-    assert pivot.calls == 1
-
-
-@pytest.mark.asyncio
-async def test_synthesize_diagrams_skips_when_disabled() -> None:
-    plan = PagePlan(pages=[_page("index", diagram=True)])
-    drafts = [_draft("index")]
-    fake = FakeStructuredProvider()
-
-    updated = await synthesize_diagrams(
-        llm=fake,
-        session=None,  # type: ignore[arg-type]
-        repository_id=_REPO_ID,
-        context=_ctx(),
-        plan=plan,
-        drafts=drafts,
-        bundles_by_slug={},
-        config=WikiGenerationConfig(enable_diagrams=False),
-        pivot=_StubPivot(),  # type: ignore[arg-type]
-    )
-
-    assert updated == drafts
-    assert fake.calls == []
-
-
-@pytest.mark.asyncio
-async def test_synthesize_diagrams_drops_invalid_mermaid_output() -> None:
-    seed = UUID("00000000-0000-0000-0000-00000000aaaa")
-    plan = PagePlan(pages=[_page("index", diagram=True)])
-    drafts = [_draft("index", body="# Index\n\noriginal body.")]
-    bundles = {"index": _bundle_with_seed(seed)}
-
-    fake = FakeStructuredProvider()
-    fake.queue("Sorry, I cannot produce a diagram for this page.")
-
-    pivot = _StubPivot(pivots={seed: _pivot_node(name="run", callers=[], callees=[])})
-
-    updated = await synthesize_diagrams(
-        llm=fake,
-        session=None,  # type: ignore[arg-type]
-        repository_id=_REPO_ID,
-        context=_ctx(),
-        plan=plan,
-        drafts=drafts,
-        bundles_by_slug=bundles,
-        config=WikiGenerationConfig(),
-        pivot=pivot,  # type: ignore[arg-type]
-    )
-
-    # Garbage diagram → body unchanged, no error raised.
-    assert len(updated) == 1
-    assert updated[0].body_md == "# Index\n\noriginal body."
-
-
-@pytest.mark.asyncio
-async def test_synthesize_diagrams_swallows_llm_failures() -> None:
-    seed = UUID("00000000-0000-0000-0000-00000000aaaa")
-    plan = PagePlan(pages=[_page("index", diagram=True)])
-    drafts = [_draft("index")]
-    bundles = {"index": _bundle_with_seed(seed)}
-
-    class _FailingLLM:
-        model = "fake-fail-v1"
-
-        async def complete_text(self, **_kwargs):
-            raise StructuredCompletionError("LLM down")
-
-        async def complete_json(self, **_kwargs):  # pragma: no cover
-            raise NotImplementedError
-
-    pivot = _StubPivot(pivots={seed: _pivot_node(name="run", callers=[], callees=[])})
-
-    updated = await synthesize_diagrams(
-        llm=_FailingLLM(),  # type: ignore[arg-type]
-        session=None,  # type: ignore[arg-type]
-        repository_id=_REPO_ID,
-        context=_ctx(),
-        plan=plan,
-        drafts=drafts,
-        bundles_by_slug=bundles,
-        config=WikiGenerationConfig(),
-        pivot=pivot,  # type: ignore[arg-type]
-    )
-
-    assert updated[0].body_md == "# Page\n\nbody."
-
-
-@pytest.mark.asyncio
-async def test_synthesize_diagrams_runs_with_empty_subgraph() -> None:
-    """Page with diagram=True but no retrieved code chunks → no pivot expansion,
-    diagram still gets requested (the prompt has a fallback hint)."""
-    plan = PagePlan(pages=[_page("index", diagram=True)])
-    drafts = [_draft("index")]
-
-    fake = FakeStructuredProvider()
-    fake.queue("```mermaid\nflowchart LR\n  external --> code\n```")
-
-    pivot = _StubPivot()
-
-    updated = await synthesize_diagrams(
-        llm=fake,
-        session=None,  # type: ignore[arg-type]
-        repository_id=_REPO_ID,
-        context=_ctx(),
-        plan=plan,
-        drafts=drafts,
-        bundles_by_slug={"index": PageBundle()},
-        config=WikiGenerationConfig(),
-        pivot=pivot,  # type: ignore[arg-type]
-    )
-
-    assert "```mermaid" in updated[0].body_md
-    assert pivot.calls == 0  # No seeds → no pivot expansion.
 
 
 # ---------------------------------------------------------------------------
@@ -809,6 +476,17 @@ def test_upgrade_multiline_inline_code_leaves_inline_without_code_chars() -> Non
     md = "He said `hello\nworld` in two lines."
     out = upgrade_multiline_inline_code(md)
     assert out == md
+
+
+def test_upgrade_multiline_inline_code_does_not_pair_spans_across_lines() -> None:
+    """Real failure mode: the closing backtick of `makeComponent` paired with
+    the opening backtick on the next table row, and the text between them
+    became a fenced block that broke the table."""
+    md = (
+        "| `Close() error` | Required by `makeComponent`; supplies the completion channel or an error to callers. |\n"
+        "| [`app.gen.ShelfHandler`](/x) | routes (shelves) |\n"
+    )
+    assert upgrade_multiline_inline_code(md) == md
 
 
 def test_upgrade_multiline_inline_code_leaves_existing_fences_alone() -> None:

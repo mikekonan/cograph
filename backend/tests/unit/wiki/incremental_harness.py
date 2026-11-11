@@ -403,10 +403,6 @@ def make_retriever() -> WikiRetrievalService:
 
 FAKE_MODEL = "fake-structured-v1"
 
-# Identical for every page: Stage 4b synthesises diagrams concurrently, so
-# per-page bodies popped from the shared FIFO could interleave.
-MERMAID_BLOCK = "```mermaid\nflowchart LR\n  a --> b\n```"
-
 
 @dataclass(frozen=True)
 class ScriptedPage:
@@ -501,11 +497,6 @@ def queue_full_run(
     ]
     for page in written:
         queue_page_turns(provider, repo_state, page)
-    # Stage 4b runs after all page writes; one complete_text per written
-    # diagram page. Clean diagram pages have no draft → no call.
-    for page in written:
-        if page.diagram:
-            provider.queue(MERMAID_BLOCK)
 
 
 def queue_incremental_run(
@@ -521,9 +512,6 @@ def queue_incremental_run(
     dirty = [page for page in pages if page.slug in dirty_slugs]
     for page in dirty:
         queue_page_turns(provider, repo_state, page)
-    for page in dirty:
-        if page.diagram:
-            provider.queue(MERMAID_BLOCK)
 
 
 def assert_drained(provider: FakeStructuredProvider) -> None:
@@ -668,19 +656,14 @@ def queue_edit_run(
     """Queue an incremental run mixing the cheap edit path and full writes.
 
     Edit pages pop one `complete_text` body (in plan order, during page
-    dispatch); write pages consume tool turns; diagrams for any drafted
-    page pop `complete_text` after all bodies (plan order). The editor is
-    told to omit the diagram, so an edit body is `page_body` with no
-    Mermaid — identical to what the write path's `write_page` tool emits."""
+    dispatch); write pages consume tool turns. An edit body is `page_body`,
+    identical to what the write path's `write_page` tool emits."""
     for page in pages:
         if page.slug in edit_slugs:
             provider.queue(page_body(repo_state, page))
     for page in pages:
         if page.slug in write_slugs:
             queue_page_turns(provider, repo_state, page)
-    for page in pages:
-        if page.slug in (edit_slugs | write_slugs) and page.diagram:
-            provider.queue(MERMAID_BLOCK)
 
 
 async def run_incremental_edits(
