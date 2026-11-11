@@ -18,10 +18,11 @@ from datetime import datetime
 from typing import Literal, Protocol
 from uuid import UUID
 
-from sqlalchemy import DateTime, bindparam, text
+from sqlalchemy import DateTime, bindparam, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import TextClause
 
+from backend.app.models.code_node import GENERATED_NODE, CodeNode
 from backend.app.rag.fusion import rrf_merge_streams
 from backend.app.rag.retriever import EMBEDDING_DIM, RetrievedChunk, _format_vector_literal
 
@@ -414,6 +415,7 @@ class HybridRetriever:
         as_of: datetime | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
+        hand_written_only: bool = False,
     ) -> list[RetrievedChunk]:
         active = set(stores) if stores is not None else set(_ALL_STORES)
         use_text = bool(query_text and query_text.strip())
@@ -498,6 +500,12 @@ class HybridRetriever:
             )
             all_merged.extend(merged)
 
+        if hand_written_only:
+            # Filtered after fusion: a repo whose top candidates are mostly
+            # generated returns fewer than top_k. Push the filter into each
+            # stream's SQL if that starts to matter.
+            all_merged = await _without_generated(session, all_merged)
+
         # Cross-store sort by fused RRF score (each store's RRF scores are on
         # the same scale because they all use the same k).
         all_merged.sort(key=lambda c: c.score, reverse=True)
@@ -535,3 +543,18 @@ class HybridRetriever:
                 exc_info=exc,
             )
             return []
+
+
+async def _without_generated(
+    session: AsyncSession, chunks: list[RetrievedChunk]
+) -> list[RetrievedChunk]:
+    """Drop code hits from generated files: they stay searchable, but no LLM reads them."""
+    code_ids = [c.chunk_id for c in chunks if c.store == "code"]
+    if not code_ids:
+        return chunks
+    generated = set(
+        await session.scalars(
+            select(CodeNode.id).where(CodeNode.id.in_(code_ids), GENERATED_NODE)
+        )
+    )
+    return [c for c in chunks if c.chunk_id not in generated]

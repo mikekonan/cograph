@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.code_edge import CodeEdge
 from backend.app.models.code_embedding import CodeEmbedding
-from backend.app.models.code_node import CodeNode
+from backend.app.models.code_node import GENERATED_NODE, CodeNode
 from backend.app.models.code_node_summary import CodeNodeSummary
 from backend.app.models.enums import CodeNodeType
 from backend.app.wiki.manifests import RepoManifests
@@ -162,6 +162,7 @@ async def _load_clusterable_rows(
         .outerjoin(CodeNodeSummary, CodeNodeSummary.code_node_id == CodeNode.id)
         .where(CodeNode.repository_id == repository_id)
         .where(CodeNode.node_type.in_(list(_CLUSTERABLE_TYPES)))
+        .where(~GENERATED_NODE)
     )
     rows = (await session.execute(stmt)).all()
     out: list[_NodeRow] = []

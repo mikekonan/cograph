@@ -52,7 +52,7 @@ _GO_PREDECLARED_TYPES = frozenset(
 # when its text has not changed.
 EXTRACTOR_VERSIONS: dict[GraphLanguage, int] = {
     GraphLanguage.PYTHON: 1,
-    GraphLanguage.GO: 2,
+    GraphLanguage.GO: 3,
     GraphLanguage.TYPESCRIPT: 4,
     GraphLanguage.JAVASCRIPT: 4,
 }

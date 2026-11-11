@@ -39,8 +39,10 @@ def _node(
     callees: list | None = None,
     signature: str | None = None,
     doc_comment: str | None = None,
+    generated: bool = False,
 ) -> MagicMock:
     n = MagicMock()
+    n.node_metadata = {"generated": True} if generated else {}
     n.id = uid or _uid()
     n.qualified_name = qualified_name
     n.content = content
@@ -230,6 +232,22 @@ async def test_top_node_selection_floor_with_20_nodes():
     # floor = 10, fraction = int(20*0.2) = 4, n_target = max(10,4) = 10
     assert result.generated_nodes == 10
     assert result.skipped_nodes == 0
+
+
+async def test_generated_nodes_get_no_summary():
+    """A node from a generated file is never sent to the LLM."""
+    hand = _node(qualified_name="shipping.route")
+    gen_node = _node(qualified_name="shipping.route_gen", generated=True)
+    imp = _importance(gen_node, hand)
+
+    gen = SummaryGenerator(
+        llm=FakeCompletionProvider(), top_node_fraction=1.0, top_subgraph_count=0
+    )
+    session = _make_session([gen_node, hand])
+    result = await _run(gen, session, imp)
+
+    assert result.generated_nodes == 1
+    assert [s.code_node_id for s in session._added] == [hand.id]
 
 
 async def test_top_node_selection_fraction_with_100_nodes():

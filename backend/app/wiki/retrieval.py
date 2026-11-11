@@ -348,6 +348,7 @@ async def _safe_retrieve(
             repository_id=repository_id,
             top_k=top_k,
             stores={store},  # type: ignore[arg-type]
+            hand_written_only=True,
         )
     except Exception as exc:  # pragma: no cover — exercised in integration runs
         logger.warning(

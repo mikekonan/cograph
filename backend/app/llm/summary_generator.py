@@ -86,7 +86,7 @@ class SummaryGenerator:
             session=session,
             repository_id=repository_id,
             importance=importance,
-            nodes=nodes,
+            nodes=[n for n in nodes if not n.node_metadata.get("generated")],
         )
         return SummaryResult(
             generated_nodes=gen_nodes,
@@ -123,7 +123,11 @@ class SummaryGenerator:
                 importance.scores.items(), key=lambda kv: kv[1], reverse=True
             )[:n_target]
         }
-        candidates = [n for n in nodes if n.id in top_ids]
+        # The top set still ranks generated nodes, so marking a file generated
+        # frees no slot and summarizes nothing new: its own summaries just go.
+        candidates = [
+            n for n in nodes if n.id in top_ids and not n.node_metadata.get("generated")
+        ]
 
         # Load existing summaries; capture primitive fields before any commit.
         # existing_meta: code_node_id -> (content_hash, neighbor_hash, model, summary_id)
@@ -219,7 +223,7 @@ class SummaryGenerator:
             await session.execute(
                 delete(CodeNodeSummary)
                 .where(CodeNodeSummary.repository_id == repository_id)
-                .where(CodeNodeSummary.code_node_id.notin_(list(top_ids)))
+                .where(CodeNodeSummary.code_node_id.notin_([n.id for n in candidates]))
             )
         ).rowcount
         await session.commit()
