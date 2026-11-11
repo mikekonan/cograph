@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.graph.extractor import GraphEdgeType
 from backend.app.models.code_edge import CodeEdge
-from backend.app.models.code_node import CodeNode
+from backend.app.models.code_node import NODE_KIND_ORDER, CodeNode, node_kind
 from backend.app.models.enums import CodeNodeType
 from backend.app.models.repository import Repository
 
@@ -20,6 +20,10 @@ class TraversalDirection(StrEnum):
     CALLERS = "callers"
     CALLEES = "callees"
     BOTH = "both"
+
+
+# Product code, then tests, then generated code: the order of NODE_KIND_ORDER.
+_KIND_RANK = {None: 0, "test": 1, "generated": 2}
 
 
 class TraversalNode(BaseModel):
@@ -31,6 +35,8 @@ class TraversalNode(BaseModel):
     end_line: int
     signature: str | None = None
     distance: int
+    # `test` or `generated` for code that is not the product; see node_kind.
+    kind: str | None = None
 
 
 class TraversalEdge(BaseModel):
@@ -122,6 +128,15 @@ class GraphTraversalService:
             return None
 
         visible_ids = set(node_by_id)
+        kinds = {
+            node.id: node_kind(
+                node.file_path,
+                generated=bool((node.node_metadata or {}).get("generated")),
+            )
+            for node in nodes
+        }
+        # Product code first at each distance: a function's test callers
+        # say nothing about who uses it.
         related_nodes = [
             TraversalNode(
                 id=node.id,
@@ -132,11 +147,13 @@ class GraphTraversalService:
                 end_line=node.end_line,
                 signature=node.signature,
                 distance=visited_distance[node.id],
+                kind=kinds[node.id],
             )
             for node in sorted(
                 (item for item in nodes if item.id != node_id),
                 key=lambda item: (
                     visited_distance[item.id],
+                    _KIND_RANK[kinds[item.id]],
                     item.file_path,
                     item.start_line,
                     item.name,
@@ -208,17 +225,22 @@ class GraphTraversalService:
     ) -> dict[UUID, list[tuple[UUID, UUID, UUID]]]:
         neighbours: dict[UUID, list[tuple[UUID, UUID, UUID]]] = defaultdict(list)
 
+        # Product code first among each node's neighbours: under the
+        # `max_nodes` cap the test callers of a hub would crowd it out.
         if direction in {TraversalDirection.CALLEES, TraversalDirection.BOTH}:
             rows = (
                 await session.execute(
                     select(CodeEdge.source_node_id, CodeEdge.target_node_id)
+                    .join(CodeNode, CodeNode.id == CodeEdge.target_node_id)
                     .where(
                         CodeEdge.repository_id == repository_id,
                         CodeEdge.edge_type == GraphEdgeType.CALLS.value,
                         CodeEdge.source_node_id.in_(frontier),
                         CodeEdge.target_node_id.is_not(None),
                     )
-                    .order_by(CodeEdge.source_node_id, CodeEdge.target_node_id)
+                    .order_by(
+                        CodeEdge.source_node_id, NODE_KIND_ORDER, CodeEdge.target_node_id
+                    )
                 )
             ).all()
             for source_id, target_id in rows:
@@ -230,13 +252,16 @@ class GraphTraversalService:
             rows = (
                 await session.execute(
                     select(CodeEdge.target_node_id, CodeEdge.source_node_id)
+                    .join(CodeNode, CodeNode.id == CodeEdge.source_node_id)
                     .where(
                         CodeEdge.repository_id == repository_id,
                         CodeEdge.edge_type == GraphEdgeType.CALLS.value,
                         CodeEdge.target_node_id.in_(frontier),
                         CodeEdge.source_node_id.is_not(None),
                     )
-                    .order_by(CodeEdge.target_node_id, CodeEdge.source_node_id)
+                    .order_by(
+                        CodeEdge.target_node_id, NODE_KIND_ORDER, CodeEdge.source_node_id
+                    )
                 )
             ).all()
             for target_id, source_id in rows:

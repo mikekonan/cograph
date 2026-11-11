@@ -25,6 +25,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Final
 
+from backend.app.models.code_node import TEST_PATH_RE
 from backend.app.wiki.context import FileTreeEntry, RepoContext
 from backend.app.wiki.docs_outline import DocFile, build_docs_outline
 from backend.app.wiki.manifests import PublicApiEntry
@@ -43,22 +44,6 @@ from backend.app.wiki.schemas import (
 # ---------------------------------------------------------------------------
 # Path patterns
 # ---------------------------------------------------------------------------
-
-
-_TEST_PATH_RE: Final = re.compile(
-    r"(?:^|/)(?:"
-    r"[^/]+_test\.go|"
-    r"test_[^/]+\.py|"
-    r"[^/]+_test\.py|"
-    r"[^/]+\.test\.[jt]sx?|"
-    r"[^/]+\.spec\.[jt]sx?|"
-    r"[^/]+_spec\.rb"
-    r")$"
-    r"|"
-    r"(?:^|/)(?:tests?|__tests__|testdata|fixtures?|golden|"
-    r"snapshots?|__snapshots__|mocks?|stubs)(?:/|$)",
-    re.IGNORECASE,
-)
 
 
 _INTERNAL_PATH_RE: Final = re.compile(
@@ -284,7 +269,7 @@ def _filter_public_api(entries: list[PublicApiEntry]) -> list[PublicSymbol]:
     for entry in entries:
         if _INTERNAL_PATH_RE.search(entry.file_path):
             continue
-        if _TEST_PATH_RE.search(entry.file_path):
+        if TEST_PATH_RE.search(entry.file_path):
             continue
         out.append(
             PublicSymbol(
@@ -411,8 +396,8 @@ def _score_cluster(
     config: ScoringConfig,
 ) -> TopicCandidate:
     paths = [f.file_path for f in cluster.files]
-    test_paths = [p for p in paths if _TEST_PATH_RE.search(p)]
-    non_test_paths = [p for p in paths if not _TEST_PATH_RE.search(p)]
+    test_paths = [p for p in paths if TEST_PATH_RE.search(p)]
+    non_test_paths = [p for p in paths if not TEST_PATH_RE.search(p)]
 
     # All files are test scaffolding — short-circuit with a
     # zero-positive-signal candidate.

@@ -181,7 +181,7 @@ def test_scores_dates_and_graph_stay_when_asked() -> None:
     assert encode_payload(payload).endswith(',"nodes":{}}')
 
 
-def test_called_by_is_absent_empty_or_capped_with_a_count() -> None:
+def test_called_by_is_absent_empty_or_capped_with_a_count_by_kind() -> None:
     label, crate, pallet = uuid4(), uuid4(), uuid4()
     caller = {"node_id": uuid4(), "name": "shipping.Ship", "at": "shipping/ship.go:3-9"}
     rows = [_code_row(RetrievalLayer.CODE, "func f(", node) for node in (label, crate, pallet)]
@@ -191,9 +191,14 @@ def test_called_by_is_absent_empty_or_capped_with_a_count() -> None:
     assert all("called_by" not in r for r in compact_hits(response)["results"])
 
     # `pallet` has no callers, so `_called_by` leaves it out.
-    called_by = {label: ([caller] * 3, 5), crate: ([caller], 1)}
-    text = encode_payload(compact_hits(response, called_by=called_by))
+    called_by = {label: ([caller] * 3, {"code": 3, "test": 2}), crate: ([caller], {"code": 1})}
+    text = encode_payload(compact_hits(response, called_by=called_by, kinds={crate: "test"}))
     records = json.loads(text)["results"]
     assert [len(r["called_by"]) for r in records] == [3, 1, 0]
-    assert [r.get("called_by_more") for r in records] == [2, None, None]
+    assert [r.get("called_by_count") for r in records] == [
+        {"code": 3, "test": 2},
+        {"code": 1},
+        None,
+    ]
     assert records[0]["called_by"][0] == {**caller, "node_id": str(caller["node_id"])}
+    assert [r.get("kind") for r in records] == [None, "test", None]

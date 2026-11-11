@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import posixpath
+import re
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -13,7 +14,7 @@ from fastapi.encoders import jsonable_encoder
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.enums import QueryLogSource, QueryLogStatus
@@ -39,7 +40,12 @@ from backend.app.graph.traversal import (
 from backend.app.llm.embedder import EmbedProvider
 from backend.app.llm.runtime_providers import build_runtime_providers
 from backend.app.models.code_edge import CodeEdge
-from backend.app.models.code_node import CodeNode
+from backend.app.models.code_node import (
+    GENERATED_NODE,
+    NODE_KIND_ORDER,
+    CodeNode,
+    node_kind,
+)
 from backend.app.models.document import Document
 from backend.app.models.enums import CodeEdgeType, RepositoryStatus
 from backend.app.models.md_collection import MdChunk, MdCollection, MdDocument
@@ -356,7 +362,8 @@ def compact_hits(
     *,
     with_dates: bool = False,
     with_graph: bool = False,
-    called_by: dict[UUID, tuple[list[dict[str, Any]], int]] | None = None,
+    called_by: dict[UUID, tuple[list[dict[str, Any]], dict[str, int]]] | None = None,
+    kinds: dict[UUID, str] | None = None,
     tail_terms: list[str] | None = None,
 ) -> dict[str, object]:
     """A search response as the agent reads it: one record per place.
@@ -367,9 +374,12 @@ def compact_hits(
     node becomes one record and a doc section another, in the order each
     first appears. REST and the web UI keep the full response.
 
-    `called_by` maps a node to its first callers and their total, from
-    `_called_by`. Without it the records carry no `called_by` field: the
-    graph was not looked at.
+    `called_by` maps a node to its first callers and their count by kind,
+    from `_called_by`. Without it the records carry no `called_by` field:
+    the graph was not looked at.
+
+    `kinds` marks hits that are tests or generated code (`_kinds`); the
+    caller has already put them after the product code.
 
     With `tail_terms`, code hits after the third show a short excerpt around
     these words: the answer sits in the first three, and the rest only need
@@ -394,11 +404,12 @@ def compact_hits(
                 "at": _at(cite.file_path, cite.start_line, cite.end_line),
                 "score": row.score,
                 "last_changed_at": cite.last_changed_at if with_dates else None,
+                "kind": (kinds or {}).get(cite.node_id),
             }
             if called_by is not None:
-                callers, total = called_by.get(cite.node_id, ([], 0))
+                callers, counts = called_by.get(cite.node_id, ([], {}))
                 record["called_by"] = callers
-                record["called_by_more"] = total - len(callers) or None
+                record["called_by_count"] = counts or None
         if row.layer is RetrievalLayer.CODE or "code" not in record:
             # The signature row stands in only for a node with no body row.
             record["code"] = row.snippet
@@ -548,11 +559,14 @@ def _code_hits(response: RetrievalResponse) -> dict[str, str]:
 
 async def _called_by(
     session: AsyncSession, node_ids: list[UUID]
-) -> dict[UUID, tuple[list[dict[str, Any]], int]]:
-    """The first callers of each node and how many there are, in one query.
+) -> dict[UUID, tuple[list[dict[str, Any]], dict[str, int]]]:
+    """The first callers of each node and how many there are of each kind
+    (code, test, generated), in one query.
 
     Rides `idx_code_edges_target (target_node_id, edge_type)`. A node with
-    no callers is missing from the result. Callers sort by path, then line.
+    no callers is missing from the result. Product code callers come first:
+    three test callers of a function said nothing about who uses it. Then
+    by path and line. A test or generated caller carries `kind`.
     """
 
     if not node_ids:
@@ -572,6 +586,8 @@ async def _called_by(
         .distinct()
         .subquery()
     )
+    # An index into _CALLER_KINDS.
+    kind = NODE_KIND_ORDER
     ranked = (
         select(
             pairs.c.callee,
@@ -579,11 +595,17 @@ async def _called_by(
             CodeNode.file_path,
             CodeNode.start_line,
             CodeNode.end_line,
-            func.count().over(partition_by=pairs.c.callee).label("total"),
+            kind.label("kind"),
+            *(
+                func.sum(case((kind == index, 1), else_=0))
+                .over(partition_by=pairs.c.callee)
+                .label(label)
+                for index, label in enumerate(_CALLER_KINDS)
+            ),
             func.row_number()
             .over(
                 partition_by=pairs.c.callee,
-                order_by=(CodeNode.file_path, CodeNode.start_line, CodeNode.id),
+                order_by=(kind, CodeNode.file_path, CodeNode.start_line, CodeNode.id),
             )
             .label("rank"),
         )
@@ -593,18 +615,24 @@ async def _called_by(
     rows = await session.execute(
         select(ranked).where(ranked.c.rank <= _CALLERS_SHOWN).order_by(ranked.c.rank)
     )
-    found: dict[UUID, tuple[list[dict[str, Any]], int]] = {}
+    found: dict[UUID, tuple[list[dict[str, Any]], dict[str, int]]] = {}
     for row in rows:
-        callers, _ = found.get(row.callee, ([], 0))
-        callers.append(
-            # No node_id: `at` is what the agent reads next, by range.
-            {
-                "name": row.qualified_name,
-                "at": _at(row.file_path, row.start_line, row.end_line),
-            }
-        )
-        found[row.callee] = (callers, row.total)
+        callers, _ = found.get(row.callee, ([], {}))
+        # No node_id: `at` is what the agent reads next, by range.
+        caller: dict[str, Any] = {
+            "name": row.qualified_name,
+            "at": _at(row.file_path, row.start_line, row.end_line),
+        }
+        if row.kind:
+            caller["kind"] = _CALLER_KINDS[row.kind]
+        callers.append(caller)
+        counts = {label: getattr(row, label) for label in _CALLER_KINDS}
+        found[row.callee] = (callers, {k: n for k, n in counts.items() if n})
     return found
+
+
+# Caller kinds in the order they are listed.
+_CALLER_KINDS = ("code", "test", "generated")
 
 
 def _at(path: str | None, start: int | None, end: int | None) -> str | None:
@@ -681,6 +709,16 @@ async def retrieve_payload(
             mode=mode,
             usage_sink=usage_sink,
         )
+        kinds = await _kinds(
+            session,
+            {
+                row.provenance.node_id: row.provenance.file_path
+                for row in response.results
+                if row.provenance.node_id is not None
+            },
+        )
+        # Product code first; the sort is stable, so each group keeps its rank.
+        response.results.sort(key=lambda row: row.provenance.node_id in kinds)
         node_ids = _node_ids(response)
         called_by = await _called_by(session, node_ids)
         wiki = await _wiki_pages(
@@ -695,6 +733,7 @@ async def retrieve_payload(
         with_dates=any(when is not None for when in (as_of, since, until)),
         with_graph=include_graph,
         called_by=called_by,
+        kinds=kinds,
         tail_terms=extract_query_terms(query),
     )
     if wiki:
@@ -704,6 +743,25 @@ async def retrieve_payload(
 
 def _node_ids(response: RetrievalResponse) -> list[UUID]:
     return list({row.provenance.node_id for row in response.results} - {None})
+
+
+async def _kinds(
+    session: AsyncSession, paths: dict[UUID, str | None]
+) -> dict[UUID, str]:
+    """`test` or `generated` for each hit (node id -> file) that is not
+    product code; product code is absent. See `node_kind`."""
+    if not paths:
+        return {}
+    generated = set(
+        await session.scalars(
+            select(CodeNode.id).where(CodeNode.id.in_(list(paths)), GENERATED_NODE)
+        )
+    )
+    found = {
+        node_id: node_kind(path, generated=node_id in generated)
+        for node_id, path in paths.items()
+    }
+    return {node_id: kind for node_id, kind in found.items() if kind}
 
 
 async def node_payload(
@@ -802,17 +860,46 @@ async def search_code_payload(
             candidate_cap=top_k,
             stream_names=["lexical", "symbol"],
         )
+        name = _query_name(query)
+        exact = (
+            await services.symbol.exact(
+                session,
+                name=name,
+                repository_id=repository_id,
+                top_k=top_k,
+                path_prefix=path_prefix,
+                suffix=query.strip().removesuffix("()"),
+            )
+            if name
+            else []
+        )
         # A whole-file module node matches any name in its file, so it took a
         # slot from the function the agent was looking for. Drop it before
         # the cut: both streams were asked for top_k, so real hits fill in.
-        named = [
-            hit
-            for hit in merged
+        named = {
+            hit.chunk_id: hit
+            for hit in [*exact, *merged]
             if not str(hit.metadata.get("qualified_name", "")).endswith("#module")
-        ]
+        }
+        kinds = await _kinds(
+            session,
+            {node_id: hit.metadata.get("file_path") for node_id, hit in named.items()},
+        )
+        exact_ids = {hit.chunk_id for hit in exact}
+        # The node named exactly as asked first, the one whose path ends as
+        # the query does (`Type.Method`) before its namesakes; then the rest.
+        # Product code before tests and generated code inside each group.
+        ranked = sorted(
+            named.values(),
+            key=lambda hit: (
+                hit.chunk_id not in exact_ids,
+                not _ends_with_name(str(hit.metadata.get("qualified_name", "")), query),
+                hit.chunk_id in kinds,
+            ),
+        )
         response = await services.context_builder.build(
             session,
-            chunks=named[:top_k],
+            chunks=ranked[:top_k],
             requested_layers={RetrievalLayer.AST},
             repository_id=repository_id,
             include_chunks=False,
@@ -828,10 +915,31 @@ async def search_code_payload(
             query=query,
             chars=_WIKI_EXCERPT_CHARS_SEARCH,
         )
-    payload = compact_hits(response, called_by=called_by)
+    payload = compact_hits(response, called_by=called_by, kinds=kinds)
     if wiki:
         payload["wiki"] = wiki
     return payload
+
+
+# One name from the code: `Name`, `Type.Name`, `pkg/sub.Type.Name()`, `a::b`.
+_NAME_QUERY_RE = re.compile(
+    r"[A-Za-z_$][\w$]*(?:(?:\.|::|#|/)[A-Za-z_$][\w$]*)*(?:\(\))?"
+)
+_NAME_SEPARATOR_RE = re.compile(r"\.|::|#|/")
+
+
+def _query_name(query: str) -> str | None:
+    """The last name of a query that is one name from the code, else None."""
+    query = query.strip()
+    if not _NAME_QUERY_RE.fullmatch(query):
+        return None
+    return _NAME_SEPARATOR_RE.split(query.removesuffix("()"))[-1]
+
+
+def _ends_with_name(qualified_name: str, query: str) -> bool:
+    """Whether `qualified_name` ends with the whole query, at a name boundary."""
+    query = query.strip().removesuffix("()")
+    return re.search(rf"(?<![\w$]){re.escape(query)}$", qualified_name) is not None
 
 
 # Hard ceiling on nodes returned by `cograph_related`. Without it a BFS
@@ -1435,4 +1543,18 @@ async def resolve_readable_repository_by_slug(
             current_user=current_user,
         )
     except ApiError as exc:
+        if exc.code == "NOT_FOUND":
+            slug = f"{host}/{owner}/{name}"
+            raise ToolError(
+                f"NOT_FOUND: {NOT_READABLE_REPOSITORY.format(slug)}"
+            ) from exc
         raise _mcp_error(exc) from exc
+
+
+# One answer for "not indexed" and "no access": telling them apart would show
+# a reader which private repositories exist.
+NOT_READABLE_REPOSITORY = (
+    "no repository {} among those you can read: it is not indexed, or you "
+    "have no access to it. Say so in the answer; do not present its code "
+    "from other sources as read."
+)
