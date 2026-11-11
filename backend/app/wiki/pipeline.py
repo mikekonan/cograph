@@ -236,7 +236,9 @@ class WikiGenerationConfig:
     # template (per-entrypoint Data Flow + Domain Model + per-block Mermaid)
     # routinely needs 6-10k tokens for service repos, so 4096 truncated
     # the body mid-fence and produced unfinished `tx[`-style diagrams.
-    page_writer_max_tokens: int = 12_288
+    # Counts reasoning tokens too on reasoning models; a write_page cut by
+    # the cap arrives empty and the page is retried from scratch.
+    page_writer_max_tokens: int = 24_576
     diagram_max_tokens: int = 2_048
     diagram_pivot_top_k: int = 8
     # Structured-output stages (analyze_repo, generate_mindmap, plan_pages)

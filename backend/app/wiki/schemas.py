@@ -193,7 +193,7 @@ class DomainConcept(BaseModel):
 
     Distinct from `KeyConcept` (which can be any technical concept): a
     DomainConcept is specifically a *business* / *domain* term — Order,
-    Invoice, Tenant, Webhook, AuditEntry, etc. Used to seed the wiki's
+    Shipment, Tenant, Webhook, AuditEntry, etc. Used to seed the wiki's
     glossary of the language the system speaks.
 
     `importance` is a 0..1 weight used by T6 retrieval rerank to boost
@@ -216,8 +216,8 @@ class BusinessContext(BaseModel):
     The analyzer is required to produce this even when the repo lacks
     explicit business docs — by reading entry points, domain nouns in
     qualified names, and boundary kinds (e.g. an HTTP handler called
-    `CreateInvoice` plus a `db_write` to `invoices` is evidence the
-    repo solves an "issue and persist invoices" problem). The downstream
+    `CreateShipment` plus a `db_write` to `shipments` is evidence the
+    repo solves a "book and persist shipments" problem). The downstream
     planner and writer use it so every page leads with WHY a slice of
     code exists before HOW it works.
 

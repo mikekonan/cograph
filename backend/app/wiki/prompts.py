@@ -95,33 +95,33 @@ Business context — what to extract (REQUIRED):
 
   - `problem_statement` — one or two sentences in PLAIN BUSINESS LANGUAGE
     naming the problem this repo solves. Avoid implementation prose
-    ("a Python library that…"); prefer outcome prose ("issues invoices
-    to merchants and reconciles payments"). When the README spells it
+    ("a Python library that…"); prefer outcome prose ("books shipments
+    for sellers and tracks them to delivery"). When the README spells it
     out, paraphrase it. When it doesn't, INFER from:
       * The dominant domain nouns in qualified names (entry points,
         exported types, public API).
       * The shape of inbound and outbound boundaries (e.g. an
-        `http_route POST /v1/invoices` plus an `external_api` to a
-        payment processor is strong evidence the repo is "an invoice
-        issuance / billing service").
-      * Repo / module names (a path called `auth`, `billing`,
+        `http_route POST /v1/shipments` plus an `external_api` to a
+        carrier is strong evidence the repo is "a shipment booking
+        service").
+      * Repo / module names (a path called `auth`, `shipping`,
         `audit`, `webhook` carries domain signal).
     A weak `problem_statement` is acceptable — `confidence=low` is the
     correct tag for it. An EMPTY `problem_statement` is not — even a
     library deserves a one-sentence "this is what it does for callers".
   - `value_props` — 2 to 5 short bullet phrases naming the concrete
-    outcomes the repo delivers (e.g. "issues invoices via a single API
+    outcomes the repo delivers (e.g. "books a shipment with a single API
     call", "deduplicates webhook deliveries", "exposes an audit trail
     queryable by tenant"). Bullets are user-facing, not architectural.
   - `primary_users` — who interacts with the result. Be specific:
-    "merchant integrators", "internal finance ops", "platform SREs",
+    "seller integrators", "internal warehouse ops", "platform SREs",
     "downstream services that consume the audit stream". Not
     "developers" unless the repo is genuinely developer-tooling.
   - `domain_concepts` — 3 to 10 core BUSINESS nouns the code reasons
     about. Each entry has `name`, `definition` (one-sentence prose),
     optional `file_path` and `qualified_name` if a clear anchoring type
     or module exists. These are the language of the system —
-    Invoice / Webhook / Tenant / AuditEntry — not technical terms like
+    Shipment / Webhook / Tenant / AuditEntry — not technical terms like
     "service", "handler", "repository" (those belong in
     `key_concepts`). Ground each concept in evidence visible in the
     inputs.
@@ -133,7 +133,7 @@ Business context — what to extract (REQUIRED):
     surface it as orientation that the reader should refine.
   - `evidence` — short list of citations for the framing. Each entry
     is either a file path (README path, doc path) or a qualified name
-    (`pkg.module.Type` / `pkg.handler.CreateInvoice`) drawn from the
+    (`pkg.module.Type` / `pkg.handler.CreateShipment`) drawn from the
     inputs. Keep it tight (≤ 6 entries) — these anchor the framing,
     they don't restate it.
 
@@ -170,7 +170,7 @@ Service topology — what to extract:
   2. `outbound_boundaries` — every distinct side-effect the service
      emits past its process boundary. Recognise:
        * `http_client` / `grpc_client` / `external_api` — outbound HTTP
-         clients, gRPC stubs, third-party SDK calls (Stripe, Twilio,
+         clients, gRPC stubs, third-party SDK calls (Twilio, SendGrid,
          AWS SDK, etc.).
        * `queue_producer` / `pubsub_publisher` / `webhook_emitter` —
          producer / publish / fire-webhook calls.
@@ -181,8 +181,8 @@ Service topology — what to extract:
          logs). Only call these out when they are part of the
          externally-visible contract; routine internal logging is not
          a boundary.
-     `label` should describe the target succinctly ("Stripe API", "S3
-     bucket invoices", "table orders insert"). Same field shape as
+     `label` should describe the target succinctly ("carrier tracking API",
+     "S3 bucket labels", "table orders insert"). Same field shape as
      inbound.
 
   3. `infra_dependencies` — what must be RUNNING for this service to
@@ -282,8 +282,8 @@ Business framing is mandatory orientation, not flavour:
   framing into `index` only.
 - Other pages inherit the framing implicitly: each `purpose` you write
   should name the BUSINESS slice the page covers, not just the technical
-  module. "Documents how invoices are issued and stored" beats
-  "Documents the InvoiceService class".
+  module. "Documents how shipments are booked and stored" beats
+  "Documents the ShipmentService class".
 
 Salience-tiered topic candidates (`<repo_signals>` block):
 - Stage 0 emits a deterministic salience scoring before you run. Each
@@ -542,15 +542,15 @@ Lead with WHY before HOW:
   — that section is forbidden (see Coverage contract below). Omit
   speculation entirely; the page ships at `partial` quality status
   rather than carrying ungrounded prose.
-- Reference domain concepts inline as backticks (e.g. `Invoice`,
+- Reference domain concepts inline as backticks (e.g. `Shipment`,
   `Tenant`) — the auto-link pass turns them into `[[node:…]]`
   references when a typed match exists.
 - Implementation detail (entry points, data flow, layers, layer
   responsibilities) follows the business framing inside the same
   Overview, then expands across `Architecture` / `Main Sections`. A
-  page that opens with "The CreateInvoiceHandler is a Go function …"
-  fails this contract; "Issuing an invoice — entered through
-  `POST /v1/invoices`, persisted via …" passes it.
+  page that opens with "The CreateShipmentHandler is a Go function …"
+  fails this contract; "Booking a shipment — entered through
+  `POST /v1/shipments`, persisted via …" passes it.
 
 When <page_hints> is non-empty, treat each hint as authoritative guidance
 from the repo owner. Hints steer emphasis but do NOT replace evidence —
@@ -799,8 +799,21 @@ Rules:
   `[[doc:path/to/file.md]]` for in-repo docs, and `./sibling-slug` for
   sibling wiki pages. Any hand-written `/repos/...` URL is stripped to
   bare label downstream.
-- Avoid filler boilerplate ("This page covers…", "In conclusion…"). Aim
-  for a concise developer-facing reference, not a tutorial.
+- Avoid filler boilerplate ("This page covers…", "In conclusion…"). Be
+  specific, not short: a reader should be able to predict what the code
+  does without opening it. For each behaviour a Main Section describes,
+  state what you read in the code:
+    * the order of the steps, naming the function that does each one;
+    * what is written (tables, files, caches) and what is sent (calls,
+      messages, events), and where to;
+    * every failure path you saw: which error, where it is raised or
+      swallowed, what the caller gets back, whether anything is retried
+      or rolled back;
+    * concrete values: defaults, timeouts, limits, retry counts, and the
+      status or state names with the transitions between them.
+  Never leave a vague verb ("handles", "manages", "processes") without
+  saying what exactly happens. Leave out a detail you could not verify
+  rather than guess it.
 - Pace yourself. The loop has a hard cap on turns; if you hit a soft
   budget warning, wrap up your investigation and call `write_page`.
 """
@@ -1048,7 +1061,7 @@ Return a JSON object matching this Pydantic schema:
     "primary_users": ["string — who interacts with the result; be specific", ...],
     "domain_concepts": [
       {
-        "name": "string — business noun (Invoice, Webhook, Tenant, AuditEntry)",
+        "name": "string — business noun (Shipment, Webhook, Tenant, AuditEntry)",
         "definition": "string — one sentence",
         "file_path": "string|null",
         "qualified_name": "string|null"
@@ -1075,7 +1088,7 @@ Return a JSON object matching this Pydantic schema:
   "outbound_boundaries": [
     {
       "kind": "http_client|grpc_client|external_api|queue_producer|pubsub_publisher|webhook_emitter|db_write|blob_write|file_write|cache_write|metrics_emitter|log_emitter|trace_emitter",
-      "label": "string — target description (e.g. 'Stripe API', 'S3 bucket invoices', 'table orders insert')",
+      "label": "string — target description (e.g. 'carrier tracking API', 'S3 bucket labels', 'table orders insert')",
       "file_path": "string",
       "qualified_name": "string|null",
       "transport": "string|null",

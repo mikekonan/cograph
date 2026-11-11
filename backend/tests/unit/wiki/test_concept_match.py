@@ -76,7 +76,7 @@ def test_domain_match_score_no_match_returns_zero() -> None:
         text="def helper(): pass",
         file_path="src/util.py",
         qualified_name="src.util.helper",
-        concepts=[_concept("Invoice", importance=0.8)],
+        concepts=[_concept("Shipment", importance=0.8)],
     )
     assert score == 0.0
 

@@ -82,8 +82,12 @@ SURFACE_SHA_HISTORY: dict[int, str] = {
     # (3) replacing bundle_fingerprint with cited_fingerprint (hash only the
     # cited evidence, not the whole top-k) — a strict narrowing whose new
     # `documents.cited_fingerprint` stamp is adopted lazily (NULL → recompute
-    # + stamp, never dirty, mig 0064), so no repo is force-rebuilt.
-    1: "49a44dfe9509f21a9a456b4f1025be5e23af69a4194cff256adc12e51aaff6f4",
+    # + stamp, never dirty, mig 0064), so no repo is force-rebuilt; (4) the
+    # page writer asks for concrete detail and a larger output cap. Old
+    # pages stay correct, only less detailed, so they are not invalidated:
+    # a repo picks the new writer up per dirty page, or all at once through
+    # its rebuild flag, instead of every repo paying for a rebuild at once.
+    1: "6a1a32a899dea037212ac6e6a491ae6c4f0d91d478400cd30c4bac21f174fa53",
 }
 
 
