@@ -22,7 +22,6 @@ from pathlib import Path
 import pytest
 
 from backend.app.wiki.prompts import (
-    DIAGRAM_SYNTHESIZER_SYSTEM,
     MINDMAP_GENERATOR_SYSTEM,
     PAGE_OUTLINE_SYSTEM,
     PAGE_PLANNER_SYSTEM,
@@ -43,7 +42,6 @@ SNAPSHOT_DIR = Path(__file__).resolve().parents[2] / "snapshots" / "prompts"
         ("page_writer_system.txt", PAGE_WRITER_SYSTEM),
         ("page_outline_system.txt", PAGE_OUTLINE_SYSTEM),
         ("page_prose_system.txt", PAGE_PROSE_SYSTEM),
-        ("diagram_synthesizer_system.txt", DIAGRAM_SYNTHESIZER_SYSTEM),
     ],
 )
 def test_system_prompt_matches_golden_snapshot(name: str, value: str) -> None:

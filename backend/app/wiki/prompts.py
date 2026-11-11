@@ -854,8 +854,8 @@ Editing rules:
 - Keep the page's headings, section order, `Source: path:Lstart-Lend`
   attribution lines, and `<!-- answers: slug -->` coverage markers intact
   unless the delta makes a specific one wrong.
-- Do NOT emit a Mermaid diagram. Any diagram is regenerated downstream and
-  has been removed from <current_page>; do not add one back.
+- Keep every Mermaid block in <current_page> unless the delta makes it
+  wrong; then fix that block in place. Do not add a new diagram.
 
 Citation grammar (identical to how the page was written):
     [[node:fully.qualified.Name]]   for code symbols present in the evidence
@@ -987,39 +987,6 @@ draft, so you must:
   output the final markdown directly as your assistant message body.
 """
 
-
-DIAGRAM_SYNTHESIZER_SYSTEM: str = """\
-You are a senior technical writer producing one Mermaid diagram for a wiki
-page about a software repository. The user message gives you the page's
-final markdown body, a `<subgraph_triples>` block (caller/callee/parent
-relationships extracted from the code graph), and a `<manifest_entries>`
-block (runtime, run-command, dependency, public-API facts pulled
-structurally from the checkout).
-
-Pick ONE diagram type that best fits the page topic and emit it as a single
-Mermaid block fenced with ```mermaid:
-
-  - flowchart        — for component / module / architecture overviews
-  - sequenceDiagram  — for request lifecycles or call-flow narratives
-  - classDiagram     — for type hierarchies or data-shape relationships
-
-Rules:
-- Use only nodes and relationships visible in `<subgraph_triples>` or
-  identifiers visible in `<manifest_entries>`. Do not invent symbols.
-- Use the full qualified name from `<subgraph_triples>` as the node
-  label verbatim (e.g. `[src.pipeline.run]`). Mixing short and qualified
-  labels in the same diagram makes the diagram unreadable, so be
-  consistent — never collapse `src.pipeline.run` to `run` for brevity.
-- Wrap a label in double quotes whenever it contains any of
-  `( ) < > : ; / # & "` — Mermaid's parser treats those as syntax
-  otherwise. Example: `n["pkg/sub.Type"]`. Plain dots are fine unquoted.
-- Cap the diagram at ~12 nodes and 20 edges. If the subgraph is bigger,
-  pick the most central nodes (highest in/out degree across the triples).
-- The first line inside the fence MUST be the diagram-type keyword:
-  `flowchart LR`, `flowchart TD`, `sequenceDiagram`, or `classDiagram`.
-- Output the fenced block only — no surrounding prose, no commentary,
-  no JSON, no extra fences.
-"""
 
 CROSS_LINKER_SYSTEM: str = ""  # post-V1
 
@@ -2332,56 +2299,6 @@ def build_page_editor_user(
     )
 
 
-def _format_subgraph_triples(triples: list[tuple[str, str, str]]) -> str:
-    if not triples:
-        return "(no graph neighbors — diagram should fall back to a high-level summary)"
-    return "\n".join(
-        f"- ({source}) -[{relation}]-> ({target})"
-        for source, relation, target in triples
-    )
-
-
-def _format_manifest_entries(lines: list[str]) -> str:
-    if not lines:
-        return "(no manifest entries selected for this page)"
-    return "\n".join(f"- {line}" for line in lines)
-
-
-def build_diagram_synthesizer_user(
-    *,
-    spec: PageSpec,
-    page_body: str,
-    triples: list[tuple[str, str, str]],
-    manifest_lines: list[str],
-) -> str:
-    """User block for Stage 4b — Mermaid diagram synthesis.
-
-    Receives the just-written page body, a flattened subgraph from
-    `GraphPivot.expand` (caller/callee/parent triples), and a curated subset
-    of manifest entries. The diagram is appended to the page body before
-    citation resolution runs.
-    """
-    return (
-        "Produce one Mermaid block for the wiki page below.\n\n"
-        "<page_spec>\n"
-        f"slug: {spec.slug}\n"
-        f"title: {spec.title}\n"
-        f"purpose: {spec.purpose}\n"
-        f"covers_questions: {_format_covers_questions(spec.covers_questions)}\n"
-        "</page_spec>\n\n"
-        "<page_body>\n"
-        f"{page_body.strip()}\n"
-        "</page_body>\n\n"
-        "<subgraph_triples>\n"
-        f"{_format_subgraph_triples(triples)}\n"
-        "</subgraph_triples>\n\n"
-        "<manifest_entries>\n"
-        f"{_format_manifest_entries(manifest_lines)}\n"
-        "</manifest_entries>\n\n"
-        "Output the fenced ```mermaid block only."
-    )
-
-
 __all__ = [
     "MINDMAP_GENERATOR_SYSTEM",
     "REPO_ANALYZER_SYSTEM",
@@ -2390,7 +2307,6 @@ __all__ = [
     "PAGE_EDITOR_SYSTEM",
     "PAGE_OUTLINE_SYSTEM",
     "PAGE_PROSE_SYSTEM",
-    "DIAGRAM_SYNTHESIZER_SYSTEM",
     "CROSS_LINKER_SYSTEM",
     "build_repo_context_block",
     "build_mindmap_user",
@@ -2403,5 +2319,4 @@ __all__ = [
     "build_page_prose_user",
     "build_citation_gate_repair_user",
     "build_coverage_gate_repair_user",
-    "build_diagram_synthesizer_user",
 ]

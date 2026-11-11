@@ -28,7 +28,7 @@ Design:
 Stage vocabulary (prefix-matched per pipeline step by the processor):
     embed.code | embed.repo_docs | summaries |
     wiki.analyze | wiki.mindmap | wiki.plan | wiki.write |
-    wiki.diagram | wiki.retrieval
+    wiki.retrieval
 """
 
 from __future__ import annotations

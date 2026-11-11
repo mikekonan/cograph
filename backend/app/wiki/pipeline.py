@@ -5,9 +5,6 @@ Stage map:
     2.  analyze_repo           — Prompt 1, 1 LLM call -> RepoOverview
     3.  plan_pages             — Prompt 2, 1 LLM call -> PagePlan
     4.  write_pages            — Prompt 3, N parallel LLM calls -> list[PageDraft]
-    4b. synthesize_diagrams    — Prompt 4, K parallel LLM calls (one per page
-                                 with `PageSpec.diagram=true`) -> Mermaid blocks
-                                 appended to drafts. Failure is non-fatal.
     5.  resolve_and_persist    — citations.py + store.py, no LLM. Includes a
                                  single repair re-prompt inside Stage 4 when
                                  the writer cited unknown identifiers.
@@ -39,7 +36,6 @@ from backend.app.llm.embedder import EmbedProvider
 from backend.app.llm.usage import llm_stage
 from backend.app.models.repository import Repository
 from backend.app.rag.lexical import LexicalRetriever, SymbolLookup
-from backend.app.rag.pivot import GraphPivot, PivotNode
 from backend.app.wiki.agent_dispatcher import AgentDispatcher
 from backend.app.wiki.agent_tools import AgentToolContext
 from backend.app.wiki.checkout_fs import CheckoutFs
@@ -92,7 +88,6 @@ from backend.app.wiki.llm_client import (
 )
 from backend.app.wiki.manifests import ExportedType, RepoManifests
 from backend.app.wiki.prompts import (
-    DIAGRAM_SYNTHESIZER_SYSTEM,
     MINDMAP_GENERATOR_SYSTEM,
     PAGE_EDITOR_SYSTEM,
     PAGE_OUTLINE_SYSTEM,
@@ -102,7 +97,6 @@ from backend.app.wiki.prompts import (
     REPO_ANALYZER_SYSTEM,
     build_citation_gate_repair_user,
     build_coverage_gate_repair_user,
-    build_diagram_synthesizer_user,
     build_mindmap_user,
     build_page_editor_user,
     build_page_outline_user,
@@ -215,7 +209,6 @@ class WikiGenerationConfig:
     # Requires `persist` — the stamps live in the DB.
     incremental: bool = True
     full_rebuild_collapse_ratio: float = 0.5
-    enable_diagrams: bool = True
     enable_cross_linker: bool = False
     # T5: two-pass writing for high-importance pages. When False, every
     # page goes through the single-pass agent loop. When True, pages
@@ -239,8 +232,6 @@ class WikiGenerationConfig:
     # Counts reasoning tokens too on reasoning models; a write_page cut by
     # the cap arrives empty and the page is retried from scratch.
     page_writer_max_tokens: int = 24_576
-    diagram_max_tokens: int = 2_048
-    diagram_pivot_top_k: int = 8
     # Structured-output stages (analyze_repo, generate_mindmap, plan_pages)
     # serialize a fully-populated schema to JSON. On large repos the analyzer
     # alone can spill past 4096 output tokens, truncating the JSON mid-string
@@ -664,10 +655,10 @@ _TRAILING_MERMAID_RE = re.compile(r"\n*```mermaid\b.*?```\s*$", re.DOTALL)
 
 
 def _strip_trailing_mermaid(body: str) -> str:
-    """Drop a trailing ```mermaid fence. `synthesize_diagrams` appends the
-    diagram as the final block, so an edited page's old diagram is stripped
-    here and re-synthesized downstream rather than fed to (and mangled by)
-    the editor."""
+    """Drop a trailing ```mermaid fence. Pages written before the separate
+    diagram stage was removed end in its generated diagram; stripping it here
+    lets the next edit pass drop it. Diagrams the writer put inside the page
+    are kept."""
     return _TRAILING_MERMAID_RE.sub("", body or "").rstrip()
 
 
@@ -2099,32 +2090,6 @@ def _page_notes_by_slug(context: RepoContext, plan: PagePlan) -> dict[str, list[
     return out
 
 
-# Mermaid diagram-type keywords accepted on the first non-empty line of the
-# fenced block. The page-writer prompt narrows the LLM to flowchart /
-# sequenceDiagram / classDiagram, but we accept the broader Mermaid family
-# (graph alias, stateDiagram, erDiagram, journey) so a model that picks a
-# slightly different shape doesn't get its diagram silently dropped.
-_MERMAID_LEAD_KEYWORDS = (
-    "flowchart",
-    "graph",
-    "sequenceDiagram",
-    "classDiagram",
-    "stateDiagram",
-    "stateDiagram-v2",
-    "erDiagram",
-    "journey",
-    "gantt",
-    "pie",
-    "mindmap",
-)
-# Match fenced code blocks. Group 1 is the language tag (possibly empty),
-# group 2 is the fenced body. The leading anchor `^|\n` keeps us aligned to
-# fence starts so a closing fence isn't mistaken for an opening fence.
-_FENCE_RE = re.compile(
-    r"(?:^|\n)```([A-Za-z0-9_+-]*)\s*\n(.*?)\n```",
-    re.DOTALL,
-)
-
 # Match a `mermaid` fence specifically — used for the post-write label
 # sanitizer below. We capture the body (group 2) and rewrite it inside the
 # original fence wrapping (groups 1 and 3) so newlines and indentation are
@@ -2353,9 +2318,14 @@ def _wrap_long_mermaid_labels(body: str) -> str:
     return body
 
 
+# Leftmost-first alternation: an existing fence (or ``double`` span) and a
+# one-line `span` are consumed whole, so the closing backtick of one span
+# can never pair with the opening backtick of the next span on a later line.
+# Only the third branch (group 2) is a candidate for promotion.
 _INLINE_MULTILINE_CODE_RE = re.compile(
-    r"(?<![`\\])`([^`\n]*\n[^`]*?)`(?!`)",
-    re.DOTALL,
+    r"(`{2,})[\s\S]*?\1(?!`)"
+    r"|`[^`\n]+`"
+    r"|(?<![`\\])`([^`\n]*\n[^`]*?)`(?!`)",
 )
 
 
@@ -2374,14 +2344,14 @@ def upgrade_multiline_inline_code(markdown: str) -> str:
     code, not prose. Convert to a fenced block with no language hint (we
     can't reliably guess Go vs. Python at this layer).
 
-    The regex is anchored on bare backticks (negative lookbehind/ahead for
-    `` ` `` and `\\`) so it never matches inside an existing triple-fence
-    or an escaped backtick.
+    The regex consumes fences and one-line spans before it looks for a
+    multi-line span, so it never pairs the closing backtick of one span
+    with the opening backtick of a span on the next line.
     """
 
     def _convert(match: "re.Match[str]") -> str:
-        body = match.group(1)
-        if len(body) < 40:
+        body = match.group(2)
+        if body is None or len(body) < 40:
             return match.group(0)
         if not any(ch in body for ch in "{}();"):
             return match.group(0)
@@ -2396,8 +2366,8 @@ def sanitize_mermaid_in_markdown(markdown: str) -> str:
     quotes so the diagram renders. Idempotent — already-quoted labels and
     safe labels pass through unchanged.
 
-    The LLM is instructed to do this itself in `PAGE_WRITER_SYSTEM` and
-    `DIAGRAM_SYNTHESIZER_SYSTEM`, but real output still slips through with
+    The LLM is instructed to do this itself in `PAGE_WRITER_SYSTEM`, but
+    real output still slips through with
     bare `[Spec(w,r)]`-style labels often enough that we run a defensive
     pass before persistence.
     """
@@ -2586,70 +2556,6 @@ def sanitize_page_links_in_markdown(
     return _MARKDOWN_LINK_RE.sub(_on_link, markdown)
 
 
-def _extract_mermaid_block(text: str) -> str | None:
-    """Pull a usable Mermaid body out of an LLM response.
-
-    Accepts either a ```mermaid``` fence, a bare ``` fence whose body starts
-    with a Mermaid keyword, or — if there's no fence at all — the whole body
-    when its first non-empty line is a Mermaid keyword. Returns `None` when
-    nothing diagram-shaped is present.
-    """
-    if not text:
-        return None
-    text = text.strip()
-
-    for match in _FENCE_RE.finditer(text):
-        lang = (match.group(1) or "").lower()
-        body = match.group(2).strip()
-        if lang == "mermaid":
-            return body
-        if lang and lang != "mermaid":
-            continue
-        # Empty language tag — accept only if first line is a Mermaid keyword.
-        first_line = body.splitlines()[0].strip() if body else ""
-        if any(first_line.startswith(kw) for kw in _MERMAID_LEAD_KEYWORDS):
-            return body
-
-    # No usable fence — accept the whole body if its first non-empty line is
-    # a Mermaid keyword.
-    lines = [line for line in text.splitlines() if line.strip()]
-    if not lines:
-        return None
-    if any(lines[0].lstrip().startswith(kw) for kw in _MERMAID_LEAD_KEYWORDS):
-        return text
-    return None
-
-
-def _flatten_pivot_to_triples(
-    pivots: dict[UUID, PivotNode],
-) -> list[tuple[str, str, str]]:
-    """Turn `GraphPivot.expand` output into a flat `(source, relation, target)` list.
-
-    Relations:
-        - "calls"     — source calls target
-        - "called_by" — caller calls source (mirror of caller relationship)
-        - "contains"  — parent contains source
-    """
-    triples: list[tuple[str, str, str]] = []
-    seen: set[tuple[str, str, str]] = set()
-
-    def _push(triple: tuple[str, str, str]) -> None:
-        if triple in seen:
-            return
-        seen.add(triple)
-        triples.append(triple)
-
-    for pivot in pivots.values():
-        center = pivot.name
-        if pivot.parent is not None:
-            _push((pivot.parent.name, "contains", center))
-        for caller in pivot.callers:
-            _push((caller.name, "calls", center))
-        for callee in pivot.callees:
-            _push((center, "calls", callee.name))
-    return triples
-
-
 def _select_manifest_lines(
     *,
     manifests: RepoManifests,
@@ -2692,129 +2598,6 @@ def _select_manifest_lines(
         for ck in manifests.config_keys[:6]:
             _add(f"cfg:{ck.kind}", ck.key, _loc(ck.evidence))
     return lines
-
-
-async def synthesize_diagrams(
-    *,
-    llm: StructuredCompletionProvider,
-    session: AsyncSession,
-    repository_id: UUID,
-    context: RepoContext,
-    plan: PagePlan,
-    drafts: list[PageDraft],
-    bundles_by_slug: dict[str, PageBundle],
-    config: WikiGenerationConfig,
-    pivot: GraphPivot | None = None,
-) -> list[PageDraft]:
-    """Stage 4b: append a Mermaid diagram to each draft whose `PageSpec.diagram`
-    is true. Pages with `diagram=False` pass through unchanged.
-
-    A diagram failure (LLM error, malformed Mermaid output, missing
-    subgraph) is non-fatal: the draft body is returned as-is and the run
-    continues. PR4 will surface the miss in `metadata.quality`.
-    """
-    if not config.enable_diagrams:
-        return drafts
-
-    diagram_specs = {spec.slug: spec for spec in plan.pages if spec.diagram}
-    if not diagram_specs:
-        return drafts
-
-    logger.info(
-        "wiki stage 4b: synthesize_diagrams starting (pages=%d)",
-        len(diagram_specs),
-    )
-    graph_pivot = pivot or GraphPivot()
-    drafts_by_slug = {draft.slug: draft for draft in drafts}
-
-    async def _diagram_for(slug: str) -> tuple[str, str] | None:
-        """Return (slug, mermaid_body) or `None` if synthesis didn't yield a block."""
-        spec = diagram_specs[slug]
-        draft = drafts_by_slug.get(slug)
-        if draft is None:
-            return None
-
-        bundle = bundles_by_slug.get(slug, PageBundle())
-        seed_ids = [chunk.code_node_id for chunk in bundle.code_chunks]
-        triples: list[tuple[str, str, str]] = []
-        if seed_ids:
-            try:
-                pivots = await graph_pivot.expand(
-                    session=session,
-                    repository_id=repository_id,
-                    node_ids=seed_ids[: config.diagram_pivot_top_k],
-                )
-                triples = _flatten_pivot_to_triples(pivots)
-            except Exception as exc:
-                logger.warning(
-                    "synthesize_diagrams: pivot expand failed for slug=%s (%s); "
-                    "using empty subgraph",
-                    slug,
-                    exc,
-                )
-
-        manifest_lines = _select_manifest_lines(manifests=context.manifests, spec=spec)
-        user_block = build_diagram_synthesizer_user(
-            spec=spec,
-            page_body=draft.body_md,
-            triples=triples,
-            manifest_lines=manifest_lines,
-        )
-        blocks = [
-            CacheBlock(text=build_repo_context_block(context), cacheable=True),
-            CacheBlock(text=user_block, cacheable=False),
-        ]
-        try:
-            response = await llm.complete_text(
-                system=DIAGRAM_SYNTHESIZER_SYSTEM,
-                blocks=blocks,
-                max_tokens=config.diagram_max_tokens,
-                temperature=0.0,
-            )
-        except StructuredCompletionError as exc:
-            logger.warning(
-                "synthesize_diagrams: LLM failed for slug=%s (%s); skipping diagram",
-                slug,
-                exc,
-            )
-            return None
-
-        body = _extract_mermaid_block(response)
-        if not body:
-            logger.warning(
-                "synthesize_diagrams: no usable Mermaid block returned for slug=%s; "
-                "skipping",
-                slug,
-            )
-            return None
-        return slug, body
-
-    with llm_stage("wiki.diagram"):
-        results = await asyncio.gather(
-            *[_diagram_for(slug) for slug in diagram_specs],
-            return_exceptions=False,
-        )
-
-    diagrams_by_slug: dict[str, str] = dict(r for r in results if r is not None)
-
-    updated: list[PageDraft] = []
-    for draft in drafts:
-        body = diagrams_by_slug.get(draft.slug)
-        if body is None:
-            updated.append(draft)
-            continue
-        # Append the diagram as a separate fenced block so the FE Mermaid
-        # renderer picks it up. We don't add a heading — the diagram is part
-        # of the page narrative, not a separate section.
-        new_body = f"{draft.body_md.rstrip()}\n\n```mermaid\n{body}\n```\n"
-        new_body = sanitize_mermaid_in_markdown(new_body)
-        updated.append(draft.model_copy(update={"body_md": new_body}))
-    logger.info(
-        "wiki stage 4b: synthesize_diagrams done (attached=%d/%d)",
-        len(diagrams_by_slug),
-        len(diagram_specs),
-    )
-    return updated
 
 
 _LOW_CONFIDENCE_THRESHOLD = 0.05
@@ -3037,7 +2820,7 @@ async def resolve_pages(
             auto_link_counts[spec.slug] = (
                 auto_link_counts.get(spec.slug, 0) + links_added
             )
-        # Pre-resolve body (placeholders intact, diagram appended): this is
+        # Pre-resolve body (placeholders intact): this is
         # what the cheap edit pass reads next sync. `content` below is
         # post-resolve (placeholders rendered to links) and can't be edited.
         content_src = body_md
@@ -3279,13 +3062,12 @@ async def run_stages_1_to_4(
     llm: StructuredCompletionProvider,
     retriever: WikiRetrievalService,
     resolver: CitationResolver | None = None,
-    pivot: GraphPivot | None = None,
     checkout_path: Path | str | None = None,
     config: WikiGenerationConfig | None = None,
     session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]]
     | None = None,
 ) -> StagesOneToFourResult:
-    """Run Stages 1-4 (and Stage 4b — Mermaid diagram synthesis).
+    """Run Stages 1-4.
 
     Persistence (Stage 5/6) stays out — this entry point returns drafts in
     memory so the CLI can dump them to a temp dir for human eyeballing.
@@ -3315,17 +3097,6 @@ async def run_stages_1_to_4(
         session_factory=session_factory,
         checkout_path=checkout_path,
     )
-    drafts = await synthesize_diagrams(
-        llm=llm,
-        session=session,
-        repository_id=repository_id,
-        context=stages_1_3.context,
-        plan=stages_1_3.plan,
-        drafts=drafts,
-        bundles_by_slug=bundles_by_slug,
-        config=cfg,
-        pivot=pivot,
-    )
     return StagesOneToFourResult(
         context=stages_1_3.context,
         overview=stages_1_3.overview,
@@ -3345,7 +3116,6 @@ async def run_stages_1_to_5(
     llm: StructuredCompletionProvider,
     retriever: WikiRetrievalService,
     resolver: CitationResolver | None = None,
-    pivot: GraphPivot | None = None,
     checkout_path: Path | str | None = None,
     config: WikiGenerationConfig | None = None,
     session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]]
@@ -3364,7 +3134,6 @@ async def run_stages_1_to_5(
         llm=llm,
         retriever=retriever,
         resolver=citation_resolver,
-        pivot=pivot,
         checkout_path=checkout_path,
         config=cfg,
         session_factory=session_factory,
@@ -3399,7 +3168,6 @@ async def run_wiki_generation(
     llm: StructuredCompletionProvider,
     retriever: WikiRetrievalService,
     resolver: CitationResolver | None = None,
-    pivot: GraphPivot | None = None,
     store: WikiDocumentStore | None = None,
     checkout_path: Path | str | None = None,
     config: WikiGenerationConfig | None = None,
@@ -3607,7 +3375,7 @@ async def run_wiki_generation(
         len(clean_slugs),
     )
 
-    # --- Stages 4 / 4b / 5 over the (possibly restricted) write set -------
+    # --- Stages 4 / 5 over the (possibly restricted) write set ----------
     # Pages take minutes and use their own sessions. Left open, this read
     # transaction idles all that time and a server-side
     # idle_in_transaction_session_timeout closes the connection under us.
@@ -3640,18 +3408,6 @@ async def run_wiki_generation(
                 (report.dirty.get(draft.slug, "?") if report is not None else "?"),
             )
     errors.extend(f"page_failed:{slug}" for slug in page_failures)
-    drafts = await synthesize_diagrams(
-        llm=llm,
-        session=session,
-        repository_id=repository_id,
-        context=context,
-        plan=plan,
-        drafts=drafts,
-        bundles_by_slug=bundles_by_slug,
-        config=cfg,
-        pivot=pivot,
-    )
-
     resolved, unresolved_all = await resolve_pages(
         session=session,
         repository_id=repository_id,

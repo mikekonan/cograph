@@ -11,14 +11,12 @@ from backend.app.wiki.context import (
     TopSummary,
 )
 from backend.app.wiki.prompts import (
-    DIAGRAM_SYNTHESIZER_SYSTEM,
     PAGE_OUTLINE_SYSTEM,
     PAGE_PLANNER_SYSTEM,
     PAGE_PROSE_SYSTEM,
     PAGE_WRITER_SYSTEM,
     REPO_ANALYZER_SYSTEM,
     _REPO_CONTEXT_BLOCK_CHAR_CAP,
-    build_diagram_synthesizer_user,
     build_page_outline_user,
     build_page_planner_user,
     build_page_prose_user,
@@ -419,62 +417,6 @@ def test_page_writer_user_handles_empty_bundle() -> None:
     assert "no doc chunks retrieved" in block
     assert "no graph neighbors" in block
     assert "no other pages in this wiki" in block
-
-
-def test_diagram_synthesizer_system_demands_one_fenced_block() -> None:
-    assert DIAGRAM_SYNTHESIZER_SYSTEM.strip()
-    assert "```mermaid" in DIAGRAM_SYNTHESIZER_SYSTEM
-    assert "flowchart" in DIAGRAM_SYNTHESIZER_SYSTEM
-    assert "sequenceDiagram" in DIAGRAM_SYNTHESIZER_SYSTEM
-    assert "classDiagram" in DIAGRAM_SYNTHESIZER_SYSTEM
-    # The prompt must forbid invention of symbols.
-    assert "Do not invent" in DIAGRAM_SYNTHESIZER_SYSTEM
-
-
-def test_diagram_synthesizer_user_renders_subgraph_and_manifest() -> None:
-    spec = PageSpec(
-        slug="index",
-        title="Overview",
-        purpose="Landing.",
-        diagram=True,
-        covers_questions=[ReaderQuestion.PUBLIC_API],
-    )
-    block = build_diagram_synthesizer_user(
-        spec=spec,
-        page_body="# Overview\n\nLanding text.",
-        triples=[
-            ("cli.main", "calls", "pipeline.run"),
-            ("pipeline.run", "calls", "summary.build"),
-        ],
-        manifest_lines=[
-            "[api] cli.main (src/cli.py:1)",
-            "[dep:python] fastapi 0.110.0 (pyproject.toml:12)",
-        ],
-    )
-    assert "<page_spec>" in block
-    assert "slug: index" in block
-    assert "<page_body>" in block
-    assert "Landing text." in block
-    assert "<subgraph_triples>" in block
-    assert "(cli.main) -[calls]-> (pipeline.run)" in block
-    assert "<manifest_entries>" in block
-    assert "[dep:python] fastapi 0.110.0" in block
-    assert "```mermaid" in block
-
-
-def test_diagram_synthesizer_user_handles_empty_subgraph() -> None:
-    spec = PageSpec(slug="index", title="Overview", purpose="Landing.", diagram=True)
-    block = build_diagram_synthesizer_user(
-        spec=spec,
-        page_body="# Overview\n\nbody",
-        triples=[],
-        manifest_lines=[],
-    )
-    assert "no graph neighbors" in block
-    assert "no manifest entries selected" in block
-
-
-# --- Service topology ----------------------------------------------------
 
 
 def _make_topology_overview() -> RepoOverview:

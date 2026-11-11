@@ -2,8 +2,7 @@
 
 The equivalence matrix proves the OUTPUT matches a full rebuild; these
 tests pin down the SPEND: an incremental run may make exactly the calls
-its dirty set justifies — no planning calls, no clean-page writes, no
-clean-page diagrams — while keeping the full repair budget available to
+its dirty set justifies — no planning calls, no clean-page writes — while keeping the full repair budget available to
 the pages it does rewrite.
 
 The scripted `FakeStructuredProvider` queue doubles as the budget meter
@@ -22,9 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.models.document import Document
 from backend.app.wiki.llm_client import FakeStructuredProvider
 from backend.tests.unit.wiki.incremental_harness import (
-    MERMAID_BLOCK,
     STANDARD_PAGES,
-    ScriptedPage,
     ScriptedRepo,
     StrictProvider,
     assert_drained,
@@ -141,48 +138,3 @@ async def test_repair_budget_available_while_clean_pages_stay_silent(
         )
     ).scalar_one()
     assert row.quality["repair_attempts"] == 1
-
-
-async def test_diagrams_synthesized_only_for_dirty_pages(
-    db_session: AsyncSession,
-) -> None:
-    """Two diagram pages; one goes dirty. Exactly one Stage 4b call is
-    queued — a second one (for the clean page) would leave the queue
-    undrained or drain it early. The clean page keeps its old diagram."""
-    pages = [
-        STANDARD_PAGES[0],
-        ScriptedPage(
-            slug="alpha",
-            title="Alpha",
-            purpose="Documents the alphaflow subsystem",
-            cites=("pkg.alpha_main", "pkg._alpha_helper"),
-            diagram=True,
-        ),
-        ScriptedPage(
-            slug="beta",
-            title="Beta",
-            purpose="Documents the betaflow subsystem",
-            cites=("pkg.beta_main",),
-            diagram=True,
-        ),
-        STANDARD_PAGES[3],
-    ]
-    repo = await ScriptedRepo.create(db_session, "wiki-budget-diagram")
-    await seed_standard(db_session, repo)
-    await run_full(db_session, repo, pages, source_commit="c1")
-    await repo.change_node(
-        db_session,
-        "pkg.beta_main",
-        content="def beta_main():\n    return 'betaflow v2'",
-    )
-
-    await run_incremental(
-        db_session,
-        repo,
-        pages,
-        source_commit="c2",
-        expected_dirty={"beta", "index"},
-    )
-    view = await business_view(db_session, repo)
-    assert MERMAID_BLOCK.splitlines()[1] in view["alpha"]["content"]
-    assert MERMAID_BLOCK.splitlines()[1] in view["beta"]["content"]

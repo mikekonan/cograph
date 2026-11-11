@@ -14,7 +14,6 @@ shrank because fewer pages were written" is a real comparison, not a
 
 from __future__ import annotations
 
-from dataclasses import replace
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -55,12 +54,6 @@ pytestmark = pytest.mark.asyncio
 
 _WIKI_PLANNING_STAGES = {"wiki.analyze", "wiki.mindmap", "wiki.plan"}
 
-# STANDARD_PAGES with one diagram page so a full run exercises wiki.diagram.
-_DIAGRAM_PAGES = [
-    replace(page, diagram=True) if page.slug == "beta" else page
-    for page in STANDARD_PAGES
-]
-
 
 async def test_full_run_books_every_wiki_stage(db_session: AsyncSession) -> None:
     repo = await ScriptedRepo.create(db_session, "wiki-cost-full")
@@ -68,12 +61,12 @@ async def test_full_run_books_every_wiki_stage(db_session: AsyncSession) -> None
 
     tally = LlmUsageTally()
     provider = FakeStructuredProvider(usage_tally=tally)
-    queue_full_run(provider, repo, _DIAGRAM_PAGES)
+    queue_full_run(provider, repo, STANDARD_PAGES)
     result = await run_pipeline(db_session, repo, llm=provider, source_commit="c1")
     assert result.errors == []
     assert_drained(provider)
 
-    expected = _WIKI_PLANNING_STAGES | {"wiki.write", "wiki.diagram"}
+    expected = _WIKI_PLANNING_STAGES | {"wiki.write"}
     assert expected <= set(tally.by_stage), (
         f"missing stages: {expected - set(tally.by_stage)}"
     )

@@ -477,6 +477,8 @@ class PageSpec(BaseModel):
     purpose: str
     sources_hint: list[str] = Field(default_factory=list)
     covers_questions: list[ReaderQuestion] = Field(default_factory=list)
+    # Unused since the separate diagram stage was removed. Kept because it
+    # is part of spec_hash; dropping it would mark every page dirty.
     diagram: bool = False
     page_kind: PageKind = PageKind.CONCEPT
     salience_tier: SalienceTier = SalienceTier.SUPPORTING
