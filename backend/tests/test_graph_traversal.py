@@ -293,3 +293,82 @@ async def test_graph_traversal_uses_code_edges_for_v2_repositories(db_session):
     assert [(str(edge.source), str(edge.target), edge.type) for edge in result.edges] == [
         (str(root.id), str(callee.id), GraphEdgeType.CALLS.value)
     ]
+
+
+@pytest.mark.asyncio
+async def test_graph_traversal_cap_keeps_product_callers_first(db_session):
+    """A hub's test and generated callers sort first by id here; the cap
+    must still keep the product caller."""
+    repository = Repository(
+        host="example.com",
+        git_url="git@example.com:acme/warehouse.git",
+        name="warehouse",
+        owner="acme",
+        branch="main",
+        status=RepositoryStatus.READY,
+        sync_schedule=SyncSchedule.MANUAL,
+        graph_storage_version=2,
+    )
+    db_session.add(repository)
+    await db_session.flush()
+
+    def node(name: str, path: str, metadata: dict | None = None) -> CodeNode:
+        return CodeNode(
+            repository_id=repository.id,
+            file_path=path,
+            qualified_name=f"{path}.{name}",
+            symbol_key=f"{path}.{name}",
+            node_type=CodeNodeType.FUNCTION,
+            name=name,
+            language="python",
+            start_line=1,
+            end_line=2,
+            content=f"def {name}(): pass",
+            callers=[],
+            callees=[],
+            node_metadata=metadata or {},
+            content_hash=name,
+        )
+
+    root = node("pack", "parcels.py")
+    test_caller = node("test_pack", "tests/test_parcels.py")
+    generated_caller = node("pack_stub", "client.py", {"generated": "openapi"})
+    product_caller = node("ship", "route.py")
+    # Flushed one by one so ids grow in this order: the product caller last.
+    for item in (root, test_caller, generated_caller, product_caller):
+        db_session.add(item)
+        await db_session.flush()
+    for caller in (test_caller, generated_caller, product_caller):
+        db_session.add(
+            CodeEdge(
+                repository_id=repository.id,
+                source_node_id=caller.id,
+                target_node_id=root.id,
+                target_qualified_name=root.qualified_name,
+                edge_type=GraphEdgeType.CALLS.value,
+            )
+        )
+    await db_session.commit()
+
+    capped = await GraphTraversalService().traverse(
+        session=db_session,
+        repository_id=repository.id,
+        node_id=root.id,
+        direction=TraversalDirection.CALLERS,
+        max_nodes=1,
+    )
+    assert capped is not None
+    assert [(n.name, n.kind) for n in capped.nodes] == [("ship", None)]
+
+    every = await GraphTraversalService().traverse(
+        session=db_session,
+        repository_id=repository.id,
+        node_id=root.id,
+        direction=TraversalDirection.CALLERS,
+    )
+    assert every is not None
+    assert [(n.name, n.kind) for n in every.nodes] == [
+        ("ship", None),
+        ("test_pack", "test"),
+        ("pack_stub", "generated"),
+    ]
