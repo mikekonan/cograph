@@ -34,6 +34,18 @@ def test_graph_parser_parses_python_source():
     assert parsed.path.as_posix() == "service.py"
 
 
+def test_parsed_file_encodes_source_once():
+    # The extractor slices source_bytes for every node; re-encoding the
+    # whole file per slice made a large generated file take minutes.
+    parsed = GraphParser().parse_source(
+        file_path="service.go",
+        source_text="package service\n\nfunc Ünïcode() {}\n",
+    )
+
+    assert parsed.source_bytes is parsed.source_bytes
+    assert parsed.source_bytes == parsed.source_text.encode("utf-8")
+
+
 def test_graph_parser_parses_go_source():
     parsed = GraphParser().parse_source(
         file_path="service.go",
