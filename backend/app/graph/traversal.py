@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.graph.extractor import GraphEdgeType
 from backend.app.models.code_edge import CodeEdge
-from backend.app.models.code_node import CodeNode
+from backend.app.models.code_node import CodeNode, node_kind
 from backend.app.models.enums import CodeNodeType
 from backend.app.models.repository import Repository
 
@@ -31,6 +31,8 @@ class TraversalNode(BaseModel):
     end_line: int
     signature: str | None = None
     distance: int
+    # `test` or `generated` for code that is not the product; see node_kind.
+    kind: str | None = None
 
 
 class TraversalEdge(BaseModel):
@@ -122,6 +124,15 @@ class GraphTraversalService:
             return None
 
         visible_ids = set(node_by_id)
+        kinds = {
+            node.id: node_kind(
+                node.file_path,
+                generated=bool((node.node_metadata or {}).get("generated")),
+            )
+            for node in nodes
+        }
+        # Product code first at each distance: a function's test callers
+        # say nothing about who uses it.
         related_nodes = [
             TraversalNode(
                 id=node.id,
@@ -132,11 +143,13 @@ class GraphTraversalService:
                 end_line=node.end_line,
                 signature=node.signature,
                 distance=visited_distance[node.id],
+                kind=kinds[node.id],
             )
             for node in sorted(
                 (item for item in nodes if item.id != node_id),
                 key=lambda item: (
                     visited_distance[item.id],
+                    kinds[item.id] is not None,
                     item.file_path,
                     item.start_line,
                     item.name,

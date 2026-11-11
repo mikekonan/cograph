@@ -64,9 +64,10 @@ rank order: a code node or a doc section.
       "name": "shipping.label.Print",
       "at": "shipping/label.go:42-58",
       "called_by": [
-        {"node_id": "uuid", "name": "shipping.Ship", "at": "shipping/ship.go:10-31"}
+        {"name": "shipping.Ship", "at": "shipping/ship.go:10-31"},
+        {"name": "shipping.TestPrint", "at": "shipping/label_test.go:8-20", "kind": "test"}
       ],
-      "called_by_more": 4,
+      "called_by_count": {"code": 1, "test": 4},
       "code": "≤ snippet_chars characters",
       "truncated": true
     },
@@ -85,9 +86,17 @@ rank order: a code node or a doc section.
   stands in as `code` only when there is no body row, so `cograph_search_code`
   shows signatures, not bodies. Node summaries are not shown here; read them
   with `cograph_read_node(with_summary=true)` or in the wiki.
-- **`called_by`** lists up to 3 callers of a code hit, sorted by path, and
-  `called_by_more` counts the rest. An empty list means the node has no known
-  callers. When a hit is only a helper, its callers show where it is used.
+- **`called_by`** lists up to 3 callers of a code hit: product code first, then
+  tests, then generated code, each group by path. `called_by_count` counts all
+  callers by kind: `code`, `test`, `generated`. An empty list means the node has
+  no known callers. When a hit is only a helper, its callers show where it is used.
+- **`kind`** marks a hit or a caller that is not product code: `test` (a test
+  file, or a folder of tests, fixtures or mocks) or `generated` (the file says it
+  is generated). Such hits come after product code. Three test callers of a
+  function say nothing about who uses it.
+- **Exact name first.** `cograph_search_code` puts a node named exactly as the
+  query first. For `Type.Method`, the method of that type comes before its
+  namesakes.
 - **`code`** and **`text`** are query-anchored excerpts, never a full body.
   Default 600 characters (~150 tokens); override with `snippet_chars` in
   `[80, 4000]`.
@@ -108,6 +117,10 @@ rank order: a code node or a doc section.
   `next`, a `cograph_search_code` call, when the query holds a name from the
   code (`snake_case`, `camelCase`, `pkg.Name`, `ns::Name`). A repository that
   has not finished its first index is a `REPO_NOT_READY` error, not an empty list.
+- A repository that is not indexed and one the caller may not read get the same
+  answer: a `NOT_FOUND` error, or a `reason` on an empty `cograph_repositories`
+  search. It tells the agent to say so and not to present other sources as read
+  code. One answer for both keeps private repository names from showing.
 
 The REST `/api/retrieve` and the web UI keep the full response: one row per layer,
 with provenance, commit SHAs and stream metadata.
@@ -241,10 +254,13 @@ three things and nothing else:
 - **When to use Cograph.** A repository outside the working directory, a search
   by meaning, team docs. For a repository on disk with a known name, the agent's
   own grep and file reads are cheaper and may be newer than the index.
-- **How to answer: find, read, stop.** Find with `cograph_search_code` for a
-  name and `cograph_retrieve` for a question in words. Read the best one or two
-  hits with `cograph_read_node`. Stop once the answer is read and can be cited;
-  most questions need 2-4 calls.
+- **How to answer: find, read, check, stop.** Find with `cograph_search_code`
+  for a name and `cograph_retrieve` for a question in words. Read the best one or
+  two hits with `cograph_read_node`. For run-time behaviour, check where the
+  input comes from, the product-code callers and the layer above: a branch in
+  the code is not a case that happens until a caller is shown to reach it, and
+  what could not be shown is marked "not verified". Stop once the answer is read
+  and can be cited.
 - **Citations.** `path:start-end` for code, title and heading for docs.
 
 Rules that belong to one tool live in that tool's description: when

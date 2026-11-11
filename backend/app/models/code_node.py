@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
 
@@ -115,3 +116,43 @@ class CodeNode(CreatedAtMixin, Base):
 # Nodes of a generated file: indexed and searchable, but no LLM stage
 # (summaries, wiki) reads them.
 GENERATED_NODE = CodeNode.node_metadata["generated"].as_string().is_not(None)
+
+
+# Test code by path: test files, and folders of tests, fixtures and mocks.
+# The inline `(?i)` reads the same in Python, Postgres and SQLite; SQLite
+# drops the `flags` argument of `regexp_match`.
+TEST_PATH_RE = re.compile(
+    r"(?i)"
+    r"(?:^|/)(?:"
+    r"[^/]+_test\.go|"
+    r"test_[^/]+\.py|"
+    r"[^/]+_test\.py|"
+    r"[^/]+\.test\.[jt]sx?|"
+    r"[^/]+\.spec\.[jt]sx?|"
+    r"[^/]+_spec\.rb"
+    r")$"
+    r"|"
+    r"(?:^|/)(?:tests?|__tests__|testdata|fixtures?|golden|"
+    r"snapshots?|__snapshots__|mocks?|stubs)(?:/|$)"
+)
+
+
+# `node_kind` in SQL, as a sort key: product code 0, test 1, generated 2.
+NODE_KIND_ORDER = sa.case(
+    (GENERATED_NODE, 2),
+    (CodeNode.file_path.regexp_match(TEST_PATH_RE.pattern), 1),
+    else_=0,
+)
+
+
+def node_kind(file_path: str | None, *, generated: bool) -> str | None:
+    """`generated` or `test` for code that is not the product itself, else None.
+
+    `generated` is the node's metadata flag (see GENERATED_NODE). A generated
+    mock is `generated`: its header says so, the path only guesses.
+    """
+    if generated:
+        return "generated"
+    if file_path and TEST_PATH_RE.search(file_path):
+        return "test"
+    return None

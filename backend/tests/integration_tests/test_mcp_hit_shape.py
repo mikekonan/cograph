@@ -6,6 +6,7 @@ Postgres only: both search streams use tsvector and pg_trgm.
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -20,23 +21,28 @@ from backend.app.rag.lexical import LexicalRetriever, SymbolLookup
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="module")]
 
 
-async def _node(session, repo_id, qualified_name, path, content, node_type="function"):
+async def _node(
+    session, repo_id, qualified_name, path, content, node_type="function", metadata="{}"
+):
     return (
         await session.execute(
             sa.text(
                 "insert into code_nodes (repository_id, file_path, qualified_name, node_type,"
-                " name, language, start_line, end_line, content, content_hash, signature)"
-                " values (:r, :p, :q, :t, :n, 'go', 1, 3, :c, :h, :s) returning id"
+                " name, language, start_line, end_line, content, content_hash, signature,"
+                " metadata)"
+                " values (:r, :p, :q, :t, :n, 'go', 1, 3, :c, :h, :s, cast(:m as json))"
+                " returning id"
             ),
             {
                 "r": repo_id,
                 "p": path,
                 "q": qualified_name,
-                "h": qualified_name,
+                "h": hashlib.sha256(qualified_name.encode()).hexdigest(),
                 "t": node_type,
                 "n": qualified_name.rsplit(".", 1)[-1],
                 "c": content,
                 "s": content.splitlines()[0],
+                "m": metadata,
             },
         )
     ).scalar_one()
@@ -144,7 +150,7 @@ async def test_callers_of_every_hit_come_from_one_indexed_query(pg_engine, pg_se
         "warehouse.Audit",
     ]
     assert label["called_by"][0] == {"name": "shipping.ShipOrder", "at": "shipping/order.go:1-3"}
-    assert label["called_by_more"] == 1
+    assert label["called_by_count"] == {"code": 4}
     assert len(statements) == 1
 
     # A hit nobody calls says so with an empty list.
@@ -159,3 +165,96 @@ async def test_callers_of_every_hit_come_from_one_indexed_query(pg_engine, pg_se
     statement, parameters = statements[0]
     plan = (await conn.exec_driver_sql("EXPLAIN " + statement, parameters)).scalars().all()
     assert "idx_code_edges_target" in "\n".join(plan)
+
+
+async def test_exact_name_and_product_code_come_first(pg_session) -> None:
+    """The implementation deep in `internal/` beats a mock and a test with
+    shorter paths; its product caller beats a test caller listed earlier by
+    path, and the count splits callers by kind."""
+    repo_id = await _seed(pg_session)
+    services = _services(pg_session)
+    prefix = "example.test/acme/warehouse/internal/carriers/registry/shipping"
+    real = await _node(
+        pg_session,
+        repo_id,
+        f"{prefix}.Printer.Render",
+        "internal/carriers/registry/shipping/render.go",
+        "func (p Printer) Render(parcel Parcel) {\n\tdraw(parcel)\n}",
+    )
+    mock = await _node(
+        pg_session,
+        repo_id,
+        "mocks.MockPrinter.Render",
+        "mocks/printer.go",
+        "func (m *MockPrinter) Render(parcel Parcel) {\n\tm.Called(parcel)\n}",
+        metadata='{"generated": "mockery"}',
+    )
+    test = await _node(
+        pg_session,
+        repo_id,
+        f"{prefix}.TestRender",
+        "internal/carriers/registry/shipping/render_test.go",
+        "func TestRender(t *testing.T) {\n\tPrinter{}.Render(parcel)\n}",
+    )
+    product = await _node(
+        pg_session, repo_id, "zones.Sort", "zones/sort.go", "func Sort() {\n\tp.Render(x)\n}"
+    )
+    wrapper = await _node(
+        pg_session,
+        repo_id,
+        "client.Render",
+        "client/client.go",
+        "func Render() {}",
+        metadata='{"generated": "openapi"}',
+    )
+    for caller in (test, product, wrapper):
+        await _calls(pg_session, repo_id, caller, real, target_name="Printer.Render")
+    await _calls(pg_session, repo_id, test, mock, target_name="MockPrinter.Render")
+
+    payload = await search_code_payload(
+        services=services, repository_id=repo_id, query="Render", top_k=10
+    )
+    records = {r["name"]: r for r in payload["results"]}
+    names = [r["name"] for r in payload["results"]]
+    # The exact namesakes first, product code before generated, then by path.
+    assert names[:3] == [
+        f"{prefix}.Printer.Render",
+        "client.Render",
+        "mocks.MockPrinter.Render",
+    ]
+    assert [records[n].get("kind") for n in names[:3]] == [None, "generated", "generated"]
+    assert records[f"{prefix}.TestRender"]["kind"] == "test"
+
+    callers = records[f"{prefix}.Printer.Render"]["called_by"]
+    assert [(c["name"], c.get("kind")) for c in callers] == [
+        ("zones.Sort", None),
+        (f"{prefix}.TestRender", "test"),
+        ("client.Render", "generated"),
+    ]
+    assert records[f"{prefix}.Printer.Render"]["called_by_count"] == {
+        "code": 1,
+        "test": 1,
+        "generated": 1,
+    }
+
+    # `Type.Method` puts the type that was asked for first, mock or not.
+    payload = await search_code_payload(
+        services=services, repository_id=repo_id, query="MockPrinter.Render", top_k=10
+    )
+    assert payload["results"][0]["name"] == "mocks.MockPrinter.Render"
+
+
+    # A common name: more namesakes than `top_k`, all earlier by path. The
+    # `Type.Method` the query names still makes the cut.
+    for index in range(3):
+        await _node(
+            pg_session,
+            repo_id,
+            f"a{index}.Render",
+            f"a{index}/render.go",
+            "func Render() {}",
+        )
+    payload = await search_code_payload(
+        services=services, repository_id=repo_id, query="Printer.Render", top_k=2
+    )
+    assert payload["results"][0]["name"] == f"{prefix}.Printer.Render"

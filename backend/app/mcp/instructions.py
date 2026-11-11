@@ -16,8 +16,9 @@ If the repository is in your working directory and you know a name, grep and rea
 
 ## How to answer
 1. Find. Tools take a repository as host/owner/name. Known only by name: cograph_repositories(search=name). Unknown: cograph_route. A word from the code: cograph_search_code. A question in words: cograph_retrieve, one topic per call.
-2. Read. Search results show an excerpt, not the whole code. Read the best one or two hits with cograph_read_node(node_id). If the question is how something is set or used and the hit is only a helper, read its callers; if it is a test, read what it calls: cograph_related with direction=callers or callees. A result's `wiki` names generated pages about the hits, with the matching excerpt; for how or why something works, read that page (its `section`) with cograph_wiki_page before answering.
-3. Stop. Answer once you have read the code or doc that answers the question and can cite it. Most questions need 2-4 calls. Do not repeat a call whose result you still have. If two differently worded searches find nothing relevant, say what you searched and stop.
+2. Read. Search results show an excerpt: read the best one or two hits with cograph_read_node(node_id). A helper: read its callers; a test: what it calls (cograph_related, direction=callers or callees). A result's `wiki` names generated pages about the hits; for how or why something works, read that page (its `section`) with cograph_wiki_page.
+3. Check. For what the code does at run time, read where its input comes from, its callers in product code (not `kind` test), and the layer above. A branch in the code is not a case that happens until you show a caller that reaches it. What you could not show, mark "not verified".
+4. Stop. Answer once you can cite the code or doc that answers the question. Do not repeat a call whose result you still have. If two differently worded searches find nothing relevant, say what you searched and stop.
 
 ## Citations
 Cite each claim. Code: path:start-end, as given in the result. Docs and wiki: title and heading.

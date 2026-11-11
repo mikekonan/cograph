@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field, field_validator
 from backend.app.mcp.services import (
     read_only,
     search_hint,
+    NOT_READABLE_REPOSITORY,
     MCPServices,
     current_user_from_context,
     encode_payload,
@@ -56,4 +57,6 @@ def register(server: MCPServer, services: MCPServices) -> None:
             status=args.status,
             limit=args.limit,
         )
+        if not response["items"] and args.search:
+            response["reason"] = NOT_READABLE_REPOSITORY.format(f"matching '{args.search}'")
         return encode_payload(response)

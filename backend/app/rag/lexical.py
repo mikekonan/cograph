@@ -18,10 +18,12 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import DateTime, bindparam, text
+from sqlalchemy import DateTime, bindparam, case, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import TextClause
 
+from backend.app.models.code_node import NODE_KIND_ORDER, CodeNode
+from backend.app.models.enums import CodeNodeType
 from backend.app.rag.retriever import RetrievedChunk
 from backend.app.rag.snippet import extract_query_terms
 
@@ -427,4 +429,69 @@ class SymbolLookup:
                 },
             )
             for row in result.mappings().all()
+        ]
+
+    async def exact(
+        self,
+        session: AsyncSession,
+        *,
+        name: str,
+        repository_id: UUID,
+        top_k: int = 10,
+        path_prefix: str = "",
+        suffix: str = "",
+    ) -> list[RetrievedChunk]:
+        """Nodes named exactly `name`; rides `idx_code_nodes_repo_name`.
+
+        Similarity on the qualified name prefers a short path: a mock in
+        `mocks/` beat the implementation deep in `internal/`. The plain name
+        has no path in it.
+
+        A common name (`Handle`, `New`) has hundreds of nodes, so the order
+        picks the `top_k`: the qualified name ending in `suffix` (the query
+        `Type.Method`), then product code before tests and generated code,
+        then by path.
+        """
+        rows = await session.execute(
+            select(
+                CodeNode.id,
+                CodeNode.content,
+                CodeNode.qualified_name,
+                CodeNode.file_path,
+                CodeNode.language,
+                CodeNode.start_line,
+                CodeNode.end_line,
+            )
+            .where(
+                CodeNode.repository_id == repository_id,
+                CodeNode.name == name,
+                CodeNode.node_type != CodeNodeType.MODULE,
+                CodeNode.file_path.startswith(path_prefix, autoescape=True),
+            )
+            .order_by(
+                case(
+                    (CodeNode.qualified_name.endswith(suffix, autoescape=True), 0),
+                    else_=1,
+                ),
+                NODE_KIND_ORDER,
+                CodeNode.file_path,
+                CodeNode.start_line,
+            )
+            .limit(top_k)
+        )
+        return [
+            RetrievedChunk(
+                store="code",
+                chunk_id=row.id,
+                content=row.content,
+                score=1.0,
+                metadata={
+                    "qualified_name": row.qualified_name,
+                    "file_path": row.file_path,
+                    "language": row.language,
+                    "start_line": row.start_line,
+                    "end_line": row.end_line,
+                },
+            )
+            for row in rows
         ]
