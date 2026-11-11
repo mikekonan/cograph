@@ -19,12 +19,16 @@ export type QueryLogItem = {
   duration_ms: number;
   status: QueryLogStatus;
   error_code: string | null;
+  /** The exception message behind `error_code`, cut to 500 chars. */
+  error_msg?: string | null;
   client_label: string | null;
   tokens_input: number | null;
   tokens_output: number | null;
   cost_usd_micros: number | null;
   embed_model: string | null;
   completion_model: string | null;
+  /** Generated-wiki slugs the search result carried. */
+  wiki_pages?: string[] | null;
 };
 
 export type QueryLogPage = {

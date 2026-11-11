@@ -102,7 +102,7 @@ Hybrid search across the code and checked-in docs of one repository. Returns one
 
 No hits and a code name in the query: `next` is the cograph_search_code call to run.
 
-`wiki` (only when a generated-wiki page covers the hits) lists up to 2 pages {page, title, lead}; read one with cograph_wiki_page(page).
+`wiki` (only when a generated-wiki page covers the hits) lists up to 2 pages {page, title, section, excerpt}: `excerpt` is the part of the page that matches the query. For how or why something works, read that page with cograph_wiki_page(page, section) before answering.
 
 Use when: a question in words, one topic per call. mode='code' for 'where is X implemented'. mode='wiki' searches the repository's checked-in docs (README, docs/), not the generated wiki. mode='mixed' when unsure.
 
@@ -134,7 +134,7 @@ Lexical + fuzzy symbol search over a repository's code nodes. Returns at most 25
 
 No hits: `reason` names the words searched for.
 
-`wiki` (only when a generated-wiki page covers the hits) lists up to 2 pages {page, title, lead}; read one with cograph_wiki_page(page).
+`wiki` (only when a generated-wiki page covers the hits) lists up to 2 pages {page, title, section, excerpt}; read one with cograph_wiki_page(page, section).
 
 path_prefix (a folder from the repository root, e.g. internal/shipping/) keeps only hits under it.
 

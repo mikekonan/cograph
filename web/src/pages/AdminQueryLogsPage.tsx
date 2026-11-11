@@ -947,7 +947,7 @@ function QueryLogRow({ row }: { row: QueryLogItem }) {
         )}
       </td>
       <td className="px-3 py-2">
-        <StatusBadge status={row.status} errorCode={row.error_code} />
+        <StatusBadge status={row.status} errorCode={row.error_code} errorMsg={row.error_msg} />
       </td>
     </tr>
   );
@@ -968,7 +968,15 @@ function SourceBadge({ source }: { source: "rest" | "mcp" }) {
   );
 }
 
-function StatusBadge({ status, errorCode }: { status: QueryLogStatus; errorCode: string | null }) {
+function StatusBadge({
+  status,
+  errorCode,
+  errorMsg,
+}: {
+  status: QueryLogStatus;
+  errorCode: string | null;
+  errorMsg?: string | null;
+}) {
   if (status === "ok") {
     return (
       <span className="inline-flex items-center gap-1 text-xs text-[color:var(--color-success)]">
@@ -986,7 +994,7 @@ function StatusBadge({ status, errorCode }: { status: QueryLogStatus; errorCode:
   return (
     <span
       className="inline-flex items-center gap-1 text-xs text-[color:var(--color-danger)]"
-      title={errorCode ?? undefined}
+      title={errorMsg ?? errorCode ?? undefined}
     >
       <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
       {errorCode ?? "error"}

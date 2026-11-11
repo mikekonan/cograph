@@ -88,6 +88,8 @@ class QueryLogPayload:
     tokens_output: int | None = None
     embed_model: str | None = None
     completion_model: str | None = None
+    error_msg: str | None = None
+    wiki_pages: list[str] | None = None
 
     def to_kwargs(self) -> dict[str, Any]:
         return asdict(self)
@@ -280,6 +282,8 @@ async def enqueue_query_log(
     tokens_output: int | None = None,
     embed_model: str | None = None,
     completion_model: str | None = None,
+    error_msg: str | None = None,
+    wiki_pages: list[str] | None = None,
 ) -> None:
     """Enqueue one query_log row for async insert.
 
@@ -342,6 +346,8 @@ async def enqueue_query_log(
             tokens_output=tokens_output,
             embed_model=embed_model,
             completion_model=completion_model,
+            error_msg=error_msg[:500] if error_msg else None,
+            wiki_pages=wiki_pages or None,
         )
         pool = await _get_pool(app_state)
         await pool.enqueue_job("record_query_log", payload.to_kwargs())

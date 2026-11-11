@@ -266,6 +266,7 @@ async def mcp_query_log_scope(
     - `completion_model` — str | None, model id of any completion / rerank
                             call attached to the tool (None for pure
                             retrieval). Pricing is summed across models.
+    - `wiki_pages`       — list[str] | None, wiki slugs the result carried.
 
     Status auto-derives from exceptions raised inside the `with`, and
     the row is enqueued in the `finally` so duration is always recorded.
@@ -277,9 +278,11 @@ async def mcp_query_log_scope(
         "tokens_output": None,
         "embed_model": None,
         "completion_model": None,
+        "wiki_pages": None,
     }
     status = QueryLogStatus.ERROR
     error_code: str | None = None
+    error_msg: str | None = None
     try:
         yield bucket
         rc = bucket.get("result_count")
@@ -297,6 +300,7 @@ async def mcp_query_log_scope(
             error_code = domain_code[:64]
         else:
             error_code = type(exc).__name__[:64]
+        error_msg = str(exc) or None
         raise
     finally:
         user = current_user_from_context(ctx)
@@ -320,6 +324,8 @@ async def mcp_query_log_scope(
                 tokens_output=bucket.get("tokens_output"),
                 embed_model=bucket.get("embed_model"),
                 completion_model=bucket.get("completion_model"),
+                error_msg=error_msg,
+                wiki_pages=bucket.get("wiki_pages"),
             )
 
 
@@ -420,10 +426,14 @@ _FULL_CODE_HITS = 3
 _TAIL_CODE_CHARS = 160
 
 
-# Generated-wiki pages attached to one search: each is a title and a
-# ~200-char lead, about 60 tokens: enough to decide whether to open it.
-# The whole page is a cograph_wiki_page call.
+# Generated-wiki pages attached to one search: each is a title and an
+# excerpt from the section that matches the query. A question in words
+# (retrieve) gets enough prose to answer from; a name lookup (search_code)
+# only enough to decide whether to open the page. The whole page is a
+# cograph_wiki_page call.
 _WIKI_PAGES_PER_SEARCH = 2
+_WIKI_EXCERPT_CHARS_RETRIEVE = 600
+_WIKI_EXCERPT_CHARS_SEARCH = 200
 
 
 async def _wiki_pages(
@@ -432,6 +442,7 @@ async def _wiki_pages(
     repository_id: UUID,
     hits: dict[str, str],
     query: str,
+    chars: int,
 ) -> list[dict[str, str]]:
     """Generated-wiki pages about a search's code hits (`hits`: node id -> file).
 
@@ -444,6 +455,9 @@ async def _wiki_pages(
     A page citing an exact hit only cites its file too, so the file count
     already ranks it; exact hits break ties. A wiki is ~20 pages, so ranking
     reads only titles and citations; the content loads for the winners alone.
+
+    Each page carries an excerpt of up to `chars`: the section that names
+    the most query words, else the page's opening prose.
     """
 
     rows = (
@@ -503,10 +517,24 @@ async def _wiki_pages(
         {
             "page": slug,
             "title": title,
-            "lead": extract_lead(content.get(slug) or "", max_chars=200),
+            **_wiki_excerpt(content.get(slug) or "", words, chars),
         }
         for *_, slug, title in picked
     ]
+
+
+def _wiki_excerpt(content: str, words: set[str], chars: int) -> dict[str, str]:
+    """The section naming the most query words (ties: the shorter, so a
+    subsection beats its parent), else the page's opening prose."""
+    best: tuple[int, int, str, str] | None = None
+    for title in extract_sections(content):
+        block = extract_section(content, title) or ""
+        named = len(words.intersection(extract_query_terms(block, max_terms=10_000)))
+        if named and (best is None or (named, -len(block)) > best[:2]):
+            best = (named, -len(block), title, block)
+    if best is None:
+        return {"excerpt": extract_lead(content, max_chars=chars)}
+    return {"section": best[2], "excerpt": extract_lead(best[3], max_chars=chars)}
 
 
 def _code_hits(response: RetrievalResponse) -> dict[str, str]:
@@ -660,6 +688,7 @@ async def retrieve_payload(
             repository_id=repository_id,
             hits=_code_hits(response),
             query=query,
+            chars=_WIKI_EXCERPT_CHARS_RETRIEVE,
         )
     payload = compact_hits(
         response,
@@ -797,6 +826,7 @@ async def search_code_payload(
             repository_id=repository_id,
             hits=_code_hits(response),
             query=query,
+            chars=_WIKI_EXCERPT_CHARS_SEARCH,
         )
     payload = compact_hits(response, called_by=called_by)
     if wiki:
