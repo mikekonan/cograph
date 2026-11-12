@@ -521,6 +521,7 @@ async def search_docs(
         query_text=args.query,
         repository_id=ctx.repository_id,
         top_k=args.top_k,
+        page_documents_only=True,
     )
     return {
         "query": args.query,

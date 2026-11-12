@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
@@ -11,9 +12,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.repo_document import RepoDocument, RepoDocumentChunk
 from backend.app.models.repo_document_chunk_mention import RepoDocumentChunkMention
-from backend.app.repo_docs.chunker import RepoDocumentChunkDraft, RepoDocumentChunker
+from backend.app.repo_docs.chunker import (
+    RepoDocumentChunkDraft,
+    RepoDocumentChunker,
+    YamlDocumentChunker,
+)
 from backend.app.repo_docs.discover import RepoDocumentDiscoverer, RepoDocumentKind, classify_repo_document
 from backend.app.repo_docs.symbol_linker import RepoDocumentSymbolLinker
+
+_YAML_MAX_BYTES = 256 * 1024
+# A YAML file that holds a secret is not indexed at all: a private key, a
+# Kubernetes Secret, a sops- or Ansible-vault-encrypted file.
+_YAML_SECRET_FILE_RE = re.compile(
+    r"PRIVATE KEY-----|^kind:\s*\w*Secret\s*$|^sops:(?:\s|$)|\A\$ANSIBLE_VAULT",
+    re.MULTILINE,
+)
+# `db_password: <value>`: the value is checked by `_looks_like_key`.
+_YAML_SECRET_VALUE_RE = re.compile(
+    r"^([ \t]*(?:-[ \t]+)?[\"']?[\w.-]*"
+    r"(?:password|passwd|secret|token|api_key|apikey|api-key|private_key)"
+    r"[\"']?[ \t]*:[ \t]+)(\S.*)$",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 @dataclass(slots=True, kw_only=True)
@@ -36,6 +56,7 @@ class RepoDocumentIndexer:
     ) -> None:
         self._discoverer = discoverer or RepoDocumentDiscoverer()
         self._chunker = chunker or RepoDocumentChunker()
+        self._yaml_chunker = YamlDocumentChunker()
         self._symbol_linker = symbol_linker or RepoDocumentSymbolLinker()
 
     async def index_checkout(
@@ -81,12 +102,21 @@ class RepoDocumentIndexer:
             document_kind = classify_repo_document(relative_path)
             if document_kind is None:
                 continue
-            content = await asyncio.to_thread(document_path.read_text, encoding="utf-8")
-            content_hash = _content_hash(content)
+            content = await asyncio.to_thread(_read_document, document_path, document_kind)
             existing_document = existing_documents.get(relative_path)
+            if content is None:
+                # Not indexable any more: drop what an earlier run stored.
+                if existing_document is not None:
+                    await session.execute(
+                        delete(RepoDocument).where(RepoDocument.id == existing_document.id)
+                    )
+                    deleted_paths.add(relative_path)
+                continue
+            content_hash = _content_hash(content)
             if existing_document is not None and existing_document.content_hash == content_hash:
                 unchanged_documents += 1
-                if relink_unchanged_documents:
+                # YAML names few code symbols, and each lookup is a query per chunk.
+                if relink_unchanged_documents and document_kind is not RepoDocumentKind.YAML:
                     await self._relink_document_mentions(
                         session=session,
                         repository_id=repository_id,
@@ -106,6 +136,10 @@ class RepoDocumentIndexer:
                 session.add(document)
                 await session.flush()
 
+            if document_kind is RepoDocumentKind.YAML:
+                # The hash stays on the file as checked out, so this runs only
+                # when the file changed.
+                content = _redact_yaml(content)
             document.title = self._derive_title(
                 file_path=relative_path,
                 content=content,
@@ -114,13 +148,18 @@ class RepoDocumentIndexer:
             document.content = content
             document.content_hash = content_hash
             document.bytes = len(content.encode("utf-8"))
+            document.kind = document_kind.value
 
             if existing_document is not None:
                 await session.execute(
                     delete(RepoDocumentChunk).where(RepoDocumentChunk.document_id == document.id)
                 )
 
-            chunk_drafts = self._chunker.chunk(content)
+            chunk_drafts = (
+                self._yaml_chunker.chunk(relative_path, content)
+                if document_kind is RepoDocumentKind.YAML
+                else self._chunker.chunk(content)
+            )
             # _build_chunks registers the chunks AND the mention join rows in
             # the session; no outer add_all is needed.
             chunk_rows = await self._build_chunks(
@@ -202,11 +241,15 @@ class RepoDocumentIndexer:
         chunk_rows: list[RepoDocumentChunk] = []
         pending_mentions: list[tuple[RepoDocumentChunk, list[UUID]]] = []
         for chunk_draft in chunk_drafts:
-            mentions = await self._symbol_linker.link_chunk_mentions(
-                session=session,
-                repository_id=repository_id,
-                document_file_path=document.file_path,
-                chunk_content=chunk_draft.content,
+            mentions = (
+                []
+                if document_kind is RepoDocumentKind.YAML
+                else await self._symbol_linker.link_chunk_mentions(
+                    session=session,
+                    repository_id=repository_id,
+                    document_file_path=document.file_path,
+                    chunk_content=chunk_draft.content,
+                )
             )
             mention_node_ids = [mention.node_id for mention in mentions]
             chunk = RepoDocumentChunk(
@@ -219,6 +262,8 @@ class RepoDocumentIndexer:
                 ),
                 content=chunk_draft.content,
                 mentions=[str(node_id) for node_id in mention_node_ids],
+                start_line=chunk_draft.start_line,
+                end_line=chunk_draft.end_line,
             )
             chunk_rows.append(chunk)
             pending_mentions.append((chunk, mention_node_ids))
@@ -250,8 +295,11 @@ class RepoDocumentIndexer:
         content: str,
         document_kind: RepoDocumentKind,
     ) -> str:
-        title = self._chunker.extract_title(file_path, content)
         file_name = file_path.rsplit("/", 1)[-1]
+        if document_kind is RepoDocumentKind.YAML:
+            # extract_title would take a `# comment` line for a heading.
+            return f"{document_kind.value}: {file_name}"
+        title = self._chunker.extract_title(file_path, content)
         if document_kind is RepoDocumentKind.REPO_DOC or title != file_name:
             return title
         return f"{document_kind.value}: {file_name}"
@@ -259,3 +307,38 @@ class RepoDocumentIndexer:
 
 def _content_hash(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _read_document(path: Path, kind: RepoDocumentKind) -> str | None:
+    """The file's text, or None when it must not be indexed."""
+    if kind is RepoDocumentKind.YAML and path.stat().st_size > _YAML_MAX_BYTES:
+        return None
+    try:
+        content = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return None
+    if "\x00" in content:
+        return None
+    if kind is RepoDocumentKind.YAML and _YAML_SECRET_FILE_RE.search(content):
+        return None
+    return content
+
+
+def _redact_yaml(content: str) -> str:
+    """Replace values that look like keys under secret-named keys. Line count is kept."""
+    return _YAML_SECRET_VALUE_RE.sub(
+        lambda m: m.group(1) + "<redacted>" if _looks_like_key(m.group(2)) else m.group(0),
+        content,
+    )
+
+
+def _looks_like_key(value: str) -> bool:
+    value = value.split(" #", 1)[0].strip().strip("\"'")
+    return (
+        len(value) >= 16
+        and not any(char.isspace() for char in value)
+        and any(char.isalpha() for char in value)
+        and any(char.isdigit() for char in value)
+        and not value.startswith(("$", "{", "<", "*", "&", "!", "%", "["))
+        and "{{" not in value
+    )

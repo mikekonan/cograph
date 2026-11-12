@@ -1599,6 +1599,40 @@ async def test_get_repository_documents_count_from_db(client, db_session):
     assert response.json()["stats"]["documents_count"] == 2
 
 
+async def test_documents_count_leaves_out_yaml(client, db_session):
+    """A YAML document has no docs page, so it is not in the docs count."""
+    repository = Repository(
+        host="example.com",
+        git_url="https://github.com/acme/yaml-count.git",
+        name="yaml-count",
+        owner="acme",
+        branch="main",
+        visibility=RepositoryVisibility.PUBLIC,
+    )
+    db_session.add(repository)
+    await db_session.commit()
+    for path, kind in (("docs/guide.md", "Repo Doc"), ("config/stock.yaml", "YAML")):
+        db_session.add(
+            RepoDocument(
+                repository_id=repository.id,
+                file_path=path,
+                title=path,
+                content="shelf",
+                content_hash=path,
+                bytes=5,
+                kind=kind,
+            )
+        )
+    await db_session.commit()
+
+    detail = await client.get("/api/repos/example.com/acme/yaml-count")
+    listing = await client.get("/api/repos")
+
+    assert detail.json()["stats"]["documents_count"] == 1
+    [item] = [i for i in listing.json()["items"] if i["name"] == "yaml-count"]
+    assert item["stats"]["documents_count"] == 1
+
+
 async def test_get_repository_language_bytes_populated(client, db_session):
     """stats.language_bytes mirrors the persisted full-repo scan (issue #66)."""
     repository = Repository(

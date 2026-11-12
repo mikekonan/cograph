@@ -1,8 +1,9 @@
-"""Read a line range of a source file by path.
+"""Read a line range of a source file or an indexed document by path.
 
 Wraps the SourceFile model directly so agents don't have to look up a
-source_file_id first. Caps the range at 1000 lines to keep agents from
-asking for whole 50K-line files this way.
+source_file_id first; a path with no source file falls back to the
+RepoDocument of that path (YAML, Markdown, config). Caps the range at 1000
+lines to keep agents from asking for whole 50K-line files this way.
 """
 
 from __future__ import annotations
@@ -21,13 +22,16 @@ from backend.app.mcp.services import (
     resolve_readable_repository_by_slug,
     tool_args,
 )
+from backend.app.models.repo_document import RepoDocument
 from backend.app.models.source_file import SourceFile
 
 _READ_FILE_RANGE_DESCRIPTION = (
-    "Read a 1-indexed line range of a source file by repo slug + path.\n"
+    "Read a 1-indexed line range of a source file or an indexed document "
+    "(YAML, Markdown, config) by repo slug + path.\n"
     "Use when: you have a file path (typically `at` on a cograph_retrieve / "
     "cograph_search_code hit, or `provenance` on a cograph_read_node result) "
-    "and need the lines around a hit that a node-bounded read won't capture. "
+    "and need the lines around a hit that a node-bounded read won't capture, "
+    "or the lines of a doc hit (`at` is path:start-end). "
     "Aim at the hit: start ~20 lines above its start line and stop ~20 below "
     "its end line; do not start at line 1 unless you need the imports. "
     "Do not re-read lines already in your context.\n"
@@ -94,16 +98,29 @@ def register(server: MCPServer, services: MCPServices) -> None:
                     SourceFile.file_path == args.path,
                 )
             )
+            document = (
+                await session.scalar(
+                    select(RepoDocument).where(
+                        RepoDocument.repository_id == repo.id,
+                        RepoDocument.file_path == args.path,
+                    )
+                )
+                if source_file is None
+                else None
+            )
 
-        if source_file is None:
+        if source_file is not None:
+            try:
+                full = bytes(source_file.raw_bytes).decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise ToolError(
+                    f"INVALID_RANGE: cannot decode {args.path} as UTF-8"
+                ) from exc
+            language = source_file.language
+        elif document is not None:
+            full, language = document.content, None
+        else:
             raise ToolError("NOT_FOUND: Source file not found")
-
-        try:
-            full = bytes(source_file.raw_bytes).decode("utf-8")
-        except UnicodeDecodeError as exc:
-            raise ToolError(
-                f"INVALID_RANGE: cannot decode {args.path} as UTF-8"
-            ) from exc
 
         lines = full.splitlines()
         total_lines = len(lines)
@@ -118,8 +135,8 @@ def register(server: MCPServer, services: MCPServices) -> None:
         return encode_payload(
             {
                 "repository_slug": slug_path,
-                "file_path": source_file.file_path,
-                "language": source_file.language,
+                "file_path": args.path,
+                "language": language,
                 "total_lines": total_lines,
                 "start_line": args.start_line,
                 "end_line": clamped_end,

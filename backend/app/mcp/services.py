@@ -394,7 +394,15 @@ def compact_hits(
             continue
         cite = row.provenance
         if cite.node_id is None:
-            _add_doc(places, cite.file_path, cite.heading_path, row.snippet, row.content_truncated)
+            _add_doc(
+                places,
+                cite.file_path,
+                cite.heading_path,
+                row.snippet,
+                row.content_truncated,
+                start=cite.start_line,
+                end=cite.end_line,
+            )
             continue
         record = places.get(cite.node_id)
         if record is None:
@@ -645,13 +653,17 @@ def _add_doc(
     heading_path: list[str] | None,
     text: str,
     truncated: bool,
+    *,
+    start: int | None = None,
+    end: int | None = None,
 ) -> None:
-    key = (path, tuple(heading_path or ()))
+    # A chunk cut by line (YAML) is its own place; a markdown section has no lines.
+    key = (path, tuple(heading_path or ()), start)
     record = places.get(key)
     if record is None:
         places[key] = {
             "heading_path": heading_path,
-            "at": path,
+            "at": _at(path, start, end),
             "text": text,
             "truncated": truncated or None,
         }

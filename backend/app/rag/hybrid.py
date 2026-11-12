@@ -65,6 +65,7 @@ class _VectorSearcher(Protocol):
         as_of: datetime | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
+        page_documents_only: bool = False,
     ) -> list[RetrievedChunk]: ...
 
 
@@ -81,6 +82,7 @@ class _LexicalSearcher(Protocol):
         as_of: datetime | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
+        page_documents_only: bool = False,
     ) -> list[RetrievedChunk]: ...
 
 
@@ -132,6 +134,7 @@ class VectorRetriever:
         as_of: datetime | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
+        page_documents_only: bool = False,
     ) -> list[RetrievedChunk]:
         if len(query_embedding) != EMBEDDING_DIM:
             raise ValueError(
@@ -161,6 +164,7 @@ class VectorRetriever:
                 as_of=as_of,
                 since=since,
                 until=until,
+                page_documents_only=page_documents_only,
             )
         elif store == "md_collections":
             if collection_id is None:
@@ -253,6 +257,7 @@ class VectorRetriever:
         as_of: datetime | None,
         since: datetime | None,
         until: datetime | None,
+        page_documents_only: bool,
     ) -> list[RetrievedChunk]:
         stmt = text(
             """
@@ -271,6 +276,7 @@ class VectorRetriever:
               AND (CAST(:as_of AS timestamp) IS NULL OR rd.updated_at <= CAST(:as_of AS timestamp))
               AND (CAST(:since AS timestamp) IS NULL OR rd.updated_at >= CAST(:since AS timestamp))
               AND (CAST(:until AS timestamp) IS NULL OR rd.updated_at <= CAST(:until AS timestamp))
+              AND (NOT :page_documents_only OR rd.kind IS NULL OR rd.kind <> 'YAML')
             ORDER BY rdc.embedding <=> CAST(:qvec AS vector)
             LIMIT :top_k
             """
@@ -285,6 +291,7 @@ class VectorRetriever:
                 "as_of": as_of,
                 "since": since,
                 "until": until,
+                "page_documents_only": page_documents_only,
             },
         )
         return [
@@ -416,7 +423,10 @@ class HybridRetriever:
         since: datetime | None = None,
         until: datetime | None = None,
         hand_written_only: bool = False,
+        page_documents_only: bool = False,
     ) -> list[RetrievedChunk]:
+        """`page_documents_only` drops repo docs with no docs page (YAML):
+        the wiki can cite only those."""
         active = set(stores) if stores is not None else set(_ALL_STORES)
         use_text = bool(query_text and query_text.strip())
 
@@ -425,7 +435,12 @@ class HybridRetriever:
         if "code" in active and repository_id is not None:
             store_specs.append(("code", {"repository_id": repository_id}))
         if "repo_docs" in active and repository_id is not None:
-            store_specs.append(("repo_docs", {"repository_id": repository_id}))
+            store_specs.append(
+                (
+                    "repo_docs",
+                    {"repository_id": repository_id, "page_documents_only": page_documents_only},
+                )
+            )
         if "md_collections" in active and collection_id is not None:
             store_specs.append(("md_collections", {"collection_id": collection_id}))
 

@@ -12,6 +12,7 @@ from backend.app.models.enums import (
     UserRole,
 )
 from backend.app.models.personal_access_token import PersonalAccessToken
+from backend.app.models.repo_document import RepoDocument
 from backend.app.models.repository import Repository
 from backend.app.models.source_file import SourceFile
 from backend.app.models.user import User
@@ -207,3 +208,33 @@ async def test_read_file_range_reports_which_argument_was_rejected(client, db_se
     text = payload["result"]["content"][0]["text"]
     assert "INVALID_REQUEST" in text, text
     assert "start_line" in text, text
+
+
+async def test_read_file_range_reads_an_indexed_document(client, db_session):
+    """A YAML hit has no source file: its lines come from the stored document."""
+    _, plaintext = await _seed_pat_user(db_session)
+    repo, slug = await _seed_repo_with_file(db_session, content="hello")
+    db_session.add(
+        RepoDocument(
+            repository_id=repo.id,
+            file_path="config/stock.yaml",
+            title="YAML: stock.yaml",
+            content="bins:\n  size: large\n  rows: 12\nshelves:\n  depth: 40\n",
+            content_hash="a" * 64,
+            bytes=52,
+            kind="YAML",
+        )
+    )
+    await db_session.commit()
+
+    response = await _call_tool(
+        client,
+        plaintext,
+        {"repository": slug, "path": "config/stock.yaml", "start_line": 2, "end_line": 3},
+    )
+
+    result = json.loads(response.json()["result"]["content"][0]["text"])
+    assert result["file_path"] == "config/stock.yaml"
+    assert result["language"] is None
+    assert result["total_lines"] == 5
+    assert result["content"] == "  size: large\n  rows: 12"

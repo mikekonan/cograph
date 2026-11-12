@@ -13,7 +13,7 @@ from sqlalchemy import func, or_, over, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.code_node import CodeNode
-from backend.app.models.repo_document import RepoDocument, RepoDocumentChunk
+from backend.app.models.repo_document import PAGE_DOCUMENT, RepoDocument, RepoDocumentChunk
 from backend.app.repo_docs.slug import build_slug_map
 
 # Strips markdown syntax for clean excerpt previews:
@@ -420,7 +420,7 @@ class WikiQueryService:
             (
                 await session.scalars(
                     select(RepoDocument)
-                    .where(RepoDocument.repository_id == repository_id)
+                    .where(RepoDocument.repository_id == repository_id, PAGE_DOCUMENT)
                     .order_by(RepoDocument.file_path.asc())
                 )
             ).all()
@@ -552,7 +552,7 @@ class WikiQueryService:
             (
                 await session.scalars(
                     select(RepoDocument)
-                    .where(RepoDocument.repository_id == repository_id)
+                    .where(RepoDocument.repository_id == repository_id, PAGE_DOCUMENT)
                     .order_by(RepoDocument.file_path.asc())
                 )
             ).all()

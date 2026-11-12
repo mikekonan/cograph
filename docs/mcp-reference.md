@@ -92,7 +92,7 @@ Ranked candidates within one source. Returns snippets, not whole files.
 
 ### `cograph_retrieve`
 
-Hybrid search across the code and checked-in docs of one repository. Returns one record per place: a code hit as {node_id, name, at: path:start-end, kind, called_by, called_by_count, code}, a doc as {heading_path, at, text}.
+Hybrid search across the code and checked-in docs of one repository. Returns one record per place: a code hit as {node_id, name, at: path:start-end, kind, called_by, called_by_count, code}, a doc as {heading_path, at, text}; a doc's `at` is its path, or path:start-end for a YAML file.
 
 `kind` marks a test or generated hit; those come after product code.
 
@@ -106,7 +106,7 @@ No hits and a code name in the query: `next` is the cograph_search_code call to 
 
 `wiki` (only when a generated-wiki page covers the hits) lists up to 2 pages {page, title, section, excerpt}: `excerpt` is the part of the page that matches the query. For how or why something works, read that page with cograph_wiki_page(page, section) before answering.
 
-Use when: a question in words, one topic per call. mode='code' for 'where is X implemented'. mode='wiki' searches the repository's checked-in docs (README, docs/), not the generated wiki. mode='mixed' when unsure.
+Use when: a question in words, one topic per call. mode='code' for 'where is X implemented'. mode='wiki' searches the repository's checked-in docs (README, docs/, YAML files), not the generated wiki. mode='mixed' when unsure.
 
 Do NOT use for a name from the code (use cograph_search_code) or to read a known node fully (use cograph_read_node).
 
@@ -191,9 +191,9 @@ Do NOT use to search by name (use cograph_search_code) or to explore neighbours 
 
 ### `cograph_read_file_range`
 
-Read a 1-indexed line range of a source file by repo slug + path.
+Read a 1-indexed line range of a source file or an indexed document (YAML, Markdown, config) by repo slug + path.
 
-Use when: you have a file path (typically `at` on a cograph_retrieve / cograph_search_code hit, or `provenance` on a cograph_read_node result) and need the lines around a hit that a node-bounded read won't capture. Aim at the hit: start ~20 lines above its start line and stop ~20 below its end line; do not start at line 1 unless you need the imports. Do not re-read lines already in your context.
+Use when: you have a file path (typically `at` on a cograph_retrieve / cograph_search_code hit, or `provenance` on a cograph_read_node result) and need the lines around a hit that a node-bounded read won't capture, or the lines of a doc hit (`at` is path:start-end). Aim at the hit: start ~20 lines above its start line and stop ~20 below its end line; do not start at line 1 unless you need the imports. Do not re-read lines already in your context.
 
 Do NOT use to read one function or type (use cograph_read_node — exact body, no guessed window), to guess a path you have not seen in a result, to dump whole files (the range is capped at 1000 lines) or to search by content (use cograph_retrieve).
 
