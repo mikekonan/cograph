@@ -58,6 +58,16 @@ Searchable fields:
   the token in any chunk's body. SQLite (test) falls back to ILIKE on
   `md_documents.content`.
 
+A name from code in the query (`onDone`, `OrderShipped`: a camelCase or
+PascalCase word) that no visible repository shows in the fields above is
+looked up in two more places: the text of each repository's documents
+(`repo_document_chunks.content_tsv`) and the names of its code nodes. A
+repository that has it gets the word credited, scored by the same formula,
+and `why` says `documents` or `symbols`. Only such unknown names are looked
+up. A known name is already counted by the fields, and crediting it again
+pushed right answers down on a replay of real questions. Plain words are
+never looked up in document text: large repositories mention most of them.
+
 **Scoring formula:**
 
     idf(t)              = log((N+1) / (df(t)+1))     # Lidstone-smoothed
@@ -93,6 +103,7 @@ from backend.app.core.repository_access import apply_repository_read_scope
 from backend.app.models.code_node import CodeNode
 from backend.app.models.enums import CodeNodeType
 from backend.app.models.md_collection import MdCollection, MdDocument
+from backend.app.models.repo_document import RepoDocument, RepoDocumentChunk
 from backend.app.models.repository import Repository
 from backend.app.models.user import User
 from backend.app.rag.snippet import STOPWORDS
@@ -148,6 +159,11 @@ _SYMBOL_CORPUS_PER_REPO_CAP = 1500
 # guarantee docs+code triangulation on every route call.
 _COLLECTION_WEAK_THRESHOLD = 0.3
 
+# Unknown query names looked up per call, one document query each. The query
+# is capped at 512 characters; past eight names it is pasted code, not a
+# question.
+_MAX_IDENTIFIER_LOOKUPS = 8
+
 
 @dataclass(slots=True, frozen=True, kw_only=True)
 class RouteHit:
@@ -170,6 +186,21 @@ def _tokenise(query: str) -> list[str]:
         and t not in STOPWORDS
         and t not in _FILLER
     ]
+
+
+def _identifier_spellings(query: str) -> dict[str, set[str]]:
+    """camelCase / PascalCase words of the query: lowercased token -> its
+    spellings as typed. `onDone`, `HTTPServer` and `iPhone` are names;
+    `YAML`, `HTTP2`, `v2` and `Shipment` are not.
+
+    snake_case and kebab-case names are split into words by `_tokenise` and
+    route as before. A code node name matches only a spelling the query used:
+    `onDone` does not find `OnDone`."""
+    out: dict[str, set[str]] = {}
+    for run in _RUN_RE.findall(query):
+        if len(_CAMEL_PART_RE.findall(run)) >= 2 and not run.isupper():
+            out.setdefault(run.lower(), set()).add(run)
+    return out
 
 
 def _stem(word: str) -> str:
@@ -256,6 +287,7 @@ async def route_sources(
     repo_hits = await _route_repositories(
         session,
         tokens=tokens,
+        identifiers=_identifier_spellings(query),
         current_user=current_user,
         settings=settings,
         top_k=top_k,
@@ -387,6 +419,7 @@ async def _route_repositories(
     session: AsyncSession,
     *,
     tokens: set[str],
+    identifiers: dict[str, set[str]],
     current_user: User | None,
     settings: Settings,
     top_k: int,
@@ -437,6 +470,31 @@ async def _route_repositories(
         for tok in slug_matched | readme_matched | symbol_matched:
             df_map[tok] = df_map.get(tok, 0) + 1
 
+    # A query name no field shows is looked up in document text and code node
+    # names (see the module docstring). Most queries have none and cost no
+    # extra query here.
+    unknown = sorted(t for t in identifiers if t in tokens and df_map[t] == 0)[
+        :_MAX_IDENTIFIER_LOOKUPS
+    ]
+    doc_matched: dict[UUID, set[str]] = {}
+    name_matched: dict[UUID, set[str]] = {}
+    if unknown:
+        doc_matched = await _match_identifiers_in_repo_documents(
+            session, repo_ids, unknown
+        )
+        rows = await session.execute(
+            select(CodeNode.repository_id, CodeNode.name)
+            .where(CodeNode.repository_id.in_(repo_ids))
+            .where(CodeNode.name.in_(sorted(s for t in unknown for s in identifiers[t])))
+            .distinct()
+        )
+        for repo_id, name in rows.all():
+            name_matched.setdefault(repo_id, set()).add(name.lower())
+        for repo_id in doc_matched.keys() | name_matched.keys():
+            found = doc_matched.get(repo_id, set()) | name_matched.get(repo_id, set())
+            for tok in found:
+                df_map[tok] += 1
+
     idf = _compute_idf(len(repos), df_map, tokens)
 
     scored: list[tuple[float, RouteHit]] = []
@@ -444,7 +502,11 @@ async def _route_repositories(
         slug, slug_matched, readme_matched, symbol_matched = per_repo_matched[
             repo.id
         ]
-        all_matched = slug_matched | readme_matched | symbol_matched
+        doc_hits = doc_matched.get(repo.id, set())
+        name_hits = name_matched.get(repo.id, set())
+        all_matched = (
+            slug_matched | readme_matched | symbol_matched | doc_hits | name_hits
+        )
         if not all_matched:
             continue
         score = _combine_score(
@@ -461,8 +523,10 @@ async def _route_repositories(
             parts.append("slug")
         if readme_matched:
             parts.append("README")
-        if symbol_matched:
+        if symbol_matched or name_hits:
             parts.append("symbols")
+        if doc_hits:
+            parts.append("documents")
         where = "+".join(parts) if parts else "unknown"
         scored.append(
             (
@@ -479,6 +543,43 @@ async def _route_repositories(
 
     scored.sort(key=lambda pair: pair[0], reverse=True)
     return [hit for _, hit in scored[:top_k]]
+
+
+async def _match_identifiers_in_repo_documents(
+    session: AsyncSession, repo_ids: list[UUID], tokens: list[str]
+) -> dict[UUID, set[str]]:
+    """For each repo, the subset of `tokens` that occur in the text of any of
+    its document chunks. Repos with no match are left out.
+
+    Postgres matches `repo_document_chunks.content_tsv` (GIN-indexed,
+    migration 0015), one indexed query per token. SQLite (unit tests) has no
+    tsvector and falls back to a substring match on the chunk text."""
+    bind = session.get_bind()
+    postgres = bind is not None and bind.dialect.name == "postgresql"
+    sql = text(
+        """
+        SELECT DISTINCT rd.repository_id
+        FROM repo_document_chunks rdc
+        JOIN repo_documents rd ON rd.id = rdc.document_id
+        WHERE rd.repository_id = ANY(:repo_ids)
+          AND rdc.content_tsv @@ plainto_tsquery('english', :tok)
+        """
+    )
+    matches: dict[UUID, set[str]] = {}
+    for token in tokens:
+        if postgres:
+            rows = await session.execute(sql, {"repo_ids": repo_ids, "tok": token})
+        else:
+            rows = await session.execute(
+                select(RepoDocument.repository_id)
+                .join(RepoDocumentChunk, RepoDocumentChunk.document_id == RepoDocument.id)
+                .where(RepoDocument.repository_id.in_(repo_ids))
+                .where(func.lower(RepoDocumentChunk.content).like(f"%{token}%"))
+                .distinct()
+            )
+        for (repo_id,) in rows.all():
+            matches.setdefault(repo_id, set()).add(token)
+    return matches
 
 
 async def _match_query_in_collection_bodies(

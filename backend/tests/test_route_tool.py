@@ -36,10 +36,10 @@ from backend.app.models.enums import (
     UserRole,
 )
 from backend.app.models.md_collection import MdCollection, MdDocument
-from backend.app.models.repo_document import RepoDocument
+from backend.app.models.repo_document import RepoDocument, RepoDocumentChunk
 from backend.app.models.repository import Repository
 from backend.app.models.user import User
-from backend.app.rag.source_router import route_sources
+from backend.app.rag.source_router import _identifier_spellings, route_sources
 
 
 _TEST_CSRF = "csrf-token"
@@ -768,6 +768,280 @@ async def test_route_folds_plurals_and_skips_filler(db_session, settings) -> Non
     )
     labels = [h.label for h in hits if h.kind == "repository"]
     assert labels == ["git.example.com/team/vault"], hits
+
+
+async def _add_document(
+    db_session, repo: Repository, *, file_path: str, content: str, kind: str | None = None
+) -> None:
+    """A repository document whose text is one chunk."""
+    doc = RepoDocument(
+        repository_id=repo.id,
+        file_path=file_path,
+        title=file_path,
+        content=content,
+        content_hash="d" * 64,
+        bytes=len(content.encode()),
+        kind=kind,
+    )
+    db_session.add(doc)
+    await db_session.flush()
+    db_session.add(
+        RepoDocumentChunk(
+            document_id=doc.id,
+            chunk_index=0,
+            heading_path=[],
+            content=content,
+            mentions=[],
+        )
+    )
+    await db_session.commit()
+
+
+def test_identifier_spellings() -> None:
+    assert _identifier_spellings(
+        "onDone OrderShipped HTTPServer restockShelfIfEmpty iPhone OnDone"
+    ) == {
+        "ondone": {"onDone", "OnDone"},
+        "ordershipped": {"OrderShipped"},
+        "httpserver": {"HTTPServer"},
+        "restockshelfifempty": {"restockShelfIfEmpty"},
+        "iphone": {"iPhone"},
+    }
+    assert _identifier_spellings("YAML HTTP2 v2 Shipment README 2048 rate_card") == {}
+
+
+@pytest.mark.asyncio
+async def test_route_finds_identifier_only_in_document_text(
+    db_session, settings
+) -> None:
+    """The flow's event name lives only in a YAML document. No field shows
+    it, so the router looks it up in document text; without that the repo
+    whose README says 'flow' and 'steps' came first."""
+    dispatch = await _make_public_repo(
+        db_session,
+        host="git.example.com",
+        owner="team",
+        name="dispatch",
+        readme="# Dispatch\n\nDispatch flow definitions for the warehouse.",
+    )
+    await _add_document(
+        db_session,
+        dispatch,
+        file_path="flows/dispatch.yml",
+        kind="YAML",
+        content=(
+            "hand_over:\n"
+            "  onDone: ShipmentDispatchSucceeded\n"
+            "  onError: ShipmentDispatchFailed\n"
+        ),
+    )
+    await _make_public_repo(
+        db_session,
+        host="git.example.com",
+        owner="team",
+        name="handbook",
+        readme="# Handbook\n\nEach flow is a list of steps.",
+    )
+
+    hits = await route_sources(
+        db_session,
+        query="flow steps onDone ShipmentDispatchSucceeded",
+        current_user=None,
+        settings=settings,
+        top_k=3,
+    )
+    repo_hits = [h for h in hits if h.kind == "repository"]
+    assert [h.label for h in repo_hits] == [
+        "git.example.com/team/dispatch",
+        "git.example.com/team/handbook",
+    ], repo_hits
+    assert "documents" in repo_hits[0].why
+    assert repo_hits[0].score > repo_hits[1].score
+
+
+@pytest.mark.asyncio
+async def test_route_finds_identifier_in_code_names(db_session, settings) -> None:
+    """A function name the query spells exactly finds its repo, which beats
+    a README that only shares the plain words 'shelf' and 'empty'."""
+    stockroom = await _make_public_repo(
+        db_session,
+        host="git.example.com",
+        owner="team",
+        name="stockroom",
+        readme="# Stockroom\n\nKeeps each shelf of the warehouse stocked.",
+    )
+    db_session.add(
+        CodeNode(
+            repository_id=stockroom.id,
+            file_path="shelves/restock.go",
+            qualified_name="shelves.restockShelfIfEmpty",
+            name="restockShelfIfEmpty",
+            language="go",
+            node_type=CodeNodeType.FUNCTION,
+            start_line=10,
+            end_line=30,
+            content="func restockShelfIfEmpty() {}\n",
+            content_hash="k" * 64,
+        )
+    )
+    await db_session.commit()
+    await _make_public_repo(
+        db_session,
+        host="git.example.com",
+        owner="team",
+        name="handbook",
+        readme="# Handbook\n\nWhat to do when a shelf is empty.",
+    )
+    await _make_public_repo(
+        db_session,
+        host="git.example.com",
+        owner="team",
+        name="labels",
+        readme="# Labels\n\nPrints a label when the queue is empty.",
+    )
+
+    hits = await route_sources(
+        db_session,
+        query="what does restockShelfIfEmpty do when the shelf is empty",
+        current_user=None,
+        settings=settings,
+        top_k=3,
+    )
+    repo_hits = [h for h in hits if h.kind == "repository"]
+    assert repo_hits[0].label == "git.example.com/team/stockroom", repo_hits
+    assert "symbols" in repo_hits[0].why
+    assert repo_hits[0].score > repo_hits[1].score
+
+
+@pytest.mark.asyncio
+async def test_route_ignores_plain_words_in_document_text(
+    db_session, settings
+) -> None:
+    """A plain word found only in document text adds nothing: large repos
+    mention most words, so looking them up pulls in noise."""
+    await _make_public_repo(
+        db_session,
+        host="git.example.com",
+        owner="team",
+        name="dispatch",
+        readme="# Dispatch\n\nSends parcels to carriers.",
+    )
+    catalog = await _make_public_repo(
+        db_session,
+        host="git.example.com",
+        owner="team",
+        name="catalog",
+        readme="# Catalog\n\nStock levels per shelf.",
+    )
+    query = "dispatch polls carriers"
+    before = await route_sources(
+        db_session, query=query, current_user=None, settings=settings, top_k=3
+    )
+    await _add_document(
+        db_session,
+        catalog,
+        file_path="docs/sync.md",
+        content="The catalog polls the shelf scanners every minute.",
+    )
+    after = await route_sources(
+        db_session, query=query, current_user=None, settings=settings, top_k=3
+    )
+    assert before
+    assert after == before
+
+
+@pytest.mark.asyncio
+async def test_route_identifier_lookup_respects_acl(db_session, settings) -> None:
+    """A name that only a hidden repo's document holds changes nothing for a
+    caller who cannot see that repo: not the list, not the scores."""
+    await _make_public_repo(
+        db_session,
+        host="git.example.com",
+        owner="team",
+        name="dispatch",
+        readme="# Dispatch\n\nSends parcels to carriers.",
+    )
+    await _make_public_repo(
+        db_session,
+        host="git.example.com",
+        owner="team",
+        name="handbook",
+        readme="# Handbook\n\nCarrier contacts.",
+    )
+    query = "carriers ShipmentDispatchSucceeded"
+    before = await route_sources(
+        db_session, query=query, current_user=None, settings=settings, top_k=3
+    )
+
+    hidden = Repository(
+        host="git.example.com",
+        owner="team",
+        name="hidden-flows",
+        git_url="https://git.example.com/team/hidden-flows.git",
+        branch="main",
+        status=RepositoryStatus.READY,
+        visibility=RepositoryVisibility.ADMIN_ONLY,
+    )
+    db_session.add(hidden)
+    await db_session.commit()
+    await _add_document(
+        db_session,
+        hidden,
+        file_path="flows/dispatch.yml",
+        content="onDone: ShipmentDispatchSucceeded\n",
+    )
+    after = await route_sources(
+        db_session, query=query, current_user=None, settings=settings, top_k=3
+    )
+    assert before
+    assert after == before
+
+
+@pytest.mark.asyncio
+async def test_route_known_identifier_is_not_looked_up(db_session, settings) -> None:
+    # A name a field already shows is counted there; crediting other repos
+    # that mention it in documents pushes the repo that defines it down.
+    tracking = await _make_public_repo(
+        db_session, host="git.example.com", owner="team", name="tracking"
+    )
+    db_session.add(
+        CodeNode(
+            repository_id=tracking.id,
+            file_path="src/ShipmentTracker.ts",
+            qualified_name="src/ShipmentTracker",
+            name="ShipmentTracker",
+            language="typescript",
+            node_type=CodeNodeType.MODULE,
+            start_line=1,
+            end_line=80,
+            content="export class ShipmentTracker {}\n",
+            content_hash="t" * 64,
+        )
+    )
+    await db_session.commit()
+    handbook = await _make_public_repo(
+        db_session,
+        host="git.example.com",
+        owner="team",
+        name="handbook",
+        readme="# Handbook\n\nTeam notes.",
+    )
+    await _add_document(
+        db_session,
+        handbook,
+        file_path="docs/tracking.md",
+        content="Use ShipmentTracker to follow a parcel.",
+    )
+
+    hits = await route_sources(
+        db_session,
+        query="where is ShipmentTracker",
+        current_user=None,
+        settings=settings,
+        top_k=3,
+    )
+    labels = [h.label for h in hits if h.kind == "repository"]
+    assert labels == ["git.example.com/team/tracking"], hits
 
 
 # ---------- REST mirror tests -------------------------------------------------
