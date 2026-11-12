@@ -66,7 +66,7 @@ from backend.app.models.enums import (
     RepositoryVisibility,
     SyncSchedule,
 )
-from backend.app.models.repo_document import RepoDocument
+from backend.app.models.repo_document import PAGE_DOCUMENT, RepoDocument
 from backend.app.models.repo_sync_run import RepoSyncRun
 from backend.app.models.repository import Repository
 from backend.app.models.source_file import SourceFile
@@ -1355,7 +1355,7 @@ async def _build_repository_response(
     documents_count: int = (
         await session.scalar(
             select(func.count(RepoDocument.id)).where(
-                RepoDocument.repository_id == repository.id
+                RepoDocument.repository_id == repository.id, PAGE_DOCUMENT
             )
         )
     ) or 0
@@ -1511,7 +1511,7 @@ async def _build_repository_list_items(
                 RepoDocument.repository_id,
                 func.count(RepoDocument.id).label("doc_count"),
             )
-            .where(RepoDocument.repository_id.in_(repo_ids))
+            .where(RepoDocument.repository_id.in_(repo_ids), PAGE_DOCUMENT)
             .group_by(RepoDocument.repository_id)
         )
     ).all()

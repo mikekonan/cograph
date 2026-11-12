@@ -136,6 +136,8 @@ class RepoDocChunkRecord:
     title: str | None
     heading_path: list[str]
     content: str
+    start_line: int | None = None
+    end_line: int | None = None
 
 
 class ContextBuilder:
@@ -275,6 +277,8 @@ class ContextBuilder:
                             document_id=repo_doc_chunk.document_id,
                             file_path=repo_doc_chunk.file_path,
                             heading_path=list(repo_doc_chunk.heading_path),
+                            start_line=repo_doc_chunk.start_line,
+                            end_line=repo_doc_chunk.end_line,
                         ),
                         metadata=_chunk_metadata(chunk, include_scores=include_scores),
                     )
@@ -424,21 +428,25 @@ class ContextBuilder:
                     RepoDocument.title,
                     RepoDocumentChunk.heading_path,
                     RepoDocumentChunk.content,
+                    RepoDocumentChunk.start_line,
+                    RepoDocumentChunk.end_line,
                 )
                 .join(RepoDocument, RepoDocument.id == RepoDocumentChunk.document_id)
                 .where(RepoDocumentChunk.id.in_(list(dict.fromkeys(chunk_ids))))
             )
         ).all()
         return {
-            chunk_id: RepoDocChunkRecord(
-                chunk_id=chunk_id,
-                document_id=document_id,
-                file_path=file_path,
-                title=title,
-                heading_path=list(heading_path or []),
-                content=content,
+            row.id: RepoDocChunkRecord(
+                chunk_id=row.id,
+                document_id=row.document_id,
+                file_path=row.file_path,
+                title=row.title,
+                heading_path=list(row.heading_path or []),
+                content=row.content,
+                start_line=row.start_line,
+                end_line=row.end_line,
             )
-            for chunk_id, document_id, file_path, title, heading_path, content in rows
+            for row in rows
         }
 
 def _snippet(text: str | None, limit: int = 600) -> str:

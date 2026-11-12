@@ -349,6 +349,7 @@ async def _safe_retrieve(
             top_k=top_k,
             stores={store},  # type: ignore[arg-type]
             hand_written_only=True,
+            page_documents_only=True,
         )
     except Exception as exc:  # pragma: no cover — exercised in integration runs
         logger.warning(

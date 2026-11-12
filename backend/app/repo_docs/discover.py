@@ -4,7 +4,7 @@ from enum import StrEnum
 from pathlib import Path, PurePosixPath
 
 SUPPORTED_REPO_DOC_SUFFIXES = {".md", ".mdx", ".rst"}
-_WORKFLOW_SUFFIXES = {".yml", ".yaml"}
+_WORKFLOW_SUFFIXES = _YAML_SUFFIXES = {".yml", ".yaml"}
 _EXAMPLE_SUFFIXES = {
     ".go",
     ".js",
@@ -25,6 +25,22 @@ _EXAMPLE_DIRS = {"example", "examples", "sample", "samples"}
 _TEST_DIRS = {"test", "tests"}
 _DEPLOY_DIRS = {".devcontainer", "deploy", "deployment", "helm", "k8s", "ops"}
 _ALLOWED_HIDDEN_DIRS = {".devcontainer", ".github"}
+# A YAML file under one of these folders is generated, vendored or test data.
+_YAML_SKIPPED_DIRS = {
+    "__snapshots__",
+    "e2e",
+    "fixtures",
+    "gen",
+    "generated",
+    "mocks",
+    "test",
+    "testdata",
+    "tests",
+    "third_party",
+    "vendor",
+}
+_YAML_SKIPPED_DIR_SUFFIXES = ("_test", "_tests", "-tests")
+_YAML_SKIPPED_NAME_SUFFIXES = ("-lock.yaml", "-lock.yml", ".lock.yaml", ".lock.yml")
 _IGNORED_PARENT_DIRS = {
     ".cache",
     ".cograph",
@@ -64,6 +80,7 @@ class RepoDocumentKind(StrEnum):
     TEST = "Test"
     CONFIG = "Config"
     WORKFLOW = "Workflow"
+    YAML = "YAML"
 
 
 def classify_repo_document(
@@ -106,7 +123,23 @@ def classify_repo_document(
     if lower_parts and lower_parts[0] in _DEPLOY_DIRS and suffix in _CONFIG_SUFFIXES:
         return RepoDocumentKind.CONFIG
 
+    # Last, so a file that already has a kind above keeps it.
+    if suffix in _YAML_SUFFIXES and not _is_skipped_yaml(lower_parts):
+        return RepoDocumentKind.YAML
+
     return None
+
+
+def _is_skipped_yaml(lower_parts: tuple[str, ...]) -> bool:
+    *dirs, name = lower_parts
+    return (
+        any(
+            part in _YAML_SKIPPED_DIRS or part.endswith(_YAML_SKIPPED_DIR_SUFFIXES)
+            for part in dirs
+        )
+        or name.startswith("generated")
+        or name.endswith(_YAML_SKIPPED_NAME_SUFFIXES)
+    )
 
 
 class RepoDocumentDiscoverer:

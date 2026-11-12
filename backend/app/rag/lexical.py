@@ -84,6 +84,7 @@ class LexicalRetriever:
         since: datetime | None = None,
         until: datetime | None = None,
         path_prefix: str = "",
+        page_documents_only: bool = False,
     ) -> list[RetrievedChunk]:
         if not query_text or not query_text.strip():
             return []
@@ -112,6 +113,7 @@ class LexicalRetriever:
                 as_of=as_of,
                 since=since,
                 until=until,
+                page_documents_only=page_documents_only,
             )
         if store == "md_collections":
             if collection_id is None:
@@ -217,6 +219,7 @@ class LexicalRetriever:
         as_of: datetime | None,
         since: datetime | None,
         until: datetime | None,
+        page_documents_only: bool,
     ) -> list[RetrievedChunk]:
         stmt = text(
             """
@@ -235,6 +238,7 @@ class LexicalRetriever:
               AND (CAST(:as_of AS timestamp) IS NULL OR rd.updated_at <= CAST(:as_of AS timestamp))
               AND (CAST(:since AS timestamp) IS NULL OR rd.updated_at >= CAST(:since AS timestamp))
               AND (CAST(:until AS timestamp) IS NULL OR rd.updated_at <= CAST(:until AS timestamp))
+              AND (NOT :page_documents_only OR rd.kind IS NULL OR rd.kind <> 'YAML')
             ORDER BY score DESC
             LIMIT :top_k
             """
@@ -249,6 +253,7 @@ class LexicalRetriever:
                 "as_of": as_of,
                 "since": since,
                 "until": until,
+                "page_documents_only": page_documents_only,
             },
         )
         return [

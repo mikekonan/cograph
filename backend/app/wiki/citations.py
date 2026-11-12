@@ -26,7 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.code_node import CodeNode
-from backend.app.models.repo_document import RepoDocument, RepoDocumentChunk
+from backend.app.models.repo_document import PAGE_DOCUMENT, RepoDocument, RepoDocumentChunk
 from backend.app.repo_docs.slug import build_slug_map
 from backend.app.wiki.schemas import ResolvedCitation
 
@@ -686,7 +686,7 @@ async def _load_doc_slug_map(
     """
     stmt = (
         select(RepoDocument.id, RepoDocument.file_path)
-        .where(RepoDocument.repository_id == repository_id)
+        .where(RepoDocument.repository_id == repository_id, PAGE_DOCUMENT)
         .order_by(RepoDocument.file_path.asc())
     )
     rows = (await session.execute(stmt)).all()

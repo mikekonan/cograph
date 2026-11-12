@@ -12,7 +12,7 @@ from backend.app.models.enums import CodeNodeType
 from backend.app.models.repo_document import RepoDocument, RepoDocumentChunk
 from backend.app.models.repository import Repository
 from backend.app.models.source_file import SourceFile
-from backend.app.wiki.context import build_repo_context
+from backend.app.wiki.context import build_repo_context, compute_structural_hash
 
 pytestmark = pytest.mark.asyncio
 
@@ -312,3 +312,47 @@ async def test_file_tree_weighs_files_by_code_not_constants(
     )
 
     assert [entry.file_path for entry in context.file_tree] == ["route.py"]
+
+
+async def test_yaml_documents_stay_out_of_the_wiki_plan(db_session: AsyncSession) -> None:
+    """The doc list takes the biggest docs and feeds the structural hash: a
+    YAML file must neither push a doc out nor change a hash."""
+    repo = await _make_repo(db_session)
+    db_session.add(
+        RepoDocument(
+            repository_id=repo.id,
+            file_path="docs/intro.md",
+            title="Intro",
+            content="# Intro\n\nWelcome.",
+            content_hash="d" * 64,
+            bytes=20,
+        )
+    )
+    await db_session.flush()
+
+    async def context():
+        return await build_repo_context(
+            session=db_session,
+            repository_id=repo.id,
+            commit_sha="cafef00d",
+            repo_doc_cap=1,
+        )
+
+    before = await context()
+    db_session.add(
+        RepoDocument(
+            repository_id=repo.id,
+            file_path="config/stock.yaml",
+            title="YAML: stock.yaml",
+            content="shelf: A\n" * 100,
+            content_hash="e" * 64,
+            bytes=900,
+            kind="YAML",
+        )
+    )
+    await db_session.flush()
+    after = await context()
+
+    assert [d.file_path for d in after.repo_doc_index] == ["docs/intro.md"]
+    assert after.docs_hash == before.docs_hash
+    assert compute_structural_hash(after) == compute_structural_hash(before)

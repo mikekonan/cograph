@@ -33,7 +33,7 @@ from backend.app.core.deps import get_current_user_optional, get_db_session, get
 from backend.app.core.errors import ApiError
 from backend.app.core.repository_access import get_readable_repository_by_slug
 from backend.app.models.enums import RepositoryStatus
-from backend.app.models.repo_document import RepoDocument
+from backend.app.models.repo_document import PAGE_DOCUMENT, RepoDocument
 from backend.app.models.user import User
 from backend.app.repo_docs.queries import WikiQueryService
 
@@ -125,7 +125,7 @@ async def get_docs_tree(
     total = (
         await session.scalar(
             select(func.count(RepoDocument.id)).where(
-                RepoDocument.repository_id == repository.id
+                RepoDocument.repository_id == repository.id, PAGE_DOCUMENT
             )
         )
     ) or 0

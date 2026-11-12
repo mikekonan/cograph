@@ -485,3 +485,25 @@ async def test_get_docs_tree_total_equals_document_count(client, db_session):
         for item in data["items"]
     )
     assert leaf_count == data["total"]
+
+
+async def test_yaml_documents_have_no_page_and_move_no_slug(client, db_session):
+    """A YAML file is searchable but has no docs page; a page's slug stays put
+    even when a YAML path sorts first with the same base slug."""
+    repo = _make_repo(db_session)
+    await db_session.flush()
+
+    guide = _make_doc(db_session, repository_id=repo.id, file_path="docs/guide_yaml.md", title="Guide")
+    stock = _make_doc(db_session, repository_id=repo.id, file_path="docs/guide.yaml", content="shelf: A")
+    stock.kind = "YAML"
+    await db_session.commit()
+
+    base = f"/api/repos/{repo.host}/{repo.owner}/{repo.name}/docs"
+    tree = (await client.get(base)).json()
+
+    assert tree["total"] == 1
+    [leaf] = [n for item in tree["items"] for n in (item["children"] or [item])]
+    assert (leaf["id"], leaf["slug"]) == (str(guide.id), "guide-yaml")
+    page = await client.get(f"{base}/guide-yaml")
+    assert page.json()["id"] == str(guide.id)
+    assert all(str(stock.id) not in str(item) for item in tree["items"])

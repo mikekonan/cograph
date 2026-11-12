@@ -202,3 +202,20 @@ def test_called_by_is_absent_empty_or_capped_with_a_count_by_kind() -> None:
     ]
     assert records[0]["called_by"][0] == {**caller, "node_id": str(caller["node_id"])}
     assert [r.get("kind") for r in records] == [None, "test", None]
+
+
+def test_a_doc_cut_by_line_points_at_its_lines() -> None:
+    def yaml_row(start, end) -> RetrievalResult:
+        row = _doc_row("config/stock.yaml", ("YAML",), f"lines {start}")
+        row.provenance.start_line, row.provenance.end_line = start, end
+        return row
+
+    rows = [yaml_row(1, 40), yaml_row(41, 80), _doc_row(*GUIDE, "Print a label")]
+    records = compact_hits(RetrievalResponse(results=rows))["results"]
+
+    # Same file and heading, other lines: two places, not one.
+    assert [r["at"] for r in records] == [
+        "config/stock.yaml:1-40",
+        "config/stock.yaml:41-80",
+        "docs/labels.md",
+    ]

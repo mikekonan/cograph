@@ -21,7 +21,7 @@ from backend.app.models.code_node import CodeNode
 from backend.app.models.code_node_summary import CodeNodeSummary
 from backend.app.models.document import Document
 from backend.app.models.enums import CodeNodeType
-from backend.app.models.repo_document import RepoDocument, RepoDocumentChunk
+from backend.app.models.repo_document import PAGE_DOCUMENT, RepoDocument, RepoDocumentChunk
 from backend.app.models.source_file import SourceFile
 from backend.app.wiki.manifests import RepoManifests, build_repo_manifests
 from backend.app.wiki.schemas import BusinessContext, MindMap, RepoSignals
@@ -385,7 +385,8 @@ async def _load_repo_doc_index(
             RepoDocument.title,
             RepoDocument.content,
         )
-        .where(RepoDocument.repository_id == repository_id)
+        # Before the limit: a big YAML file must not push a doc out of the plan.
+        .where(RepoDocument.repository_id == repository_id, PAGE_DOCUMENT)
         .order_by(RepoDocument.bytes.desc(), RepoDocument.file_path.asc())
         .limit(cap)
     )

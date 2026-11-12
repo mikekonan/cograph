@@ -31,6 +31,9 @@ class RepoDocument(TimestampMixin, Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    # RepoDocumentKind value; NULL on a document not rewritten since the
+    # column was added.
+    kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     chunks = relationship(
         "RepoDocumentChunk",
@@ -61,6 +64,9 @@ class RepoDocumentChunk(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
     mentions: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    # 1-indexed, inclusive; only chunks cut by line (YAML) carry them.
+    start_line: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    end_line: Mapped[int | None] = mapped_column(Integer, nullable=True)
     embedding: Mapped[list[float] | None] = mapped_column(VectorType(1536), nullable=True)
     model: Mapped[str] = mapped_column(
         String, nullable=False, default="", server_default=""
@@ -75,3 +81,8 @@ class RepoDocumentChunk(Base):
     )
 
     document = relationship("RepoDocument", back_populates="chunks")
+
+
+# A document the docs pages and the wiki show. YAML is searchable but has no
+# page: the docs page renders markdown. "YAML" is RepoDocumentKind.YAML.
+PAGE_DOCUMENT = sa.or_(RepoDocument.kind.is_(None), RepoDocument.kind != "YAML")

@@ -16,7 +16,7 @@ If the repository is in your working directory and you know a name, grep and rea
 
 ## How to answer
 1. Find. Tools take a repository as host/owner/name. Known only by name: cograph_repositories(search=name). Unknown: cograph_route. A word from the code: cograph_search_code. A question in words: cograph_retrieve, one topic per call.
-2. Read. Search results show an excerpt: read the best one or two hits with cograph_read_node(node_id). A helper: read its callers; a test: what it calls (cograph_related, direction=callers or callees). A result's `wiki` names generated pages about the hits; for how or why something works, read that page (its `section`) with cograph_wiki_page.
+2. Read. Search results show an excerpt: read the best one or two hits with cograph_read_node(node_id). A doc hit has no node_id: read the lines in its `at` with cograph_read_file_range. A helper: read its callers; a test: what it calls (cograph_related, direction=callers or callees). A result's `wiki` names generated pages about the hits; for how or why something works, read that page (its `section`) with cograph_wiki_page.
 3. Check. For what the code does at run time, read where its input comes from, its callers in product code (not `kind` test), and the layer above. A branch in the code is not a case that happens until you show a caller that reaches it. What you could not show, mark "not verified".
 4. Stop. Answer once you can cite the code or doc that answers the question. Do not repeat a call whose result you still have. If two differently worded searches find nothing relevant, say what you searched and stop.
 
