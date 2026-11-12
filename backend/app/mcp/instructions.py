@@ -9,15 +9,15 @@ INSTRUCTIONS = """\
 Cograph is a read-only index of your team's repositories and docs: search code by meaning or name, read exact source, find callers, search docs. Repositories outside your working directory are visible only through Cograph.
 
 ## When to use it
-- A repository that is not in your working directory.
-- A search by meaning, when you do not know a name.
+- A repository not in your working directory.
+- A search by meaning, without a name.
 - Team docs: what a term means, why something was decided.
-If the repository is in your working directory and you know a name, grep and read the files yourself: it is cheaper, and your files may be newer than the index. Cograph knows code and docs as of its last index, not live systems or data.
+If the repository is in your working directory and you know a name, grep and read the files yourself: it is cheaper, and they may be newer than the index. Cograph knows code and docs as of its last index, not live systems or data.
 
 ## How to answer
 1. Find. Tools take a repository as host/owner/name. Known only by name: cograph_repositories(search=name). Unknown: cograph_route. A word from the code: cograph_search_code. A question in words: cograph_retrieve, one topic per call.
-2. Read. Search results show an excerpt: read the best one or two hits with cograph_read_node(node_id). A doc hit has no node_id: read the lines in its `at` with cograph_read_file_range. A helper: read its callers; a test: what it calls (cograph_related, direction=callers or callees). A result's `wiki` names generated pages about the hits; for how or why something works, read that page (its `section`) with cograph_wiki_page.
-3. Check. For what the code does at run time, read where its input comes from, its callers in product code (not `kind` test), and the layer above. A branch in the code is not a case that happens until you show a caller that reaches it. What you could not show, mark "not verified".
+2. Read. Results show an excerpt: read the best one or two hits with cograph_read_node(node_id). A doc hit has no node_id: read its `at` lines with cograph_read_file_range. A helper: read its callers; a test: what it calls (cograph_related, direction=callers or callees). For how or why something works, read the page a result's `wiki` names (its `section`) with cograph_wiki_page.
+3. Check. For what the code does at run time, read where its input comes from, its callers in product code (not `kind` test), and the layer above. A branch is not a case that happens until you show a caller that reaches it. A value sent to another service (event, message, RPC) is decided there: check that service before you conclude; a search's `elsewhere` names it. What you could not show, mark "not verified".
 4. Stop. Answer once you can cite the code or doc that answers the question. Do not repeat a call whose result you still have. If two differently worded searches find nothing relevant, say what you searched and stop.
 
 ## Citations

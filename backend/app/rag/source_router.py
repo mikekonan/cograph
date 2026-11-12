@@ -479,9 +479,12 @@ async def _route_repositories(
     doc_matched: dict[UUID, set[str]] = {}
     name_matched: dict[UUID, set[str]] = {}
     if unknown:
-        doc_matched = await _match_identifiers_in_repo_documents(
-            session, repo_ids, unknown
-        )
+        doc_matched = {
+            repo_id: set(found)
+            for repo_id, found in (
+                await _match_identifiers_in_repo_documents(session, repo_ids, unknown)
+            ).items()
+        }
         rows = await session.execute(
             select(CodeNode.repository_id, CodeNode.name)
             .where(CodeNode.repository_id.in_(repo_ids))
@@ -547,9 +550,11 @@ async def _route_repositories(
 
 async def _match_identifiers_in_repo_documents(
     session: AsyncSession, repo_ids: list[UUID], tokens: list[str]
-) -> dict[UUID, set[str]]:
-    """For each repo, the subset of `tokens` that occur in the text of any of
-    its document chunks. Repos with no match are left out.
+) -> dict[UUID, dict[str, tuple[str, int, int | None, int | None]]]:
+    """For each repo, the `tokens` that occur in the text of any of its
+    document chunks, each with the first such chunk by file path and chunk
+    index: `(file_path, chunk_index, start_line, end_line)`. Repos with no
+    match are left out.
 
     Postgres matches `repo_document_chunks.content_tsv` (GIN-indexed,
     migration 0015), one indexed query per token. SQLite (unit tests) has no
@@ -558,28 +563,104 @@ async def _match_identifiers_in_repo_documents(
     postgres = bind is not None and bind.dialect.name == "postgresql"
     sql = text(
         """
-        SELECT DISTINCT rd.repository_id
+        SELECT DISTINCT ON (rd.repository_id)
+               rd.repository_id, rd.file_path, rdc.chunk_index,
+               rdc.start_line, rdc.end_line
         FROM repo_document_chunks rdc
         JOIN repo_documents rd ON rd.id = rdc.document_id
         WHERE rd.repository_id = ANY(:repo_ids)
           AND rdc.content_tsv @@ plainto_tsquery('english', :tok)
+        ORDER BY rd.repository_id, rd.file_path, rdc.chunk_index
         """
     )
-    matches: dict[UUID, set[str]] = {}
+    matches: dict[UUID, dict[str, tuple[str, int, int | None, int | None]]] = {}
     for token in tokens:
         if postgres:
             rows = await session.execute(sql, {"repo_ids": repo_ids, "tok": token})
         else:
             rows = await session.execute(
-                select(RepoDocument.repository_id)
+                select(
+                    RepoDocument.repository_id,
+                    RepoDocument.file_path,
+                    RepoDocumentChunk.chunk_index,
+                    RepoDocumentChunk.start_line,
+                    RepoDocumentChunk.end_line,
+                )
                 .join(RepoDocumentChunk, RepoDocumentChunk.document_id == RepoDocument.id)
                 .where(RepoDocument.repository_id.in_(repo_ids))
                 .where(func.lower(RepoDocumentChunk.content).like(f"%{token}%"))
-                .distinct()
+                .order_by(RepoDocument.file_path, RepoDocumentChunk.chunk_index)
             )
-        for (repo_id,) in rows.all():
-            matches.setdefault(repo_id, set()).add(token)
+        for repo_id, *chunk in rows.all():
+            matches.setdefault(repo_id, {}).setdefault(token, tuple(chunk))
     return matches
+
+
+# Other repositories a search answer names; more are only counted.
+_ELSEWHERE_SHOWN = 5
+
+
+async def names_elsewhere(
+    session: AsyncSession,
+    *,
+    query: str,
+    repository_id: UUID,
+    current_user: User | None,
+    settings: Settings,
+) -> dict[str, object]:
+    """The other repositories the caller can read whose code node names or
+    document text hold a name from the query (a camelCase or PascalCase
+    word, as route looks it up): `{"elsewhere": [...], "elsewhere_more": n}`,
+    or `{}`. A value another service decides is out of sight of a search in
+    one repository; this names that service.
+
+    A query with no such name costs no query. Otherwise: the readable
+    repositories, one code-name query, one document query per name."""
+    identifiers = _identifier_spellings(query)
+    tokens = sorted(identifiers)[:_MAX_IDENTIFIER_LOOKUPS]
+    if not tokens:
+        return {}
+    scoped = apply_repository_read_scope(
+        select(Repository.id, Repository.host, Repository.owner, Repository.name),
+        settings=settings,
+        current_user=current_user,
+    ).where(Repository.id != repository_id)
+    slugs = {
+        repo_id: f"{host}/{owner}/{name}"
+        for repo_id, host, owner, name in (await session.execute(scoped)).all()
+    }
+    if not slugs:
+        return {}
+    repo_ids = list(slugs)
+    in_code = set(
+        await session.scalars(
+            select(CodeNode.repository_id)
+            .where(CodeNode.repository_id.in_(repo_ids))
+            .where(CodeNode.name.in_(sorted(s for t in tokens for s in identifiers[t])))
+            .distinct()
+        )
+    )
+    in_docs = {
+        repo_id: min(found.values())
+        for repo_id, found in (
+            await _match_identifiers_in_repo_documents(session, repo_ids, tokens)
+        ).items()
+    }
+    entries: list[dict[str, str]] = []
+    for repo_id in in_code | in_docs.keys():
+        entry = {"repository": slugs[repo_id], "in": "code"}
+        if repo_id in in_docs:
+            path, _, start, end = in_docs[repo_id]
+            entry["in"] = "code+document" if repo_id in in_code else "document"
+            entry["at"] = path if start is None or end is None else f"{path}:{start}-{end}"
+        entries.append(entry)
+    if not entries:
+        return {}
+    entries.sort(key=lambda e: (e["in"] != "code+document", e["repository"]))
+    out: dict[str, object] = {"elsewhere": entries[:_ELSEWHERE_SHOWN]}
+    if len(entries) > _ELSEWHERE_SHOWN:
+        out["elsewhere_more"] = len(entries) - _ELSEWHERE_SHOWN
+    return out
 
 
 async def _match_query_in_collection_bodies(

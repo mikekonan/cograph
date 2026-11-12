@@ -70,6 +70,10 @@ def register(server: MCPServer, services: MCPServices) -> None:
             "`wiki` (only when a generated-wiki page covers the hits) lists up "
             "to 2 pages {page, title, section, excerpt}; read one with "
             "cograph_wiki_page(page, section).\n"
+            "`elsewhere` (only for a name like OrderShipped) lists up to 5 "
+            "other repositories whose code or documents hold that name; when "
+            "the answer depends on what another service does with it, search "
+            "or read there.\n"
             "path_prefix (a folder from the repository root, e.g. "
             "internal/shipping/) keeps only hits under it.\n"
             "Use when: you have a word from the code: a name (class, "
@@ -113,6 +117,7 @@ def register(server: MCPServer, services: MCPServices) -> None:
                 repository_id=repo.id,
                 query=args.query,
                 top_k=args.top_k,
+                current_user=current_user,
                 path_prefix=args.path_prefix or "",
             )
             if not payload["results"]:
@@ -122,6 +127,8 @@ def register(server: MCPServer, services: MCPServices) -> None:
                 )
                 where = f" under path_prefix '{args.path_prefix}'" if args.path_prefix else ""
                 payload["reason"] = f"No code{where} matches any of the words: {words}."
+                if payload.get("elsewhere"):
+                    payload["reason"] += " The name is in other repositories: see `elsewhere`."
             log_bucket["result_count"] = count_response_results(payload)
             log_bucket["wiki_pages"] = [p["page"] for p in payload.get("wiki") or []]
             return encode_payload(payload)

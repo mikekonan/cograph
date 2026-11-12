@@ -129,6 +129,35 @@ async def test_search_code_without_hits_names_the_words_and_the_folder(client, d
     }
 
 
+async def test_search_code_without_hits_points_to_the_name_elsewhere(client, db_session):
+    plaintext = await _seed(db_session)
+    elsewhere = [{"repository": "github.com/acme/shipping", "in": "code"}]
+    seen: dict = {}
+
+    async def _payload(**kwargs):
+        seen.update(kwargs)
+        return {"results": [], "elsewhere": elsewhere}
+
+    with patch("backend.app.mcp.tools.search_code.search_code_payload", _payload):
+        answer = _answer(
+            await _call(
+                client,
+                plaintext,
+                "cograph_search_code",
+                {"repository": _SLUG, "query": "OrderShipped"},
+            )
+        )
+
+    assert answer == {
+        "results": [],
+        "elsewhere": elsewhere,
+        "reason": "No code matches any of the words: ordershipped. "
+        "The name is in other repositories: see `elsewhere`.",
+    }
+    # The lookup is scoped to what the caller can read.
+    assert seen["current_user"].email == "empty@example.com"
+
+
 async def test_retrieve_without_hits_offers_a_call_only_for_a_code_name(client, db_session):
     plaintext = await _seed(db_session)
 
