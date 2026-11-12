@@ -66,6 +66,7 @@ from backend.app.rag.snippet import (
     extract_query_terms,
     make_snippet,
 )
+from backend.app.rag.source_router import names_elsewhere
 from backend.app.wiki import WikiQueryService
 from backend.app.wiki.compact import (
     extract_lead,
@@ -847,6 +848,7 @@ async def search_code_payload(
     repository_id: UUID,
     query: str,
     top_k: int,
+    current_user: User | None,
     path_prefix: str = "",
 ) -> dict[str, object]:
     async with services.session_manager.session() as session:
@@ -927,9 +929,17 @@ async def search_code_payload(
             query=query,
             chars=_WIKI_EXCERPT_CHARS_SEARCH,
         )
+        elsewhere = await names_elsewhere(
+            session,
+            query=query,
+            repository_id=repository_id,
+            current_user=current_user,
+            settings=services.settings,
+        )
     payload = compact_hits(response, called_by=called_by, kinds=kinds)
     if wiki:
         payload["wiki"] = wiki
+    payload.update(elsewhere)
     return payload
 
 

@@ -1,5 +1,6 @@
 """`cograph_search_code` on Postgres: one record per node, no module rows,
-and the callers of every hit from one query.
+the callers of every hit from one query, and the other repositories that
+hold the name.
 
 Postgres only: both search streams use tsvector and pg_trgm.
 """
@@ -15,6 +16,9 @@ import pytest
 import sqlalchemy as sa
 
 from backend.app.mcp.services import search_code_payload
+from backend.app.models.enums import RepositoryStatus, RepositoryVisibility
+from backend.app.models.repo_document import RepoDocument, RepoDocumentChunk
+from backend.app.models.repository import Repository
 from backend.app.rag.context_builder import ContextBuilder
 from backend.app.rag.lexical import LexicalRetriever, SymbolLookup
 
@@ -104,7 +108,9 @@ def _services(session) -> SimpleNamespace:
 
     return SimpleNamespace(
         session_manager=SimpleNamespace(session=_same_session),
-        settings=SimpleNamespace(retrieval=SimpleNamespace(rrf_k=60)),
+        settings=SimpleNamespace(
+            retrieval=SimpleNamespace(rrf_k=60), auth=SimpleNamespace(public_read=True)
+        ),
         lexical=LexicalRetriever(),
         symbol=SymbolLookup(),
         context_builder=ContextBuilder(),
@@ -119,6 +125,7 @@ async def test_search_code_returns_one_record_per_node_and_no_module(pg_session)
         repository_id=repo_id,
         query="PrintLabel",
         top_k=10,
+        current_user=None,
     )
 
     assert [record["name"] for record in payload["results"]] == ["shipping.PrintLabel"]
@@ -138,7 +145,11 @@ async def test_callers_of_every_hit_come_from_one_indexed_query(pg_engine, pg_se
     sa.event.listen(pg_engine.sync_engine, "before_cursor_execute", _capture)
     try:
         payload = await search_code_payload(
-            services=services, repository_id=repo_id, query="PrintLabel", top_k=10
+            services=services,
+            repository_id=repo_id,
+            query="PrintLabel",
+            top_k=10,
+            current_user=None,
         )
     finally:
         sa.event.remove(pg_engine.sync_engine, "before_cursor_execute", _capture)
@@ -155,7 +166,7 @@ async def test_callers_of_every_hit_come_from_one_indexed_query(pg_engine, pg_se
 
     # A hit nobody calls says so with an empty list.
     payload = await search_code_payload(
-        services=services, repository_id=repo_id, query="ShipOrder", top_k=10
+        services=services, repository_id=repo_id, query="ShipOrder", top_k=10, current_user=None
     )
     (ship,) = [r for r in payload["results"] if r["name"] == "shipping.ShipOrder"]
     assert ship["called_by"] == []
@@ -212,7 +223,7 @@ async def test_exact_name_and_product_code_come_first(pg_session) -> None:
     await _calls(pg_session, repo_id, test, mock, target_name="MockPrinter.Render")
 
     payload = await search_code_payload(
-        services=services, repository_id=repo_id, query="Render", top_k=10
+        services=services, repository_id=repo_id, query="Render", top_k=10, current_user=None
     )
     records = {r["name"]: r for r in payload["results"]}
     names = [r["name"] for r in payload["results"]]
@@ -239,7 +250,11 @@ async def test_exact_name_and_product_code_come_first(pg_session) -> None:
 
     # `Type.Method` puts the type that was asked for first, mock or not.
     payload = await search_code_payload(
-        services=services, repository_id=repo_id, query="MockPrinter.Render", top_k=10
+        services=services,
+        repository_id=repo_id,
+        query="MockPrinter.Render",
+        top_k=10,
+        current_user=None,
     )
     assert payload["results"][0]["name"] == "mocks.MockPrinter.Render"
 
@@ -255,6 +270,87 @@ async def test_exact_name_and_product_code_come_first(pg_session) -> None:
             "func Render() {}",
         )
     payload = await search_code_payload(
-        services=services, repository_id=repo_id, query="Printer.Render", top_k=2
+        services=services,
+        repository_id=repo_id,
+        query="Printer.Render",
+        top_k=2,
+        current_user=None,
     )
     assert payload["results"][0]["name"] == f"{prefix}.Printer.Render"
+
+
+async def test_other_repositories_with_the_name_are_named_elsewhere(pg_session) -> None:
+    """The document lookup matches `content_tsv`, and the first matching
+    chunk by path gives the lines. The hits do not change."""
+    repo_id = await _seed(pg_session)
+    handbook, printing = [
+        Repository(
+            host="example.test",
+            owner="acme",
+            name=name,
+            git_url=f"https://example.test/acme/{name}.git",
+            branch="main",
+            status=RepositoryStatus.READY,
+            visibility=RepositoryVisibility.PUBLIC,
+        )
+        for name in ("handbook", "printing")
+    ]
+    pg_session.add_all([handbook, printing])
+    await pg_session.flush()
+    await _node(
+        pg_session, printing.id, "labels.PrintLabel", "labels/print.go", "func PrintLabel() {}"
+    )
+    for path, chunks in (
+        ("docs/intro.md", [("Labels are printed per parcel.", None, None)]),
+        (
+            "flows/labels.yml",
+            [
+                ("pack:\n  next: label\n", 1, 3),
+                ("label:\n  call: PrintLabel\n  onDone: notify\n", 4, 6),
+                ("notify:\n  after: PrintLabel\n", 9, 12),
+            ],
+        ),
+        ("zz/notes.md", [("PrintLabel retries twice.", None, None)]),
+    ):
+        doc = RepoDocument(
+            repository_id=handbook.id,
+            file_path=path,
+            title=path,
+            content="".join(text for text, _, _ in chunks),
+            content_hash="d" * 64,
+            bytes=1,
+        )
+        pg_session.add(doc)
+        await pg_session.flush()
+        pg_session.add_all(
+            RepoDocumentChunk(
+                document_id=doc.id,
+                chunk_index=index,
+                heading_path=[],
+                content=text,
+                mentions=[],
+                start_line=start,
+                end_line=end,
+            )
+            for index, (text, start, end) in enumerate(chunks)
+        )
+    await pg_session.flush()
+
+    payload = await search_code_payload(
+        services=_services(pg_session),
+        repository_id=repo_id,
+        query="PrintLabel",
+        top_k=10,
+        current_user=None,
+    )
+
+    assert [record["name"] for record in payload["results"]] == ["shipping.PrintLabel"]
+    assert payload["elsewhere"] == [
+        {
+            "repository": "example.test/acme/handbook",
+            "in": "document",
+            "at": "flows/labels.yml:4-6",
+        },
+        {"repository": "example.test/acme/printing", "in": "code"},
+    ]
+    assert "elsewhere_more" not in payload

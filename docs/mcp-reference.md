@@ -140,6 +140,8 @@ No hits: `reason` names the words searched for.
 
 `wiki` (only when a generated-wiki page covers the hits) lists up to 2 pages {page, title, section, excerpt}; read one with cograph_wiki_page(page, section).
 
+`elsewhere` (only for a name like OrderShipped) lists up to 5 other repositories whose code or documents hold that name; when the answer depends on what another service does with it, search or read there.
+
 path_prefix (a folder from the repository root, e.g. internal/shipping/) keeps only hits under it.
 
 Use when: you have a word from the code: a name (class, function, qualified path) or a word that appears in the code. `repository` is host/owner/name.
