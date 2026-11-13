@@ -141,6 +141,7 @@ def register(server: MCPServer, services: MCPServices) -> None:
                 "start_line": args.start_line,
                 "end_line": clamped_end,
                 "content": sliced,
-                "content_truncated": clamped_end < args.end_line,
+                # True when the file goes on after end_line, so the agent reads on.
+                "content_truncated": clamped_end < total_lines,
             }
         )

@@ -112,7 +112,8 @@ async def test_read_file_range_returns_slice(client, db_session):
     assert result["start_line"] == 5
     assert result["end_line"] == 8
     assert result["content"] == "line-5\nline-6\nline-7\nline-8"
-    assert result["content_truncated"] is False
+    # Lines 9-20 are still unread.
+    assert result["content_truncated"] is True
 
 
 async def test_read_file_range_clamps_end_to_total_lines(client, db_session):
@@ -134,7 +135,8 @@ async def test_read_file_range_clamps_end_to_total_lines(client, db_session):
     result = json.loads(response.json()["result"]["content"][0]["text"])
     assert result["total_lines"] == 5
     assert result["end_line"] == 5
-    assert result["content_truncated"] is True
+    # The range reached the end of the file: nothing is left unread.
+    assert result["content_truncated"] is False
     assert result["content"] == "line-3\nline-4\nline-5"
 
 
