@@ -1,24 +1,30 @@
 from __future__ import annotations
 
 import argparse
+import logging
+import time
 from typing import Any
 
 import anyio
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from sqlalchemy import select
 
 from backend.app.config import Settings, get_settings
 from backend.app.db.session import SessionManager
 from backend.app.graph.traversal import GraphTraversalService
 from backend.app.llm.runtime_providers import assert_embedding_runtime_configured
-from backend.app.mcp.instructions import INSTRUCTIONS
+from backend.app.mcp.instructions import INSTRUCTIONS, compose_instructions
 from backend.app.mcp.resources import register_resources
 from backend.app.mcp.services import MCPServices, mcp_query_log_scope
 from backend.app.mcp.tools import register_tools
+from backend.app.models.mcp_operator_briefing import McpOperatorBriefing
 from backend.app.rag.context_builder import ContextBuilder
 from backend.app.rag.lexical import LexicalRetriever, SymbolLookup
 from backend.app.rag.runtime import build_hybrid_retriever
 from backend.app.wiki import WikiQueryService
+
+logger = logging.getLogger(__name__)
 
 
 def build_mcp_services(
@@ -95,7 +101,51 @@ _SELF_LOGGED_TOOLS = frozenset(
 )
 
 
+# How long an operator's briefing edit may wait before agents get it.
+_BRIEFING_TTL_SECONDS = 60.0
+
+
 class _CographMCPServer(MCPServer):
+    def __init__(self, *args: Any, db: SessionManager, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._db = db
+        self._briefing_read_at: float | None = None
+
+    async def refresh_instructions(self) -> None:
+        """Put the current operator briefing into the instructions.
+
+        Reads the database at most once a minute. The SDK reads the
+        instructions when it answers `initialize` and `server/discover`, so
+        setting them here is enough.
+        """
+
+        now = time.monotonic()
+        if (
+            self._briefing_read_at is not None
+            and now - self._briefing_read_at < _BRIEFING_TTL_SECONDS
+        ):
+            return
+        # Stamped before the read, so requests that arrive meanwhile do not
+        # all go to the database.
+        self._briefing_read_at = now
+        try:
+            async with self._db.session() as session:
+                content = (
+                    await session.execute(
+                        select(McpOperatorBriefing.content).where(
+                            McpOperatorBriefing.id == 1
+                        )
+                    )
+                ).scalar_one_or_none()
+        except Exception:
+            logger.warning(
+                "Could not read the MCP operator briefing; keeping the current "
+                "instructions",
+                exc_info=True,
+            )
+            return
+        self._lowlevel_server.instructions = compose_instructions(content or "")
+
     async def call_tool(
         self,
         name: str,
@@ -128,13 +178,16 @@ class _CographMCPServer(MCPServer):
         return await super().call_tool(name, arguments, context)
 
 
-def create_mcp_server(*, services: MCPServices) -> MCPServer:
+def create_mcp_server(*, services: MCPServices) -> _CographMCPServer:
     # Transport configuration — host, port, paths, statelessness and the
     # DNS-rebinding settings — belongs to `streamable_http_app()`, `sse_app()`
     # and `run()` rather than to the constructor, so each caller states it
     # where it actually serves: `main.py` for the mounted app, `main()` below
     # for the standalone process.
-    server = _CographMCPServer("Cograph", instructions=INSTRUCTIONS)
+    # The playbook alone until `refresh_instructions` reads the briefing.
+    server = _CographMCPServer(
+        "Cograph", instructions=INSTRUCTIONS, db=services.session_manager
+    )
     register_tools(server, services)
     register_resources(server, services)
     return server
@@ -154,16 +207,19 @@ def main() -> None:
     services, owns_session_manager = build_mcp_services()
 
     try:
+        server = create_mcp_server(services=services)
 
-        async def _validate_runtime() -> None:
+        async def _prepare() -> None:
             async with services.session_manager.session() as session:
                 await assert_embedding_runtime_configured(
                     session=session,
                     settings=services.settings,
                 )
+            # This process does not refresh per request: the briefing it
+            # sends is the one saved when it started.
+            await server.refresh_instructions()
 
-        anyio.run(_validate_runtime)
-        server = create_mcp_server(services=services)
+        anyio.run(_prepare)
         # Each transport accepts a different keyword set and rejects the
         # others, so build exactly the one it takes. stdio takes none.
         transport_kwargs: dict[str, object] = (

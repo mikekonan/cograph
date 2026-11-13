@@ -5,9 +5,8 @@ export interface McpBriefing {
   updated_at: string;
   updated_by_user_id: string | null;
   updated_by_email: string | null;
+  max_length: number;
 }
-
-export const MCP_BRIEFING_MAX_LENGTH = 8000;
 
 export async function getMcpBriefing(): Promise<McpBriefing> {
   return apiJson<McpBriefing>("/api/admin/mcp/briefing");

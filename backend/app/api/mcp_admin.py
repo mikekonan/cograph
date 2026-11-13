@@ -2,11 +2,10 @@
 
 A *briefing* is the free-form markdown an operator writes to tell every
 MCP client what this Cograph deployment is for — team, glossary,
-"ask me first" rules. It's surfaced to agents two ways:
-
-- inlined into the MCPServer `instructions=` payload sent at `initialize`,
-- and exposed as the `cograph://briefing` resource so agents can
-  re-fetch it after a context-compaction.
+"ask me first" rules. It is appended to the MCP instructions every client
+gets when it connects, under `## This deployment`. Clients show only about
+2000 characters of instructions, so the briefing gets what the general
+playbook leaves: `BRIEFING_LIMIT`. A longer briefing is refused here.
 
 The table `mcp_operator_briefing` is a singleton (CHECK id=1) — there
 is exactly one briefing per deployment. Writes require admin or owner.
@@ -29,13 +28,11 @@ from backend.app.core.deps import (
     require_admin_or_owner,
     require_csrf,
 )
+from backend.app.mcp.instructions import BRIEFING_LIMIT
 from backend.app.models.mcp_operator_briefing import McpOperatorBriefing
 from backend.app.models.user import User
 
 router = APIRouter(prefix="/admin/mcp", tags=["admin-mcp"])
-
-# Same cap as the column, checked here too so an oversized PATCH 400s.
-_BRIEFING_MAX_LENGTH = 8000
 
 
 class McpBriefingResponse(BaseModel):
@@ -43,12 +40,13 @@ class McpBriefingResponse(BaseModel):
     updated_at: datetime
     updated_by_user_id: UUID | None
     updated_by_email: str | None
+    max_length: int = BRIEFING_LIMIT
 
 
 class McpBriefingPatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    content: str = Field(min_length=0, max_length=_BRIEFING_MAX_LENGTH)
+    content: str = Field(min_length=0, max_length=BRIEFING_LIMIT)
 
 
 async def _load_singleton(session: AsyncSession) -> McpOperatorBriefing:

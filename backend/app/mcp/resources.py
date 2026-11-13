@@ -1,7 +1,5 @@
 from mcp.server.mcpserver import MCPServer
-from sqlalchemy import select
 
-from backend.app.mcp.instructions import DEFAULT_BRIEFING
 from backend.app.mcp.services import (
     MCPServices,
     collections_payload,
@@ -10,7 +8,6 @@ from backend.app.mcp.services import (
     resolve_readable_repository_by_slug,
     wiki_tree_resource_payload,
 )
-from backend.app.models.mcp_operator_briefing import McpOperatorBriefing
 
 # Deliberately NOT served over MCP: the whole-repo graph snapshot
 # (`.../graph`, up to 1000 nodes + edges ≈ 40-60k tokens) and the per-node
@@ -56,33 +53,6 @@ def register_resources(server: MCPServer, services: MCPServices) -> None:
             services=services,
             repository=repository,
         )
-
-    @server.resource(
-        "cograph://briefing",
-        name="cograph_briefing",
-        title="Deployment operator briefing",
-        description=(
-            "The operator-edited markdown briefing for this Cograph "
-            "deployment. Re-fetch after a context compaction to recover "
-            "deployment-specific vocabulary and 'ask me first' rules."
-        ),
-        mime_type="application/json",
-    )
-    async def briefing_resource() -> object:
-        # No ACL gate here: the briefing is deployment-wide text that every
-        # MCP client used to get inside `instructions=`.
-        async with services.session_manager.session() as session:
-            row = (
-                await session.execute(
-                    select(McpOperatorBriefing).where(McpOperatorBriefing.id == 1)
-                )
-            ).scalar_one_or_none()
-        content = (row.content if row is not None else "") or DEFAULT_BRIEFING.strip()
-        return {
-            "content": content,
-            "updated_at": row.updated_at.isoformat() if row is not None else None,
-            "is_default": row is None or not (row.content or "").strip(),
-        }
 
     @server.resource(
         "cograph://my-context",

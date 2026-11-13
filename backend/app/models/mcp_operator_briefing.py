@@ -14,8 +14,8 @@ class McpOperatorBriefing(Base):
     """Singleton row holding the deployment-wide MCP operator briefing.
 
     Locked to `id=1` by a CHECK constraint at the DB layer so any
-    accidental second insert errors loudly. Empty `content` is valid
-    — the rendered playbook then falls back to the in-code default.
+    accidental second insert errors loudly. Empty `content` is valid:
+    agents then get the general playbook alone.
     """
 
     __tablename__ = "mcp_operator_briefing"
