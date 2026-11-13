@@ -1,39 +1,39 @@
-"""The `instructions=` text every MCP client gets at `initialize`.
+"""The `instructions=` text every MCP client gets when it connects.
 
-Clients show only the first part of it, so it stays short: what Cograph
-is, when to use it, and how to find, read and stop. Per-tool rules live
-in the tool descriptions. Tests pin its size.
+Clients show only about the first 2000 characters, so the whole text fits in
+that: a short general playbook (what Cograph is, how to find, read, check and
+stop), then the operator briefing from `/admin?tab=mcp` under
+`## This deployment`. A briefing too long to fit is not sent at all, so agents
+never get a cut-off one. Per-tool rules live in the tool descriptions.
 """
 
 INSTRUCTIONS = """\
-Cograph is a read-only index of your team's repositories and docs: search code by meaning or name, read exact source, find callers. Repositories outside your working directory are visible only through Cograph.
-
-## When to use it
-- A repository not in your working directory.
-- A search by meaning, without a name.
-- Team docs: what a term means, why something was decided.
-If the repository is in your working directory and you know a name, grep and read the files yourself: it is cheaper and newer. Cograph knows code and docs as of its last index, not live data.
+Cograph is a read-only index of your team's repositories and docs. Repositories outside your working directory are visible only through Cograph; one in your working directory you grep and read yourself. Cograph knows code and docs as of its last index, not live data.
 
 ## How to answer
-1. Find. Tools take a repository as host/owner/name. Known only by name: cograph_repositories(search=name). Unknown: cograph_route. A word from the code: cograph_search_code. A question in words: cograph_retrieve, one topic per call.
-2. Read. Results show an excerpt: read the best one or two hits with cograph_read_node(node_id). A doc hit has no node_id: read its `at` lines with cograph_read_file_range. A helper: read its callers; a test: what it calls (cograph_related, direction=callers or callees). For how or why something works, read the page a result's `wiki` names (its `section`) with cograph_wiki_page.
-3. Check. For what the code does at run time, read where its input comes from, its callers in product code (not `kind` test), and the layer above. A branch happens only if a product caller reaches it; if none can, say it does not happen. A value sent to another service (event, RPC) or set in config (YAML, manifest) means what the code reading it does: read that code before you conclude; a search's `elsewhere` names it. What you could not show, mark "not verified".
-4. Stop. Answer once you can cite the code or doc that answers the question. Do not repeat a call whose result you still have. If two differently worded searches find nothing relevant, say what you searched and stop.
-
-## Citations
-Cite each claim. Code: path:start-end, as given in the result. Docs and wiki: title and heading.
+1. Find. A repository is host/owner/name; by name: cograph_repositories(search=name); unknown: cograph_route. A word from the code: cograph_search_code. A question in words: cograph_retrieve, one topic per call.
+2. Read the best one or two hits with cograph_read_node(node_id); a doc hit: its `at` lines with cograph_read_file_range. Callers or callees: cograph_related. For how or why: the page a result's `wiki` names, with cograph_wiki_page.
+3. Check. For run-time behaviour read where the input comes from, its product callers (not `kind` test) and the layer above. A branch happens only if a product caller reaches it; if none can, say it does not happen. A value sent to another service or set in config means what the code reading it does: read that code; `elsewhere` names it. What you could not show, mark "not verified".
+4. Stop once you can cite the answer. Do not repeat a call. Two searches with nothing: say what you searched and stop.
+Cite each claim: path:start-end; docs: title and heading.
 """
 
-# Served by the `cograph://briefing` resource when no operator text is saved.
-DEFAULT_BRIEFING = """\
-This Cograph deployment hasn't been customised yet.
+# Clients cut longer instructions.
+INSTRUCTIONS_LIMIT = 2000
 
-Cite every claim with `file_path:start_line-end_line` or `wiki/<slug>`
-as given in the result. If you cannot cite, the correct
-answer is "I don't have enough information in this Cograph instance to
-answer."
+_BRIEFING_HEADING = "\n## This deployment\n"
 
-If the user asks domain-specific questions ("what does <acronym>
-mean", "which service owns <feature>"), tell them to ask their
-Cograph admin to fill in the operator briefing at /admin?tab=mcp.
-"""
+# What the playbook, the heading and the closing newline leave of the budget.
+BRIEFING_LIMIT = INSTRUCTIONS_LIMIT - len(INSTRUCTIONS) - len(_BRIEFING_HEADING) - 1
+
+
+def compose_instructions(briefing: str) -> str:
+    """The playbook plus the operator briefing, or the playbook alone.
+
+    An empty briefing, or one over `BRIEFING_LIMIT`, gives the playbook alone.
+    """
+
+    briefing = briefing.strip()
+    if not briefing or len(briefing) > BRIEFING_LIMIT:
+        return INSTRUCTIONS
+    return f"{INSTRUCTIONS}{_BRIEFING_HEADING}{briefing}\n"

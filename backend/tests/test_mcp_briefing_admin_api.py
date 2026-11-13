@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 
 from backend.app.core.auth import TokenType, create_token, hash_password
+from backend.app.mcp.instructions import BRIEFING_LIMIT
 from backend.app.models.enums import UserRole
 from backend.app.models.mcp_operator_briefing import McpOperatorBriefing
 from backend.app.models.user import User
@@ -82,6 +83,7 @@ async def test_get_briefing_returns_seeded_singleton(client, db_session, setting
     assert body["content"] == ""
     assert body["updated_by_user_id"] is None
     assert body["updated_by_email"] is None
+    assert body["max_length"] == BRIEFING_LIMIT
 
 
 async def test_patch_briefing_updates_content_and_attribution(
@@ -125,7 +127,7 @@ async def test_patch_briefing_rejects_oversized_payload(client, db_session, sett
     await _authenticate(client, settings, admin)
     response = await client.patch(
         "/api/admin/mcp/briefing",
-        json={"content": "x" * 8001},
+        json={"content": "x" * (BRIEFING_LIMIT + 1)},
         headers={"x-csrf-token": _TEST_CSRF},
     )
     assert response.status_code == 422

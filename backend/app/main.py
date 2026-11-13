@@ -334,6 +334,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ),
     )
 
+    async def mcp_app_with_current_briefing(scope, receive, send) -> None:
+        # Any request may be an `initialize`, so the instructions follow the
+        # saved briefing instead of staying as they were at boot.
+        # `refresh_instructions` reads the database at most once a minute.
+        if scope["type"] == "http":
+            await mcp_server.refresh_instructions()
+        await mcp_http_app(scope, receive, send)
+
     async def run_mcp_session_manager(*, task_status=anyio.TASK_STATUS_IGNORED) -> None:
         async with mcp_server.session_manager.run():
             task_status.started()
@@ -446,7 +454,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(root_router)
     app.include_router(api_router)
     app.include_router(scim_router)
-    app.mount("/mcp", wrap_with_mcp_auth(mcp_http_app, session_manager))
+    # Auth stays outermost, so a request without a valid token never reads
+    # the database for the briefing.
+    app.mount(
+        "/mcp", wrap_with_mcp_auth(mcp_app_with_current_briefing, session_manager)
+    )
     return app
 
 

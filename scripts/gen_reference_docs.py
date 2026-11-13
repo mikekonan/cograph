@@ -120,7 +120,7 @@ TAG_GROUPS: list[tuple[str, str, str]] = [
     (
         "admin-mcp",
         "MCP briefing",
-        "The operator briefing, served as the `cograph://briefing` MCP resource.",
+        "The operator briefing, appended to the MCP instructions.",
     ),
     ("webhooks", "Inbound webhooks", "Push events that trigger a sync."),
     (

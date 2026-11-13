@@ -1,7 +1,6 @@
 import { AlertCircle, CheckCircle2, Plug, Save } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ApiError } from "@/api/errors";
-import { MCP_BRIEFING_MAX_LENGTH } from "@/api/mcpBriefing";
 import { Skeleton } from "@/components/shared/Skeleton";
 import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Textarea";
@@ -11,16 +10,15 @@ import { formatRelativeTime } from "@/lib/utils";
 /**
  * AdminMcpPage — `/admin?tab=mcp`.
  *
- * Edit the singleton operator briefing that gets inlined into every MCP
- * client's `initialize` payload (FastMCP `instructions=`) and also
- * exposed as the `cograph://briefing` resource. Backend lives in
- * `backend/app/api/mcp_admin.py`; the playbook that wraps this briefing
- * is in `backend/app/mcp/instructions.py`.
+ * Edit the singleton operator briefing. It is added to the instructions
+ * every MCP client gets when it connects, under `## This deployment`.
+ * Clients show about 2000 chars of instructions, so the briefing gets what
+ * the general playbook leaves (`max_length` from the API); a longer briefing
+ * is not sent. Backend: `backend/app/api/mcp_admin.py`; the playbook and the
+ * limit: `backend/app/mcp/instructions.py`.
  *
- * The 8K char cap is enforced at three layers — the column DDL, the
- * Pydantic schema, and the textarea `maxLength`. We surface a live char
- * counter so an operator pasting a long doc sees the cliff before they
- * hit Save and get a 422.
+ * The textarea has no `maxLength`: a briefing saved under an older, larger
+ * limit must show in full, so the operator can see it is over and shorten it.
  */
 export default function AdminMcpPage() {
   const briefingQuery = useMcpBriefing();
@@ -39,7 +37,7 @@ export default function AdminMcpPage() {
     }
   }, [briefingQuery.data, dirty]);
 
-  const remaining = MCP_BRIEFING_MAX_LENGTH - draft.length;
+  const remaining = (briefingQuery.data?.max_length ?? 0) - draft.length;
   const overBudget = remaining < 0;
   const canSave = dirty && !overBudget && !updateMutation.isPending;
 
@@ -72,11 +70,12 @@ export default function AdminMcpPage() {
           <Plug className="h-5 w-5" aria-hidden="true" /> MCP operator briefing
         </h2>
         <p className="max-w-3xl text-sm text-[color:var(--color-fg-muted)]">
-          Free-form markdown surfaced to every MCP client at <code>initialize</code> and via the{" "}
-          <code>cograph://briefing</code> resource. Use it to tell agents what this deployment is
-          for, define domain vocabulary, point at canonical sources, or set deployment-specific
-          rules. The cite-or-bust playbook is appended automatically — write only what's specific to
-          this instance.
+          Free-form markdown added to the instructions every MCP client gets when it connects, under{" "}
+          <code>## This deployment</code>. Use it to tell agents what this deployment is for, define
+          domain vocabulary, point at canonical sources, or set deployment-specific rules. Clients
+          show about 2000 characters of instructions, so the briefing gets what the general playbook
+          leaves. A longer briefing is not sent at all. Changes reach agents within a minute, on
+          their next connect.
         </p>
       </header>
 
@@ -106,7 +105,6 @@ export default function AdminMcpPage() {
                 setDraft(e.target.value);
                 setDirty(true);
               }}
-              maxLength={MCP_BRIEFING_MAX_LENGTH}
               rows={16}
               spellCheck={false}
               className="font-mono text-sm leading-relaxed"
@@ -127,8 +125,9 @@ export default function AdminMcpPage() {
                     : "text-[color:var(--color-fg-muted)]"
                 }
               >
-                {draft.length.toLocaleString()} / {MCP_BRIEFING_MAX_LENGTH.toLocaleString()} chars
-                {overBudget ? ` (${(-remaining).toLocaleString()} over)` : ""}
+                {overBudget
+                  ? `${(-remaining).toLocaleString()} chars over: agents do not get this text`
+                  : `${remaining.toLocaleString()} chars left`}
               </span>
               <span className="text-[color:var(--color-fg-muted)]">
                 {briefingQuery.data.updated_at ? (
@@ -160,7 +159,7 @@ export default function AdminMcpPage() {
             {savedAt && !dirty && !errorMessage ? (
               <span className="inline-flex items-center gap-1.5 text-xs text-[color:var(--color-success,var(--color-accent))]">
                 <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
-                Saved — new briefing reaches clients on their next MCP <code>initialize</code>.
+                Saved — agents get it within a minute, on their next connect.
               </span>
             ) : null}
             {errorMessage ? (
@@ -172,21 +171,6 @@ export default function AdminMcpPage() {
                 {errorMessage}
               </span>
             ) : null}
-          </div>
-
-          <div className="flex flex-col gap-2">
-            <h3 className="text-sm font-medium text-[color:var(--color-fg)]">
-              What the agent sees
-            </h3>
-            <p className="text-xs text-[color:var(--color-fg-muted)]">
-              Your briefing is dropped into the rendered playbook between{" "}
-              <code>## Operator briefing</code> and the cite-or-bust rules. This preview shows the
-              exact section the agent reads — the playbook itself (retry ladder, multi-phrasing
-              rule, etc.) wraps around this and isn't editable here.
-            </p>
-            <pre className="overflow-auto rounded-[var(--radius)] border border-[color:var(--color-border-subtle)] bg-[color:var(--color-bg-elevated)] p-3 font-mono text-xs leading-relaxed text-[color:var(--color-fg)]">
-              {draft.trim() ? draft : "(empty — the agent will see the built-in default briefing)"}
-            </pre>
           </div>
         </div>
       )}

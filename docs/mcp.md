@@ -222,7 +222,6 @@ surface itself, not only in prose here.
 | Name | URI | What |
 | --- | --- | --- |
 | `cograph_wiki_tree` | `cograph://repo/{host}/{owner}/{name}/wiki` | The repository's wiki, **summarised**: page tree plus a lead paragraph, section headings and covered questions per page. ~2–3k tokens for a whole wiki. |
-| `cograph_briefing` | `cograph://briefing` | The operator-written briefing, re-fetchable after context compaction. |
 | `cograph_my_context` | `cograph://my-context` | "Where am I" — the repositories and collections this token can read, with wiki page counts. |
 
 The name column matters because the tool descriptions refer to resources by name
@@ -247,13 +246,13 @@ zero token cost.
 
 ## Server instructions
 
-Cograph sends short instructions to every client at `initialize`, about 1,600
-characters. Clients show only the start of long instructions, so the text holds
-three things and nothing else:
+Cograph sends short instructions to every client when it connects. Clients show
+only about the first 2,000 characters, so the general playbook is about 1,300
+characters and holds three things and nothing else:
 
-- **When to use Cograph.** A repository outside the working directory, a search
-  by meaning, team docs. For a repository on disk with a known name, the agent's
-  own grep and file reads are cheaper and may be newer than the index.
+- **What Cograph is.** A read-only index of the team's repositories and docs,
+  as of its last index. A repository outside the working directory is visible
+  only through Cograph; one on disk the agent greps and reads itself.
 - **How to answer: find, read, check, stop.** Find with `cograph_search_code`
   for a name and `cograph_retrieve` for a question in words. Read the best one or
   two hits with `cograph_read_node`. For run-time behaviour, check where the
@@ -268,8 +267,11 @@ Rules that belong to one tool live in that tool's description: when
 where `cograph_wiki_page` slugs come from. The text itself is in
 `backend/app/mcp/instructions.py`.
 
-The operator briefing at `/admin?tab=mcp` is not part of the instructions.
-Agents can read it only through the `cograph://briefing` resource.
+The operator briefing at `/admin?tab=mcp` is appended to the instructions under
+`## This deployment` when it fits the 2,000-character budget: the briefing gets
+what the playbook leaves. The admin API refuses a longer briefing, and a longer
+one already stored is not sent; agents then get the playbook alone. An edit
+reaches agents within a minute, on their next connect.
 
 ## Access control
 
