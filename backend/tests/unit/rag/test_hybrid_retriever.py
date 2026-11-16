@@ -136,6 +136,31 @@ async def test_hand_written_only_drops_generated_code_hits():
     assert [c.chunk_id for c in result] == [hand]
 
 
+async def test_product_code_outranks_tests_and_examples_just_above_it():
+    test, example, product = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    paths = {test: "shelf/shelf_test.go", example: "examples/shelf.go", product: "shelf/shelf.go"}
+    hits = [replace(_chunk(cid), metadata={"file_path": paths[cid]}) for cid in (test, example, product)]
+    retriever = HybridRetriever(
+        vector=_StubVector({"code": hits}),
+        lexical=_StubLexical({}),
+        symbol=_StubSymbol([]),
+        reranker=_CountingReranker(),
+        router=_NeverRouter(),
+    )
+    session = _session()
+    session.scalars = AsyncMock(return_value=[])
+
+    result = await retriever.retrieve(
+        session,
+        query_text="shelf",
+        query_embedding=[0.1] * 1536,
+        repository_id=uuid.uuid4(),
+        stores={"code"},
+    )
+
+    assert [c.chunk_id for c in result] == [product, test, example]
+
+
 @pytest.mark.asyncio
 async def test_partial_failure_in_one_stream_degrades_gracefully():
     """A failed stream logs and is skipped — remaining streams must still merge."""

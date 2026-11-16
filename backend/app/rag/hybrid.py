@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+from dataclasses import replace
 from datetime import datetime
 from typing import Literal, Protocol
 from uuid import UUID
@@ -22,7 +24,7 @@ from sqlalchemy import DateTime, bindparam, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import TextClause
 
-from backend.app.models.code_node import GENERATED_NODE, CodeNode
+from backend.app.models.code_node import GENERATED_NODE, CodeNode, node_kind
 from backend.app.rag.fusion import rrf_merge_streams
 from backend.app.rag.retriever import EMBEDDING_DIM, RetrievedChunk, _format_vector_literal
 
@@ -515,11 +517,13 @@ class HybridRetriever:
             )
             all_merged.extend(merged)
 
+        generated = await _generated_ids(session, all_merged)
         if hand_written_only:
             # Filtered after fusion: a repo whose top candidates are mostly
             # generated returns fewer than top_k. Push the filter into each
             # stream's SQL if that starts to matter.
-            all_merged = await _without_generated(session, all_merged)
+            all_merged = [c for c in all_merged if c.chunk_id not in generated]
+        all_merged = _demote_not_product(all_merged, generated)
 
         # Cross-store sort by fused RRF score (each store's RRF scores are on
         # the same scale because they all use the same k).
@@ -560,16 +564,36 @@ class HybridRetriever:
             return []
 
 
-async def _without_generated(
-    session: AsyncSession, chunks: list[RetrievedChunk]
-) -> list[RetrievedChunk]:
-    """Drop code hits from generated files: they stay searchable, but no LLM reads them."""
+async def _generated_ids(session: AsyncSession, chunks: list[RetrievedChunk]) -> set[UUID]:
+    """Code hits from generated files: they stay searchable, but no LLM reads them."""
     code_ids = [c.chunk_id for c in chunks if c.store == "code"]
     if not code_ids:
-        return chunks
-    generated = set(
+        return set()
+    return set(
         await session.scalars(
             select(CodeNode.id).where(CodeNode.id.in_(code_ids), GENERATED_NODE)
         )
     )
-    return [c for c in chunks if c.chunk_id not in generated]
+
+
+# Example programs, tests and generated code restate the product code a
+# question is about, and often take its place just above the top_k cut.
+# Their fused score is lowered before the cut; they are not dropped, so a
+# question about a test still finds it. Measured on hand-labelled questions:
+# a small, steady gain; a factor of 0.5 for tests did worse.
+_EXAMPLE_PATH_RE = re.compile(r"(?i)(?:^|/)(?:examples?|samples?|demo)/")
+_EXAMPLE_FACTOR = 0.5
+_NOT_PRODUCT_FACTOR = 0.7
+
+
+def _demote_not_product(
+    chunks: list[RetrievedChunk], generated: set[UUID]
+) -> list[RetrievedChunk]:
+    out = []
+    for chunk in chunks:
+        path = chunk.metadata.get("file_path") or ""
+        factor = _EXAMPLE_FACTOR if _EXAMPLE_PATH_RE.search(path) else 1.0
+        if chunk.store == "code" and node_kind(path, generated=chunk.chunk_id in generated):
+            factor *= _NOT_PRODUCT_FACTOR
+        out.append(chunk if factor == 1.0 else replace(chunk, score=chunk.score * factor))
+    return out
