@@ -354,3 +354,49 @@ async def test_other_repositories_with_the_name_are_named_elsewhere(pg_session) 
         {"repository": "example.test/acme/printing", "in": "code"},
     ]
     assert "elsewhere_more" not in payload
+
+
+async def test_a_name_only_in_the_repository_documents_returns_them(pg_session) -> None:
+    """No code holds the name: the repository's own documents that do are the
+    results. Any code hit leaves the documents out."""
+    repo_id = await _seed(pg_session)
+    doc = RepoDocument(
+        repository_id=repo_id,
+        file_path="flows/restock.yml",
+        title="flows/restock.yml",
+        content="restock:\n  call: RefillShelf\n  then: PrintLabel\n",
+        content_hash="d" * 64,
+        bytes=1,
+    )
+    pg_session.add(doc)
+    await pg_session.flush()
+    pg_session.add(
+        RepoDocumentChunk(
+            document_id=doc.id,
+            chunk_index=0,
+            heading_path=[],
+            content=doc.content,
+            mentions=[],
+            start_line=1,
+            end_line=3,
+        )
+    )
+    await pg_session.flush()
+
+    async def _search(query: str, path_prefix: str = "") -> list[dict]:
+        payload = await search_code_payload(
+            services=_services(pg_session),
+            repository_id=repo_id,
+            query=query,
+            top_k=10,
+            current_user=None,
+            path_prefix=path_prefix,
+        )
+        return payload["results"]
+
+    (record,) = await _search("RefillShelf")
+    assert record["at"] == "flows/restock.yml:1-3"
+    assert "call: RefillShelf" in record["text"]
+    assert "node_id" not in record
+    assert await _search("RefillShelf", path_prefix="shipping/") == []
+    assert [r.get("name") for r in await _search("PrintLabel")] == ["shipping.PrintLabel"]

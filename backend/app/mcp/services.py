@@ -911,15 +911,42 @@ async def search_code_payload(
                 hit.chunk_id in kinds,
             ),
         )
-        response = await services.context_builder.build(
-            session,
-            chunks=ranked[:top_k],
-            requested_layers={RetrievalLayer.AST},
-            repository_id=repository_id,
-            include_chunks=False,
-            include_graph=False,
-            include_scores=False,
-        )
+        if named:
+            response = await services.context_builder.build(
+                session,
+                chunks=ranked[:top_k],
+                requested_layers={RetrievalLayer.AST},
+                repository_id=repository_id,
+                include_chunks=False,
+                include_graph=False,
+                include_scores=False,
+            )
+        else:
+            # No code holds the words. A name the code never spells out, such
+            # as a step of a YAML flow, may be in the repository's documents.
+            # Their search has no path filter, so path_prefix cuts its top_k:
+            # pass the prefix into that SQL if a folder comes back short.
+            documents = await services.lexical.search(
+                session,
+                store="repo_docs",
+                query_text=query,
+                repository_id=repository_id,
+                top_k=top_k,
+            )
+            response = await services.context_builder.build(
+                session,
+                chunks=[
+                    hit
+                    for hit in documents
+                    if str(hit.metadata.get("file_path") or "").startswith(path_prefix)
+                ],
+                requested_layers={RetrievalLayer.REPO_DOC},
+                repository_id=repository_id,
+                include_chunks=False,
+                include_graph=False,
+                include_scores=False,
+                query=query,
+            )
         node_ids = _node_ids(response)
         called_by = await _called_by(session, node_ids)
         wiki = await _wiki_pages(

@@ -136,7 +136,7 @@ A node named exactly as the query comes first. `kind` marks a test or generated 
 
 `called_by` lists up to 3 callers {name, at, kind}, product code first; `called_by_count` counts all of them by kind (code, test, generated); [] means no callers.
 
-No hits: `reason` names the words searched for.
+No code hits: `reason` names the words searched for. The results are then the repository's documents that hold the words, as {heading_path, at, text}; read more with cograph_read_file_range.
 
 `wiki` (only when a generated-wiki page covers the hits) lists up to 2 pages {page, title, section, excerpt}; read one with cograph_wiki_page(page, section).
 
