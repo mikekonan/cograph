@@ -23,6 +23,11 @@ ACCESS EXCLUSIVE lock, so reads and writes of the table wait until the
 rewrite ends. Deploy when no sync runs. Until the CONCURRENT index build
 that follows finishes, lexical code search scans the table.
 
+The parts come after the whole tokens, and Postgres caps a position at
+16383, so in a body longer than about 8000 words the phrase of a dotted
+term can miss there; only a term equal to a whole token still matches. Such
+bodies are rare.
+
 NOTE on partial-failure recovery (same as 0018)
 ================================================
 The GIN index is created via ``CREATE INDEX CONCURRENTLY`` inside an
@@ -43,6 +48,9 @@ depends_on = None
 
 def upgrade() -> None:
     # One ALTER, one table rewrite. Dropping a column drops its index.
+    # A long read holds the table: give up rather than queue every query
+    # behind the waiting ALTER.
+    op.execute("SET LOCAL lock_timeout = '10s'")
     op.execute(
         "ALTER TABLE code_nodes"
         "  DROP COLUMN content_tsv,"
