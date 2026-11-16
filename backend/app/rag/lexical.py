@@ -73,6 +73,50 @@ def _bind_temporal(stmt: TextClause) -> TextClause:
     )
 
 
+def _word_part_start(term: str) -> str:
+    """A regex for `term` where a word part starts, in any letter case:
+    after a non-letter, or at a capital (`FromHex` in `TraceIDFromHex`)."""
+    parts = [
+        f"[{c}{c.upper()}]" if c.isalpha() else (c if c.isdigit() else "\\" + c)
+        for c in term
+    ]
+    start = "(^|[^[:alnum:]])" + "".join(parts)
+    if term[0].isalpha():
+        start += "|" + term[0].upper() + "".join(parts[1:])
+    return start
+
+
+def _code_chunk(row) -> RetrievedChunk:
+    return RetrievedChunk(
+        store="code",
+        chunk_id=row["chunk_id"],
+        content=row["content"],
+        score=float(row["score"]),
+        metadata={
+            "qualified_name": row["qualified_name"],
+            "file_path": row["file_path"],
+            "language": row["language"],
+            "start_line": row["start_line"],
+            "end_line": row["end_line"],
+        },
+    )
+
+
+def _doc_chunk(row) -> RetrievedChunk:
+    return RetrievedChunk(
+        store="repo_docs",
+        chunk_id=row["chunk_id"],
+        content=row["content"],
+        score=float(row["score"]),
+        metadata={
+            "file_path": row["file_path"],
+            "title": row["title"],
+            "chunk_index": row["chunk_index"],
+            "heading_path": row["heading_path"],
+        },
+    )
+
+
 class LexicalRetriever:
     """BM25 / ts_rank_cd retrieval over the per-store tsvector columns.
 
@@ -203,22 +247,7 @@ class LexicalRetriever:
                 "until": until,
             },
         )
-        return [
-            RetrievedChunk(
-                store="code",
-                chunk_id=row["chunk_id"],
-                content=row["content"],
-                score=float(row["score"]),
-                metadata={
-                    "qualified_name": row["qualified_name"],
-                    "file_path": row["file_path"],
-                    "language": row["language"],
-                    "start_line": row["start_line"],
-                    "end_line": row["end_line"],
-                },
-            )
-            for row in result.mappings().all()
-        ]
+        return [_code_chunk(row) for row in result.mappings().all()]
 
     async def _search_repo_docs(
         self,
@@ -267,20 +296,103 @@ class LexicalRetriever:
                 "page_documents_only": page_documents_only,
             },
         )
-        return [
-            RetrievedChunk(
-                store="repo_docs",
-                chunk_id=row["chunk_id"],
-                content=row["content"],
-                score=float(row["score"]),
-                metadata={
-                    "file_path": row["file_path"],
-                    "title": row["title"],
-                    "chunk_index": row["chunk_index"],
-                    "heading_path": row["heading_path"],
-                },
+        return [_doc_chunk(row) for row in result.mappings().all()]
+
+    async def substring_search(
+        self,
+        session: AsyncSession,
+        *,
+        store: Literal["code", "repo_docs"],
+        query_text: str,
+        repository_id: UUID,
+        top_k: int = 10,
+        path_prefix: str = "",
+    ) -> list[RetrievedChunk]:
+        """Rows that hold every query word where a word part starts.
+
+        Full-text search matches whole words, so it misses a name inside a
+        longer one (`ToRetry` in `SafeToRetry`) and the part of a dotted or
+        slashed word in a document. A part starts after a non-letter or at a
+        capital; letters in the middle of a part do not count (`hosts` is not
+        in `PayhostSuite`). Code rows come before
+        module rows, and a module row is dropped when a row of its file
+        matched: it is the whole file, and the only row of top-level code (a
+        TypeScript test body). A scan of one repository: run it only when the
+        indexed search found nothing.
+        """
+        terms = extract_query_terms(query_text)
+        if not terms:
+            return []
+        # Escaped, so `_` and `%` in a name stay literal.
+        patterns = [
+            "%"
+            + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            + "%"
+            for term in terms
+        ]
+        params = {
+            "patterns": patterns,
+            "starts": [_word_part_start(term) for term in terms],
+            "repo_id": repository_id,
+            "path_prefix": path_prefix,
+            "top_k": top_k,
+        }
+        if store == "repo_docs":
+            result = await session.execute(
+                text(
+                    """
+                    SELECT
+                        rdc.id AS chunk_id,
+                        rdc.content AS content,
+                        rdc.chunk_index AS chunk_index,
+                        rdc.heading_path AS heading_path,
+                        rd.file_path AS file_path,
+                        rd.title AS title,
+                        0.0 AS score
+                    FROM repo_document_chunks rdc
+                    JOIN repo_documents rd ON rd.id = rdc.document_id
+                    WHERE rd.repository_id = :repo_id
+                      AND starts_with(rd.file_path, :path_prefix)
+                      AND rdc.content ILIKE ALL(:patterns)
+                      AND rdc.content ~ ALL(:starts)
+                    ORDER BY rd.file_path, rdc.chunk_index
+                    LIMIT :top_k
+                    """
+                ),
+                params,
             )
-            for row in result.mappings().all()
+            return [_doc_chunk(row) for row in result.mappings().all()]
+        result = await session.execute(
+            text(
+                """
+                SELECT
+                    cn.id AS chunk_id,
+                    cn.content AS content,
+                    cn.qualified_name AS qualified_name,
+                    cn.file_path AS file_path,
+                    cn.language AS language,
+                    cn.start_line AS start_line,
+                    cn.end_line AS end_line,
+                    cn.node_type = 'module' AS is_module,
+                    0.0 AS score
+                FROM code_nodes cn
+                WHERE cn.repository_id = :repo_id
+                  AND starts_with(cn.file_path, :path_prefix)
+                  AND cn.content ILIKE ALL(:patterns)
+                  AND cn.content ~ ALL(:starts)
+                ORDER BY is_module, cn.qualified_name ILIKE ALL(:patterns) DESC,
+                    length(cn.content)
+                LIMIT :top_k
+                """
+            ),
+            params,
+        )
+        rows = result.mappings().all()
+        covered = {row["file_path"] for row in rows if not row["is_module"]}
+        return [
+            _code_chunk(row)
+            for row in rows
+            if not (row["is_module"] and row["file_path"] in covered)
         ]
 
     async def _search_md_collections(
@@ -430,22 +542,7 @@ class SymbolLookup:
                 "until": until,
             },
         )
-        return [
-            RetrievedChunk(
-                store="code",
-                chunk_id=row["chunk_id"],
-                content=row["content"],
-                score=float(row["score"]),
-                metadata={
-                    "qualified_name": row["qualified_name"],
-                    "file_path": row["file_path"],
-                    "language": row["language"],
-                    "start_line": row["start_line"],
-                    "end_line": row["end_line"],
-                },
-            )
-            for row in result.mappings().all()
-        ]
+        return [_code_chunk(row) for row in result.mappings().all()]
 
     async def exact(
         self,

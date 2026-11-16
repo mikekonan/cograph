@@ -400,3 +400,82 @@ async def test_a_name_only_in_the_repository_documents_returns_them(pg_session) 
     assert "node_id" not in record
     assert await _search("RefillShelf", path_prefix="shipping/") == []
     assert [r.get("name") for r in await _search("PrintLabel")] == ["shipping.PrintLabel"]
+
+    # Full-text search keeps `gateway.restockFromDepot` one word: the
+    # document is found by the letters of its part.
+    guide = RepoDocument(
+        repository_id=repo_id,
+        file_path="docs/deploy.md",
+        title="Deploy",
+        content="Set `gateway.restockFromDepot` to true.\n",
+        content_hash="e" * 64,
+        bytes=1,
+    )
+    pg_session.add(guide)
+    await pg_session.flush()
+    pg_session.add(
+        RepoDocumentChunk(
+            document_id=guide.id,
+            chunk_index=0,
+            heading_path=[],
+            content=guide.content,
+            mentions=[],
+            start_line=1,
+            end_line=1,
+        )
+    )
+    await pg_session.flush()
+    assert [r["at"] for r in await _search("restockFromDepot")] == ["docs/deploy.md:1-1"]
+
+
+async def test_a_name_inside_a_longer_one_is_found_by_its_letters(pg_session) -> None:
+    """No node holds the query as a whole word: the nodes that hold its
+    letters where a word part starts are the results, with an excerpt where
+    they stand. A module row
+    stands in only for a file with no other hit, as the only row of a
+    TypeScript test body."""
+    repo_id = await _seed(pg_session)
+    body = "func Retry(err error) bool {\n\treturn queue.SafeToRestock(err)\n}"
+    await _node(pg_session, repo_id, "shipping.Retry", "shipping/retry.go", body)
+    await _node(
+        pg_session,
+        repo_id,
+        "shipping/retry.go#module",
+        "shipping/retry.go",
+        f"package shipping\n{body}",
+        node_type="module",
+    )
+    # The same letters in the middle of a word part are not the name.
+    await _node(
+        pg_session,
+        repo_id,
+        "shipping.Auto",
+        "shipping/auto.go",
+        "func Auto() bool {\n\treturn autorestock\n}",
+    )
+    await _node(
+        pg_session,
+        repo_id,
+        "shelf/shelf.test.ts#module",
+        "shelf/shelf.test.ts",
+        'it("labels", () => {\n\texpect(shelf.labelHTML).toBe("")\n})',
+        node_type="module",
+    )
+    await pg_session.flush()
+
+    async def _search(query: str) -> list[dict]:
+        payload = await search_code_payload(
+            services=_services(pg_session),
+            repository_id=repo_id,
+            query=query,
+            top_k=10,
+            current_user=None,
+        )
+        return payload["results"]
+
+    (record,) = await _search("ToRestock")
+    assert record["name"] == "shipping.Retry"
+    assert "SafeToRestock" in record["code"]
+    (record,) = await _search("labelHTML")
+    assert record["name"] == "shelf/shelf.test.ts#module"
+    assert "shelf.labelHTML" in record["code"]

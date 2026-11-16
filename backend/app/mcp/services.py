@@ -895,6 +895,22 @@ async def search_code_payload(
             for hit in [*exact, *merged]
             if not str(hit.metadata.get("qualified_name", "")).endswith("#module")
         }
+        # Full-text search matches whole words. A name inside a longer one
+        # (`ToRetry` in `SafeToRetry`), or written only in a file's top-level
+        # code, is found by its letters; the excerpt then shows where.
+        by_letters = not named
+        if by_letters:
+            named = {
+                hit.chunk_id: hit
+                for hit in await services.lexical.substring_search(
+                    session,
+                    store="code",
+                    query_text=query,
+                    repository_id=repository_id,
+                    top_k=top_k,
+                    path_prefix=path_prefix,
+                )
+            }
         kinds = await _kinds(
             session,
             {node_id: hit.metadata.get("file_path") for node_id, hit in named.items()},
@@ -915,31 +931,41 @@ async def search_code_payload(
             response = await services.context_builder.build(
                 session,
                 chunks=ranked[:top_k],
-                requested_layers={RetrievalLayer.AST},
+                # A hit by letters shows its body around the match: the
+                # signature does not say where the name stands.
+                requested_layers={RetrievalLayer.CODE if by_letters else RetrievalLayer.AST},
                 repository_id=repository_id,
                 include_chunks=False,
                 include_graph=False,
                 include_scores=False,
+                query=query if by_letters else None,
             )
         else:
             # No code holds the words. A name the code never spells out, such
             # as a step of a YAML flow, may be in the repository's documents.
             # Their search has no path filter, so path_prefix cuts its top_k:
             # pass the prefix into that SQL if a folder comes back short.
-            documents = await services.lexical.search(
+            documents = [
+                hit
+                for hit in await services.lexical.search(
+                    session,
+                    store="repo_docs",
+                    query_text=query,
+                    repository_id=repository_id,
+                    top_k=top_k,
+                )
+                if str(hit.metadata.get("file_path") or "").startswith(path_prefix)
+            ] or await services.lexical.substring_search(
                 session,
                 store="repo_docs",
                 query_text=query,
                 repository_id=repository_id,
                 top_k=top_k,
+                path_prefix=path_prefix,
             )
             response = await services.context_builder.build(
                 session,
-                chunks=[
-                    hit
-                    for hit in documents
-                    if str(hit.metadata.get("file_path") or "").startswith(path_prefix)
-                ],
+                chunks=documents,
                 requested_layers={RetrievalLayer.REPO_DOC},
                 repository_id=repository_id,
                 include_chunks=False,
