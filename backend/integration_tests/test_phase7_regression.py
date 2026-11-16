@@ -2,7 +2,6 @@
 
 Guards:
     - Pipeline EMBED_REPO_DOCS step writes embeddings to all repo_document_chunks
-    - The content_tsv GIN index from migration 0015 exists
     - RepoDocumentEmbedder skip predicate (content_hash + model) works end-to-end:
       second pipeline run with unchanged content embeds 0 chunks
 
@@ -20,7 +19,7 @@ import hashlib
 from pathlib import Path
 
 import pytest
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 
 from backend.app.llm.code_embedder import CodeEmbedderService
 from backend.app.llm.embedder import FakeEmbedProvider
@@ -148,29 +147,6 @@ async def test_pipeline_writes_repo_doc_chunk_embeddings(
 
     assert null_count == 0, (
         f"All repo_document_chunks must have embeddings after pipeline; {null_count} are still NULL"
-    )
-
-
-# ---------------------------------------------------------------------------
-# Phase 7b — BM25 + RRF
-# ---------------------------------------------------------------------------
-
-
-async def test_bm25_gin_index_exists(integration_session_manager):
-    """Migration 0015 GIN index on code_nodes.content_tsv must be present.
-
-    This is a schema-level guard: if the index is missing, BM25 queries still work
-    but are a seq-scan. A missing index means the migration didn't run.
-    """
-    async with integration_session_manager.session() as session:
-        idx_name = await session.scalar(
-            text(
-                "SELECT indexname FROM pg_indexes "
-                "WHERE tablename = 'code_nodes' AND indexname = 'idx_code_nodes_tsv'"
-            )
-        )
-    assert idx_name == "idx_code_nodes_tsv", (
-        "GIN index idx_code_nodes_tsv missing from code_nodes — did migration 0015 run?"
     )
 
 

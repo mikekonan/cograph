@@ -98,6 +98,17 @@ async def test_long_word_matches_as_prefix_short_word_does_not(pg_session) -> No
     assert "shipping.Pack" not in await _names(pg_session, repo_id, "ship")
 
 
+async def test_name_written_only_after_a_dot_is_found(pg_session) -> None:
+    # The parser reads `s.store.GetShelf` as one token; the index also holds its parts.
+    repo_id = await _seed(pg_session)
+    await _node(
+        pg_session, repo_id, "shipping.Restock", "func Restock(id int) {\n\ts.store.GetShelf(id)\n}"
+    )
+
+    for query in ("GetShelf", "store.GetShelf", "s.store.GetShelf"):
+        assert await _names(pg_session, repo_id, query) == ["shipping.Restock"], query
+
+
 # (query, expected names, or None when any answer will do)
 _HOSTILE = [
     pytest.param("it's \"quoted\" `parcel`", None, id="quotes"),
@@ -105,6 +116,7 @@ _HOSTILE = [
     pytest.param("(parcel:* | !label) & <-> (", None, id="operators-glued"),
     pytest.param(r"C:\path\to\parcel \' \\ label\ ", None, id="backslash"),
     pytest.param("'; drop table code_nodes; --", None, id="sql"),
+    pytest.param("parcel..label a.:.b x/-/y .|./ 'a'.\"b\"", None, id="dots-slashes"),
     pytest.param("!!! ??? ((( ))) *:", [], id="no-words"),
     pytest.param("what is the", [], id="stopwords"),
     pytest.param(" ".join(f"word{i}" for i in range(300)), [], id="300-words"),

@@ -158,6 +158,26 @@ async def test_search_code_without_hits_points_to_the_name_elsewhere(client, db_
     assert seen["current_user"].email == "empty@example.com"
 
 
+async def test_search_code_with_only_documents_says_no_code_holds_the_words(client, db_session):
+    plaintext = await _seed(db_session)
+    doc = {"at": "flows/restock.yml:1-3", "text": "call: RefillShelf"}
+
+    with patch(
+        "backend.app.mcp.tools.search_code.search_code_payload", _returns({"results": [doc]})
+    ):
+        answer = _answer(
+            await _call(
+                client, plaintext, "cograph_search_code", {"repository": _SLUG, "query": "RefillShelf"}
+            )
+        )
+
+    assert answer == {
+        "results": [doc],
+        "reason": "No code matches any of the words: refillshelf. "
+        "The results are this repository's documents that hold them.",
+    }
+
+
 async def test_retrieve_without_hits_offers_a_call_only_for_a_code_name(client, db_session):
     plaintext = await _seed(db_session)
 

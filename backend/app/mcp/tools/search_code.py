@@ -66,7 +66,9 @@ def register(server: MCPServer, services: MCPServices) -> None:
             "`called_by` lists up to 3 callers {name, at, kind}, product code "
             "first; `called_by_count` counts all of them by kind (code, test, "
             "generated); [] means no callers.\n"
-            "No hits: `reason` names the words searched for.\n"
+            "No code hits: `reason` names the words searched for. The results "
+            "are then the repository's documents that hold the words, as "
+            "{heading_path, at, text}; read more with cograph_read_file_range.\n"
             "`wiki` (only when a generated-wiki page covers the hits) lists up "
             "to 2 pages {page, title, section, excerpt}; read one with "
             "cograph_wiki_page(page, section).\n"
@@ -120,13 +122,18 @@ def register(server: MCPServer, services: MCPServices) -> None:
                 current_user=current_user,
                 path_prefix=args.path_prefix or "",
             )
-            if not payload["results"]:
+            # No code record: no results, or only the documents that hold the words.
+            if not any("node_id" in record for record in payload["results"]):
                 # The same words the lexical stream searched for.
                 words = ", ".join(extract_query_terms(args.query)) or (
                     "none, every word is too short or too common"
                 )
                 where = f" under path_prefix '{args.path_prefix}'" if args.path_prefix else ""
                 payload["reason"] = f"No code{where} matches any of the words: {words}."
+                if payload["results"]:
+                    payload["reason"] += (
+                        " The results are this repository's documents that hold them."
+                    )
                 if payload.get("elsewhere"):
                     payload["reason"] += " The name is in other repositories: see `elsewhere`."
             log_bucket["result_count"] = count_response_results(payload)

@@ -4,7 +4,7 @@ Two classes:
 
 * ``LexicalRetriever`` — BM25-like ``ts_rank_cd`` queries over the tsvector
   columns produced by migrations 0015 (``content_tsv``, english config) and
-  0018 (``content_tsv_simple``, simple config).  The code store uses the
+  0070 (``content_tsv_simple``, simple config).  The code store uses the
   simple config because English stemming hurts code identifiers.  It matches
   any query word, rows with every word first.
 
@@ -14,6 +14,7 @@ Two classes:
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime
 from typing import Literal
 from uuid import UUID
@@ -37,9 +38,19 @@ _CODE_CANDIDATE_CAP = 50
 
 
 def _tsquery_operand(term: str) -> str:
-    # Quoted, so `to_tsquery` hands the term to the parser that built the
-    # index: `a.b`, `a-b`, `a_b` split the way the code did, and `&|!():*`
-    # stay text.
+    # The parser keeps `obj.Name` and `a/b/c.go` as one token, so the index
+    # holds such a token whole and also split on `.` and `/` (migration
+    # 0070). A term with `.` or `/` matches either form: `repo.GetByID`
+    # finds `s.repo.GetByID(ctx)` through the phrase 'repo' <-> 'getbyid'.
+    parts = [part for part in re.split(r"[./]", term) if part]
+    if len(parts) < 2:
+        return _quoted(term)
+    return f"({_quoted(term)} | {' <-> '.join(map(_quoted, parts))})"
+
+
+def _quoted(term: str) -> str:
+    # Quoted, so `&|!():*` stay text and `to_tsquery` hands the term to the
+    # parser that built the index: `a-b`, `a_b` split the way the code did.
     quoted = "'" + term.replace("\\", "\\\\").replace("'", "''") + "'"
     # Prefix match from 5 characters: `label` finds `labels`. A shorter
     # prefix matches too many words.
@@ -146,7 +157,7 @@ class LexicalRetriever:
             return []
         operands = [_tsquery_operand(term) for term in terms]
         # 'simple' regconfig + content_tsv_simple keeps code identifiers intact
-        # (no English stemming, no stopword stripping). See migration 0018.
+        # (no English stemming, no stopword stripping). See migration 0070.
         # Any word matches; rows with every word sort first, then by rank.
         # ts_rank_cd without a normalisation flag: a long body is not
         # penalised for its length.
