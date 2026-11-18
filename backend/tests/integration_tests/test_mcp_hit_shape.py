@@ -401,13 +401,13 @@ async def test_a_name_only_in_the_repository_documents_returns_them(pg_session) 
     assert await _search("RefillShelf", path_prefix="shipping/") == []
     assert [r.get("name") for r in await _search("PrintLabel")] == ["shipping.PrintLabel"]
 
-    # Full-text search keeps `gateway.restockFromDepot` one word: the
+    # Full-text search keeps `dock.restockFromDepot` one word: the
     # document is found by the letters of its part.
     guide = RepoDocument(
         repository_id=repo_id,
         file_path="docs/deploy.md",
         title="Deploy",
-        content="Set `gateway.restockFromDepot` to true.\n",
+        content="Set `dock.restockFromDepot` to true.\n",
         content_hash="e" * 64,
         bytes=1,
     )
