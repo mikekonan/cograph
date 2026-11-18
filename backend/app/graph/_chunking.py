@@ -13,7 +13,7 @@ Rather than rewrite each call site to use `unnest(:array)::uuid[]`
 (which is Postgres-only and would need a SQLite branch for tests),
 we chunk the input list and stitch results back together in Python.
 500 is well under both caps and keeps the round-trip count modest:
-for the worst-observed repo (~50k nodes), that's ~100 queries — a
+for a repo with 50k nodes, that is ~100 queries — a
 trivial cost vs. the alternative of the sync silently dying.
 """
 

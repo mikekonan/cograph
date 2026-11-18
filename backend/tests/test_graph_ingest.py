@@ -706,8 +706,8 @@ async def test_one_fk_violation_does_not_kill_the_whole_ingest(
     """An `IntegrityError` (e.g. FK violation when the cache holds a
     stale parent UUID) must be handled identically to `StaleDataError`:
     SAVEPOINT rolls the file back, cache is refreshed, the rest of the
-    ingest continues. Prod hit this on a Go monorepo where reparenting
-    a method onto a deleted struct produced an
+    ingest continues. In a Go repository, reparenting a method onto a
+    deleted struct produces an
     `asyncpg.exceptions.ForeignKeyViolationError`.
     """
     from sqlalchemy.exc import IntegrityError

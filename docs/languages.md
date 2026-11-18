@@ -77,7 +77,7 @@ of JavaScript.
 
 ::: tip Grammars are baked into the image
 tree-sitter grammars are downloaded at Docker build time, not at runtime. A
-runtime download once stalled a production sync for ten minutes inside an open
+runtime download can stall a sync for many minutes inside an open
 database transaction. The worker verifies grammar availability at startup and
 fails loudly if any are missing.
 :::

@@ -1,16 +1,16 @@
 """Integration tests for migration 0057 — code_nodes.parent_id index.
 
-Hot-fix for prod incident 2026-05-19: DELETE on a code_node with descendants
-took 297s and hit the 300s statement_timeout because the self-FK
+Without it, DELETE on a code_node with many descendants can run past the
+300s statement_timeout because the self-FK
 `fk_code_nodes_parent_id_code_nodes ON DELETE CASCADE` had no supporting
 index on `parent_id`. The migration adds a partial index
 `ix_code_nodes_parent_id ON code_nodes (parent_id) WHERE parent_id IS NOT NULL`.
 
 Coverage rationale: the real acceptance criterion (EXPLAIN ANALYZE showing
-Index Scan in the cascade trigger plan) is verified by hand on prod inside
-a `BEGIN; ... ROLLBACK;` block — that test would require building a tree
-with hundreds of descendants in fixture, which buys little over the prod
-EXPLAIN. The tests below lock the migration contract: the index exists
+Index Scan in the cascade trigger plan) is checked by hand on a large
+database inside a `BEGIN; ... ROLLBACK;` block — that test would require
+building a tree with hundreds of descendants in fixture, which buys little
+over that EXPLAIN. The tests below lock the migration contract: the index exists
 after upgrade and the migration is idempotent.
 
 Skipped when PostgreSQL is unavailable (see conftest's pg_engine fixture).

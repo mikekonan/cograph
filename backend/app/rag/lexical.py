@@ -316,7 +316,7 @@ class LexicalRetriever:
         longer one (`ToRetry` in `SafeToRetry`) and the part of a dotted or
         slashed word in a document. A part starts after a non-letter or at a
         capital; letters in the middle of a part do not count (`hosts` is not
-        in `PayhostSuite`). Code rows come before
+        in `GhostSuite`). Code rows come before
         module rows, and a module row is dropped when a row of its file
         matched: it is the whole file, and the only row of top-level code (a
         TypeScript test body). A scan of one repository: run it only when the

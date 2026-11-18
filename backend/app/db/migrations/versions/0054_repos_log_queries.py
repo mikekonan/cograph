@@ -4,8 +4,8 @@ Revision ID: 0054_repos_log_queries
 Revises: 0053_add_query_logs
 
 NB: revision IDs are persisted in `alembic_version.version_num
-VARCHAR(32)`. A 34-char ID reached prod once and broke the UPDATE
-that records the new head — that's why this name is terse. Future
+VARCHAR(32)`. A 34-char ID breaks the UPDATE that records the new
+head — that's why this name is terse. Future
 hands: keep the revision string ≤32 characters.
 
 Per-repo opt-out for the query-visibility log shipped in

@@ -246,7 +246,7 @@ def _cited(
 
 
 def test_cited_fingerprint_blind_to_uncited_churn() -> None:
-    """The $64 root-cause fix.
+    """The regeneration-storm root-cause fix.
 
     The fingerprint reads ONLY the cited ids out of the component maps, so
     churn in *uncited* evidence — the extra top-k members the old

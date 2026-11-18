@@ -26,7 +26,7 @@ class SessionManager:
                 # killed pod) otherwise leaves its session holding row locks
                 # for the OS keepalive default of ~2h11m. Probe after 60s idle
                 # so the server drops it in ~2min. Servers may also set
-                # idle_in_transaction_session_timeout (5min in prod), so no
+                # idle_in_transaction_session_timeout (often minutes), so no
                 # step may leave a transaction idle across a long LLM stage.
                 "tcp_keepalives_idle": "60",
                 "tcp_keepalives_interval": "10",

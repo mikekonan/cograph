@@ -1,9 +1,9 @@
 """Grammar-cache guards around tree-sitter-language-pack.
 
 The pack (v1.6+) ships no grammar binaries — `get_parser` downloads
-them from GitHub releases on first use with NO timeout. In prod that
-turned a cold cache + stalled CDN into a sync job frozen inside an open
-DB transaction (2026-06-11, a production reindex). The contract pinned here:
+them from GitHub releases on first use with NO timeout. A cold cache +
+stalled CDN then leaves a sync job frozen inside an open DB transaction.
+The contract pinned here:
 
   * `missing_grammars()` reports exactly the parser names from
     `languages.py` that are absent from the local cache;

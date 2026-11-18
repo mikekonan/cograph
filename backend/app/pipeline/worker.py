@@ -171,12 +171,12 @@ _GRAMMAR_DOWNLOAD_TIMEOUT_SECONDS = 120.0
 async def _ensure_grammars_available() -> None:
     """Hard-check: tree-sitter grammars must be loadable before any job runs.
 
-    The grammar cache is baked into the Docker image, so in prod this is
-    an instant no-op. If grammars are missing (local dev, broken image),
-    download them NOW under a hard timeout: the downloader inside
+    The grammar cache is baked into the Docker image, so in a built image
+    this is an instant no-op. If grammars are missing (local dev, broken
+    image), download them NOW under a hard timeout: the downloader inside
     tree-sitter-language-pack has none of its own, and a stalled GitHub
-    CDN connection once froze a prod sync mid-transaction for 10+
-    minutes (2026-06-11). Failing here kills the worker at startup —
+    CDN connection can freeze a sync inside an open transaction for
+    many minutes. Failing here kills the worker at startup —
     visible and recoverable — instead of hanging the first parse job.
     """
     missing = missing_grammars()
@@ -866,10 +866,10 @@ class WorkerSettings:
             job_id="sync-history-retention-prune",
         ),
     ]
-    # Dropped 10→4 after a 2026-05-12 OOMKill: ten concurrent wiki-gen
-    # runs blew the worker container's 8 Gi limit because every page
-    # ingest holds the full subgraph + retrieved chunks in memory. Four
-    # is the empirical headroom; raise only after profiling.
+    # Kept at 4: ten concurrent wiki-gen runs can exceed a worker
+    # container's memory limit, because every page ingest holds the full
+    # subgraph + retrieved chunks in memory. Four leaves headroom; raise
+    # only after profiling.
     max_jobs = 4
     # Wiki regen with the agentic writer takes 10–30 min on a medium repo;
     # 2 h is a safe ceiling that covers worst-case big repos without

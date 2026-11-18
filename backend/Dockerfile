@@ -26,7 +26,7 @@ RUN python -m pip install --no-deps ./backend \
 
 # tree-sitter-language-pack v1.6+ bundles NO grammars — get_parser()
 # downloads them from GitHub releases on first use, with no timeout. A
-# stalled CDN connection froze a prod sync mid-transaction (2026-06-11).
+# stalled CDN connection can freeze a sync inside an open DB transaction.
 # Bake the grammars cograph parses into the image cache (/root/.cache)
 # so runtime never touches the network; `timeout` turns a stalled
 # download into a loud build failure. The set of grammars derives from

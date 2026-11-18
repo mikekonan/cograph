@@ -79,7 +79,7 @@ class OpenAICompletionProvider:
         from openai import AsyncOpenAI, Timeout
 
         # Split timeouts: a flaky endpoint that accepts the connection then
-        # stalls mid-response was the prod failure mode that the bare
+        # stalls mid-response is the failure mode that the bare
         # `AsyncOpenAI(...)` had no defense against — there's no client-side
         # default, so the request could hang until arq's 2 h job_timeout.
         self._client = AsyncOpenAI(

@@ -145,24 +145,25 @@ async def test_deleted_cited_node_rewrites_citing_page(
 
 
 # ---------------------------------------------------------------------------
-# Scenario 5: a new uncited node enters a page's top-k (the $64 fix)
+# Scenario 5: a new uncited node enters a page's top-k (the storm fix)
 # ---------------------------------------------------------------------------
 
 
 async def test_new_uncited_node_in_topk_does_not_dirty(
     db_session: AsyncSession,
 ) -> None:
-    """THE $64 root-cause fix, end to end.
+    """THE regeneration-storm root-cause fix, end to end.
 
     A new non-exported node (no manifest change → not structural) whose
     content matches beta's retrieval query enters beta's top-k. beta cites
     nothing new — the node is uncited noise in the bundle. The old
     whole-bundle fingerprint folded the entire top-k in, so this uncited
     arrival flipped beta's stamp and forced a rewrite; fanning out across a
-    real repo on every push, that is the regeneration storm that burned the
-    day's tokens. The cited fingerprint is keyed only by what beta actually
-    cites, so the newcomer moves nothing: zero rewrites (StrictProvider
-    proves no LLM call), still byte-identical to a full rebuild at c2."""
+    large repo on every push, that is a regeneration storm that spends
+    tokens on unchanged pages. The cited fingerprint is keyed only by what
+    beta actually cites, so the newcomer moves nothing: zero rewrites
+    (StrictProvider proves no LLM call), still byte-identical to a full
+    rebuild at c2."""
 
     async def mutate(session: AsyncSession, repo_state: ScriptedRepo) -> None:
         await repo_state.add_node(
@@ -437,7 +438,7 @@ async def test_many_edited_pages_stay_incremental(
 ) -> None:
     """Every cited body changes in place, so all four pages are dirty —
     dirty ratio 1.0. The retired dirty-volume backstop would have abandoned
-    the plan and full-rebuilt the whole wiki right here (the $64 storm).
+    the plan and full-rebuilt the whole wiki right here (a regeneration storm).
     Coverage collapse asks a different question — did any page lose its
     entire SUBJECT? — and the answer is no: an in-place edit keeps the
     node UUID alive (ingest UPDATEs by symbol_key). So the run stays

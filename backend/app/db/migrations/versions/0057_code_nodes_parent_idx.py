@@ -2,14 +2,13 @@
 
 Without this index, DELETE on any code_node row with descendants triggers
 a sequential scan per cascaded child (the fk_code_nodes_parent_id_code_nodes
-ON DELETE CASCADE trigger). Measured on prod 2026-05-19: ~297s for a single
-DELETE on a module with 1764 descendants in a 130k-row table — hits the
-300s statement_timeout in backend/app/db/session.py and aborts the entire
-reindex transaction.
+ON DELETE CASCADE trigger). On a large table a single DELETE on a module
+with many descendants can run past the 300s statement_timeout in
+backend/app/db/session.py and abort the entire reindex transaction.
 
 Partial index `WHERE parent_id IS NOT NULL` — top-level module nodes have
 no parent and never participate in this cascade lookup, so they don't need
-an index entry. Saves ~30-40% of index size, matches the style of the
+an index entry. Saves index space and matches the style of the
 existing idx_code_nodes_role partial index.
 
 NOTE on partial-failure recovery (same as 0015 / 0018)

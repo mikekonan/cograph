@@ -385,7 +385,7 @@ async def test_coverage_collapse_counts_only_fully_orphaned_pages(
       * gamma — `delete_node` on its sole cite: subject fully gone → COLLAPSED.
 
     So `collapsed == {"gamma"}` even though all four pages are dirty — the
-    exact distinction the $64 storm lacked, where every dirty page was a
+    exact distinction the old backstop lacked, where every dirty page was a
     reason to rebuild."""
     repo = await ScriptedRepo.create(db_session, "wiki-collapse-precision")
     await seed_standard(db_session, repo)

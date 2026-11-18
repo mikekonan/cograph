@@ -52,7 +52,7 @@ class CodeEmbedderService:
             return EmbedResult(embedded_nodes=0, skipped_nodes=0, model=self._provider.model)
 
         # asyncpg caps a single statement at 32767 placeholders, so on a
-        # large monorepo (~50k+ nodes) the unchunked IN-list below crashed
+        # repository with more nodes than that the unchunked IN-list crashes
         # the whole indexing pass with "the number of query arguments
         # cannot exceed 32767". Chunk the lookup; result is stitched into
         # the same dict the rest of this method expects.

@@ -94,7 +94,7 @@ describe("sanitizeMermaidSvg", () => {
   });
 
   it("rescues real mermaid output with HTML-void <br> inside <foreignObject>", () => {
-    // The actual failure mode in prod that made every wiki page show
+    // The failure mode that makes every wiki page show
     // "Couldn't render diagram": Mermaid emits HTML-style void <br>
     // inside foreignObject for htmlLabels-mode long-label wrapping.
     // Strict image/svg+xml parsing rejects unclosed <br>. We
