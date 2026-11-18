@@ -12,6 +12,7 @@ from backend.app.mcp.services import (
     tool_args,
 )
 from backend.app.models.enums import RepositoryStatus
+from backend.app.rag.source_router import route_sources
 
 
 class RepositoriesToolArgs(BaseModel):
@@ -50,13 +51,38 @@ def register(server: MCPServer, services: MCPServices) -> None:
         ctx: Context | None = None,
     ) -> object:
         args = tool_args(RepositoriesToolArgs, search=search, status=status, limit=limit)
+        current_user = current_user_from_context(ctx)
         response = await repositories_payload(
             services=services,
-            current_user=current_user_from_context(ctx),
+            current_user=current_user,
             search=args.search,
             status=args.status,
             limit=args.limit,
         )
         if not response["items"] and args.search:
-            response["reason"] = NOT_READABLE_REPOSITORY.format(f"matching '{args.search}'")
+            # Agents search by a service's name, and the service often lives in
+            # a repository with another name. Without candidates they reported
+            # "the code is not in Cograph" for code that was there.
+            async with services.session_manager.session() as session:
+                hits = await route_sources(
+                    session,
+                    query=args.search[:512],
+                    current_user=current_user,
+                    settings=services.settings,
+                )
+            candidates = [
+                {"repository": hit.label, "why": hit.why}
+                for hit in hits
+                if hit.kind == "repository"
+            ]
+            if candidates:
+                response["candidates"] = candidates
+                response["reason"] = (
+                    f"No repository you can read is named '{args.search}'. A service "
+                    "often lives in a repository with another name. `candidates` are "
+                    "repositories whose name, README or code mention it: search them "
+                    "before you say the code is not in Cograph."
+                )
+            else:
+                response["reason"] = NOT_READABLE_REPOSITORY.format(f"matching '{args.search}'")
         return encode_payload(response)

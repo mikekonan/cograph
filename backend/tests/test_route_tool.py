@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from sqlalchemy import select
 
 from backend.app.core.auth import TokenType, create_token, hash_password
 from backend.app.mcp.services import encode_payload
@@ -1081,3 +1082,48 @@ async def test_route_rest_rejects_invalid_top_k(client) -> None:
         "/api/route", json={"query": "shipping", "top_k": 99}
     )
     assert response.status_code == 422
+
+
+async def test_empty_repository_search_offers_route_candidates(client, db_session) -> None:
+    """A service name that is not a repository name gets candidates, not "say so"."""
+    from backend.tests.test_mcp_argument_names import _SLUG, _seed
+
+    plaintext = await _seed(db_session)
+    warehouse = await db_session.scalar(
+        select(Repository).where(Repository.name == "warehouse")
+    )
+    readme = "# Warehouse\n\nThe dock-scheduler service books truck slots.\n"
+    db_session.add(
+        RepoDocument(
+            repository_id=warehouse.id,
+            file_path="README.md",
+            title="README",
+            content=readme,
+            content_hash="r" * 64,
+            bytes=len(readme),
+        )
+    )
+    await db_session.commit()
+
+    async def repositories(search: str) -> dict:
+        response = await client.post(
+            "/mcp/",
+            headers={"Authorization": f"Bearer {plaintext}", "Accept": "application/json"},
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "cograph_repositories", "arguments": {"search": search}},
+            },
+        )
+        assert response.status_code == 200
+        return json.loads(response.json()["result"]["content"][0]["text"])
+
+    found = await repositories("dock-scheduler")
+    assert found["items"] == []
+    assert [c["repository"] for c in found["candidates"]] == [_SLUG]
+    assert "Say so" not in found["reason"]
+
+    unknown = await repositories("forklift")
+    assert "candidates" not in unknown
+    assert "Say so" in unknown["reason"]
