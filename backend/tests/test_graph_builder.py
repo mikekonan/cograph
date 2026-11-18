@@ -707,8 +707,8 @@ async def test_rebuild_relationships_scoped_survives_id_set_larger_than_chunk_si
 ):
     """Regression: when the touched-id set exceeds the configured IN_CHUNK_SIZE,
     rebuild_relationships_scoped must still complete and rebuild every
-    caller/callee link correctly. Models the production crash on a fresh
-    sync of a large monorepo where the IN-list blew the asyncpg 32767
+    caller/callee link correctly. Models the crash on a fresh sync of a
+    large repository where the IN-list blows the asyncpg 32767
     placeholder cap (the underlying cause; here we shrink the cap to 3
     so the chunking is exercised against a small fixture).
     """

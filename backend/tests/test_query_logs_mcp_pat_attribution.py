@@ -194,7 +194,7 @@ async def test_mcp_error_row_records_domain_code_not_class_name(
     """An ApiError raised inside the scope must persist its domain code
     ("VALIDATION_FAILED"), not the useless class name "ApiError".
 
-    Investigating prod errors required correlating raw rows by hand
+    Investigating errors required correlating raw rows by hand
     because every ApiError — embedding outage, missing repository,
     bad scope — collapsed into the same `error_code='ApiError'`.
     """

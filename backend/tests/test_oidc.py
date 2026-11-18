@@ -505,8 +505,8 @@ async def test_auto_link_requires_email_verified_without_allowlist(db_session):
 
 async def test_auto_link_trusts_domain_allowlist_without_email_verified(db_session):
     # Admin pinned domain_allowlist → the allowlist match itself is the trust
-    # signal; the IdP's email_verified flag is not required. Mirrors the prod
-    # Okta deployment where Okta omits email_verified by default.
+    # signal; the IdP's email_verified flag is not required. Okta, for one,
+    # omits email_verified by default.
     from sqlalchemy import select
 
     local = await _make_user(db_session, email="user@allowed.com")

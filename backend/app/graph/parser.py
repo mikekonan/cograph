@@ -23,8 +23,8 @@ def missing_grammars() -> tuple[str, ...]:
 
     tree-sitter-language-pack v1.6+ ships NO grammars in the wheel —
     `get_parser` downloads them from GitHub releases on first use, with
-    no timeout. A stalled CDN connection froze a prod sync for 10+
-    minutes inside an open DB transaction (2026-06-11). Grammars are
+    no timeout. A stalled CDN connection can freeze a sync for many
+    minutes inside an open DB transaction. Grammars are
     baked into the Docker image at build time; this check lets the
     worker fail loudly at startup if they're missing instead of hanging
     mid-job.

@@ -5,8 +5,7 @@ Revises: 0054_repos_log_queries
 
 NB: revision IDs are persisted in `alembic_version.version_num
 VARCHAR(32)`. Keep the revision string ≤32 characters — a 34-char
-form once reached prod and broke the UPDATE that records the new
-head.
+form breaks the UPDATE that records the new head.
 
 Singleton table — exactly one row, locked to `id=1`. Content is the
 free-form markdown an operator writes at `/admin?tab=mcp` so the

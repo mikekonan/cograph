@@ -151,8 +151,8 @@ stamps match, every source it cited still exists, and its recorded quality is no
 | `cited_fingerprint` | Only the evidence the page **actually cited** |
 | `wiki_schema_version` | The pipeline version that produced it |
 
-Both hashes are narrower than the obvious implementation, and both narrowings
-came from production regeneration storms:
+Both hashes are narrower than the obvious implementation, and each narrowing
+prevents a regeneration storm:
 
 - **`spec_hash` excludes `purpose` and `sources_hint`.** The planner rewords both
   non-deterministically, so hashing them made any re-plan dirty *every* page.

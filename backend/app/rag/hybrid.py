@@ -581,8 +581,8 @@ async def _generated_ids(session: AsyncSession, chunks: list[RetrievedChunk]) ->
 # Example programs, tests and generated code restate the product code a
 # question is about, and often take its place just above the top_k cut.
 # Their fused score is lowered before the cut; they are not dropped, so a
-# question about a test still finds it. Measured on hand-labelled questions:
-# a small, steady gain; a factor of 0.5 for tests did worse.
+# question about a test still finds it. The cut is mild on purpose: a
+# factor of 0.5 for tests pushes wanted tests too far down.
 _EXAMPLE_PATH_RE = re.compile(r"(?i)(?:^|/)(?:examples?|samples?|demo)/")
 _EXAMPLE_FACTOR = 0.5
 _NOT_PRODUCT_FACTOR = 0.7

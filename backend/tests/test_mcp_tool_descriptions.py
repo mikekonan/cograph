@@ -145,9 +145,9 @@ def test_retrieve_marks_repository_as_required() -> None:
     The retrieval engine validates repository scope server-side
     (`validate_retrieval_scope` 422s without it), so an optional
     `repository` in the schema is a trap: agents legitimately omit it
-    for cross-repo questions and hit a guaranteed runtime error. In
-    prod this produced a steady drip of VALIDATION_FAILED rows in
-    query_logs for weeks. The schema must match reality.
+    for cross-repo questions and hit a guaranteed runtime error, logged
+    as a VALIDATION_FAILED row in query_logs on every such call. The
+    schema must match reality.
     """
     import asyncio
 

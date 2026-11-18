@@ -141,7 +141,7 @@ class RepoSyncProcessor:
         self._md_chunk_embedder_service = md_chunk_embedder_service
         self._summary_generator = summary_generator
         self._wiki_generator = wiki_generator
-        # Defaults match the prod yaml — keeps the tests / CLI working
+        # Defaults match the deployed config — keeps the tests / CLI working
         # without each caller having to construct a settings object.
         self._timeouts = timeouts or PipelineTimeoutsSettings()
         # Shared with the providers built for this job; `_complete_step`

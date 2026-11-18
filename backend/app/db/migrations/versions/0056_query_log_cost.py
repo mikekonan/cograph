@@ -32,8 +32,8 @@ cost data".
 
 NB: revision IDs are persisted in `alembic_version.version_num
 VARCHAR(32)`. Keep the revision string ≤32 characters — a 34-char
-form once reached prod and broke the UPDATE that records the new
-head. `0056_query_log_cost` is 19 chars, safely under the cap.
+form breaks the UPDATE that records the new head.
+`0056_query_log_cost` is 19 chars, safely under the cap.
 """
 
 from __future__ import annotations

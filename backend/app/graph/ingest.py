@@ -880,7 +880,7 @@ class GraphIngestService:
             # parent_id, node_metadata) that the savepoint rollback
             # cannot undo, so refreshing from DB is the only safe path
             # before the next file. Telemetry distinguishes the two so
-            # we can keep root-causing each in prod.
+            # each can be traced to its own root cause.
             event = (
                 "persist_graph_stale_data"
                 if isinstance(exc, StaleDataError)

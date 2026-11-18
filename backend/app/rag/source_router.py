@@ -9,7 +9,7 @@ lets the agent fan out to just those.
 
 **v3 is BM25-style lexical with IDF weighting + body indexing for
 collections + structural always-include for the collections pool.** v1 had
-no field for code (just slug + README); v2 (2026-05-19, 03c09da) added a
+no field for code (just slug + README); v2 added a
 module-level symbol corpus and dropped the divide-by-three normalisation;
 v3 (this commit) adds:
 
@@ -65,7 +65,7 @@ looked up in two more places: the text of each repository's documents
 repository that has it gets the word credited, scored by the same formula,
 and `why` says `documents` or `symbols`. Only such unknown names are looked
 up. A known name is already counted by the fields, and crediting it again
-pushed right answers down on a replay of real questions. Plain words are
+pushes right answers down. Plain words are
 never looked up in document text: large repositories mention most of them.
 
 **Scoring formula:**
@@ -760,11 +760,11 @@ async def _match_query_in_collection_bodies(
     Postgres path uses `md_chunks.content_tsv @@ plainto_tsquery('english',
     :tok)` — the existing GIN-indexed tsvector (migration `2a54ef01f78c`,
     already used by `rag/lexical.py`). One indexed lookup per token; the
-    GIN index makes each query 1-5 ms on a Confluence-scale collection.
+    GIN index keeps each query in the low milliseconds on a large collection.
 
     SQLite (unit-test) path falls back to `LOWER(md_documents.content) LIKE
-    '%tok%'` — fine for fixture-scale data, terrible for prod (which
-    always runs Postgres). The dialect guard is the only correctness-
+    '%tok%'` — fine for fixture-scale data, terrible at scale (deployments
+    always run Postgres). The dialect guard is the only correctness-
     critical piece here.
     """
     matches: dict[UUID, set[str]] = {cid: set() for cid in collection_ids}

@@ -72,11 +72,11 @@ class CodeNode(CreatedAtMixin, Base):
     doc_comment: Mapped[str | None] = mapped_column(Text)
     role: Mapped[str | None] = mapped_column(Text)
     # index=True needed for fresh-create environments (test fixtures, dev
-    # setups using Base.metadata.create_all) — prod gets the partial index
-    # `WHERE parent_id IS NOT NULL` from migration 0057. Without an index
-    # the self-FK ON DELETE CASCADE does a seq scan per cascaded child,
-    # which on a 130k-row table hits statement_timeout (incident
-    # 2026-05-19: 297s on a single DELETE).
+    # setups using Base.metadata.create_all) — migrated databases get the
+    # partial index `WHERE parent_id IS NOT NULL` from migration 0057.
+    # Without an index the self-FK ON DELETE CASCADE does a seq scan per
+    # cascaded child, so one DELETE on a large module in a large table
+    # can run past statement_timeout.
     parent_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("code_nodes.id", ondelete="CASCADE"),
