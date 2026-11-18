@@ -90,6 +90,7 @@ class QueryLogPayload:
     completion_model: str | None = None
     error_msg: str | None = None
     wiki_pages: list[str] | None = None
+    path_prefix: str | None = None
 
     def to_kwargs(self) -> dict[str, Any]:
         return asdict(self)
@@ -284,6 +285,7 @@ async def enqueue_query_log(
     completion_model: str | None = None,
     error_msg: str | None = None,
     wiki_pages: list[str] | None = None,
+    path_prefix: str | None = None,
 ) -> None:
     """Enqueue one query_log row for async insert.
 
@@ -348,6 +350,7 @@ async def enqueue_query_log(
             completion_model=completion_model,
             error_msg=error_msg[:500] if error_msg else None,
             wiki_pages=wiki_pages or None,
+            path_prefix=path_prefix,
         )
         pool = await _get_pool(app_state)
         await pool.enqueue_job("record_query_log", payload.to_kwargs())

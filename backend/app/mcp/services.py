@@ -66,7 +66,7 @@ from backend.app.rag.snippet import (
     extract_query_terms,
     make_snippet,
 )
-from backend.app.rag.source_router import names_elsewhere
+from backend.app.rag.source_router import names_elsewhere, words_elsewhere
 from backend.app.wiki import WikiQueryService
 from backend.app.wiki.compact import (
     extract_lead,
@@ -256,6 +256,7 @@ async def mcp_query_log_scope(
     repository_id: UUID | None = None,
     collection_id: UUID | None = None,
     top_k: int | None = None,
+    path_prefix: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Context manager that records one query_log row per MCP tool call.
 
@@ -322,6 +323,7 @@ async def mcp_query_log_scope(
                 repository_id=repository_id,
                 collection_id=collection_id,
                 top_k=top_k,
+                path_prefix=path_prefix,
                 result_count=bucket.get("result_count"),
                 duration_ms=int((time.perf_counter() - started) * 1000),
                 status=status,
@@ -842,6 +844,10 @@ def _head_lines(text: str, chars: int) -> tuple[str, bool]:
     return text[: cut if cut > 0 else chars], True
 
 
+# Places outside path_prefix an empty answer names.
+OUTSIDE_PATH_PREFIX_SHOWN = 3
+
+
 async def search_code_payload(
     *,
     services: MCPServices,
@@ -853,126 +859,30 @@ async def search_code_payload(
 ) -> dict[str, object]:
     async with services.session_manager.session() as session:
         await require_ready_repository(session=session, repository_id=repository_id)
-        lexical_hits = await services.lexical.search(
+        response, kinds = await _search_code_hits(
             session,
-            store="code",
-            query_text=query,
+            services=services,
             repository_id=repository_id,
+            query=query,
             top_k=top_k,
             path_prefix=path_prefix,
         )
-        symbol_hits = await services.symbol.search(
-            session,
-            query_text=query,
-            repository_id=repository_id,
-            top_k=top_k,
-            path_prefix=path_prefix,
-        )
-        merged = rrf_merge_streams(
-            [lexical_hits, symbol_hits],
-            k=services.settings.retrieval.rrf_k,
-            candidate_cap=top_k,
-            stream_names=["lexical", "symbol"],
-        )
-        name = _query_name(query)
-        exact = (
-            await services.symbol.exact(
+        outside: list[str | None] = []
+        if path_prefix and not response.results:
+            # An empty answer reads as "no such name", yet the words may be
+            # in this repository, only not under the folder. Say where.
+            wider, _ = await _search_code_hits(
                 session,
-                name=name,
+                services=services,
                 repository_id=repository_id,
-                top_k=top_k,
-                path_prefix=path_prefix,
-                suffix=query.strip().removesuffix("()"),
-            )
-            if name
-            else []
-        )
-        # A whole-file module node matches any name in its file, so it took a
-        # slot from the function the agent was looking for. Drop it before
-        # the cut: both streams were asked for top_k, so real hits fill in.
-        named = {
-            hit.chunk_id: hit
-            for hit in [*exact, *merged]
-            if not str(hit.metadata.get("qualified_name", "")).endswith("#module")
-        }
-        # Full-text search matches whole words. A name inside a longer one
-        # (`ToRetry` in `SafeToRetry`), or written only in a file's top-level
-        # code, is found by its letters; the excerpt then shows where.
-        by_letters = not named
-        if by_letters:
-            named = {
-                hit.chunk_id: hit
-                for hit in await services.lexical.substring_search(
-                    session,
-                    store="code",
-                    query_text=query,
-                    repository_id=repository_id,
-                    top_k=top_k,
-                    path_prefix=path_prefix,
-                )
-            }
-        kinds = await _kinds(
-            session,
-            {node_id: hit.metadata.get("file_path") for node_id, hit in named.items()},
-        )
-        exact_ids = {hit.chunk_id for hit in exact}
-        # The node named exactly as asked first, the one whose path ends as
-        # the query does (`Type.Method`) before its namesakes; then the rest.
-        # Product code before tests and generated code inside each group.
-        ranked = sorted(
-            named.values(),
-            key=lambda hit: (
-                hit.chunk_id not in exact_ids,
-                not _ends_with_name(str(hit.metadata.get("qualified_name", "")), query),
-                hit.chunk_id in kinds,
-            ),
-        )
-        if named:
-            response = await services.context_builder.build(
-                session,
-                chunks=ranked[:top_k],
-                # A hit by letters shows its body around the match: the
-                # signature does not say where the name stands.
-                requested_layers={RetrievalLayer.CODE if by_letters else RetrievalLayer.AST},
-                repository_id=repository_id,
-                include_chunks=False,
-                include_graph=False,
-                include_scores=False,
-                query=query if by_letters else None,
-            )
-        else:
-            # No code holds the words. A name the code never spells out, such
-            # as a step of a YAML flow, may be in the repository's documents.
-            # Their search has no path filter, so path_prefix cuts its top_k:
-            # pass the prefix into that SQL if a folder comes back short.
-            documents = [
-                hit
-                for hit in await services.lexical.search(
-                    session,
-                    store="repo_docs",
-                    query_text=query,
-                    repository_id=repository_id,
-                    top_k=top_k,
-                )
-                if str(hit.metadata.get("file_path") or "").startswith(path_prefix)
-            ] or await services.lexical.substring_search(
-                session,
-                store="repo_docs",
-                query_text=query,
-                repository_id=repository_id,
-                top_k=top_k,
-                path_prefix=path_prefix,
-            )
-            response = await services.context_builder.build(
-                session,
-                chunks=documents,
-                requested_layers={RetrievalLayer.REPO_DOC},
-                repository_id=repository_id,
-                include_chunks=False,
-                include_graph=False,
-                include_scores=False,
                 query=query,
+                top_k=top_k,
+                path_prefix="",
             )
+            places = (row.provenance for row in wider.results)
+            outside = list(
+                dict.fromkeys(_at(p.file_path, p.start_line, p.end_line) for p in places)
+            )[:OUTSIDE_PATH_PREFIX_SHOWN]
         node_ids = _node_ids(response)
         called_by = await _called_by(session, node_ids)
         wiki = await _wiki_pages(
@@ -989,11 +899,156 @@ async def search_code_payload(
             current_user=current_user,
             settings=services.settings,
         )
+        if not (elsewhere or response.results or outside):
+            # Nothing here and no name to look up: where the same words are.
+            elsewhere = await words_elsewhere(
+                session,
+                query=query,
+                repository_id=repository_id,
+                current_user=current_user,
+                settings=services.settings,
+            )
     payload = compact_hits(response, called_by=called_by, kinds=kinds)
     if wiki:
         payload["wiki"] = wiki
+    if outside:
+        payload["outside_path_prefix"] = outside
     payload.update(elsewhere)
     return payload
+
+
+async def _search_code_hits(
+    session: AsyncSession,
+    *,
+    services: MCPServices,
+    repository_id: UUID,
+    query: str,
+    top_k: int,
+    path_prefix: str,
+) -> tuple[RetrievalResponse, dict[UUID, str]]:
+    """The hits of `search_code_payload` and their kinds (`_kinds`): code
+    nodes, else the repository's documents that hold the words."""
+    lexical_hits = await services.lexical.search(
+        session,
+        store="code",
+        query_text=query,
+        repository_id=repository_id,
+        top_k=top_k,
+        path_prefix=path_prefix,
+    )
+    symbol_hits = await services.symbol.search(
+        session,
+        query_text=query,
+        repository_id=repository_id,
+        top_k=top_k,
+        path_prefix=path_prefix,
+    )
+    merged = rrf_merge_streams(
+        [lexical_hits, symbol_hits],
+        k=services.settings.retrieval.rrf_k,
+        candidate_cap=top_k,
+        stream_names=["lexical", "symbol"],
+    )
+    name = _query_name(query)
+    exact = (
+        await services.symbol.exact(
+            session,
+            name=name,
+            repository_id=repository_id,
+            top_k=top_k,
+            path_prefix=path_prefix,
+            suffix=query.strip().removesuffix("()"),
+        )
+        if name
+        else []
+    )
+    # A whole-file module node matches any name in its file, so it took a
+    # slot from the function the agent was looking for. Drop it before
+    # the cut: both streams were asked for top_k, so real hits fill in.
+    named = {
+        hit.chunk_id: hit
+        for hit in [*exact, *merged]
+        if not str(hit.metadata.get("qualified_name", "")).endswith("#module")
+    }
+    # Full-text search matches whole words. A name inside a longer one
+    # (`ToRetry` in `SafeToRetry`), or written only in a file's top-level
+    # code, is found by its letters; the excerpt then shows where.
+    by_letters = not named
+    if by_letters:
+        named = {
+            hit.chunk_id: hit
+            for hit in await services.lexical.substring_search(
+                session,
+                store="code",
+                query_text=query,
+                repository_id=repository_id,
+                top_k=top_k,
+                path_prefix=path_prefix,
+            )
+        }
+    kinds = await _kinds(
+        session,
+        {node_id: hit.metadata.get("file_path") for node_id, hit in named.items()},
+    )
+    exact_ids = {hit.chunk_id for hit in exact}
+    # The node named exactly as asked first, the one whose path ends as
+    # the query does (`Type.Method`) before its namesakes; then the rest.
+    # Product code before tests and generated code inside each group.
+    ranked = sorted(
+        named.values(),
+        key=lambda hit: (
+            hit.chunk_id not in exact_ids,
+            not _ends_with_name(str(hit.metadata.get("qualified_name", "")), query),
+            hit.chunk_id in kinds,
+        ),
+    )
+    if named:
+        response = await services.context_builder.build(
+            session,
+            chunks=ranked[:top_k],
+            # A hit by letters shows its body around the match: the
+            # signature does not say where the name stands.
+            requested_layers={RetrievalLayer.CODE if by_letters else RetrievalLayer.AST},
+            repository_id=repository_id,
+            include_chunks=False,
+            include_graph=False,
+            include_scores=False,
+            query=query if by_letters else None,
+        )
+    else:
+        # No code holds the words. A name the code never spells out, such
+        # as a step of a YAML flow, may be in the repository's documents.
+        # Their search has no path filter, so path_prefix cuts its top_k:
+        # pass the prefix into that SQL if a folder comes back short.
+        documents = [
+            hit
+            for hit in await services.lexical.search(
+                session,
+                store="repo_docs",
+                query_text=query,
+                repository_id=repository_id,
+                top_k=top_k,
+            )
+            if str(hit.metadata.get("file_path") or "").startswith(path_prefix)
+        ] or await services.lexical.substring_search(
+            session,
+            store="repo_docs",
+            query_text=query,
+            repository_id=repository_id,
+            top_k=top_k,
+            path_prefix=path_prefix,
+        )
+        response = await services.context_builder.build(
+            session,
+            chunks=documents,
+            requested_layers={RetrievalLayer.REPO_DOC},
+            repository_id=repository_id,
+            include_chunks=False,
+            include_graph=False,
+            include_scores=False,
+            query=query,
+        )
+    return response, kinds
 
 
 # One name from the code: `Name`, `Type.Name`, `pkg/sub.Type.Name()`, `a::b`.

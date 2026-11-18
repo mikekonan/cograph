@@ -10,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Text,
     Uuid,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -114,3 +115,5 @@ class QueryLog(CreatedAtMixin, Base):
     wiki_pages: Mapped[list | None] = mapped_column(
         JSONB().with_variant(JSON(), "sqlite"), nullable=True
     )
+    # The folder a cograph_search_code call was limited to.
+    path_prefix: Mapped[str | None] = mapped_column(Text, nullable=True)
