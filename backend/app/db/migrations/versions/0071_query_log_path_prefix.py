@@ -19,6 +19,9 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # A long read holds the table: give up rather than queue every log write
+    # behind the waiting ALTER.
+    op.execute("SET LOCAL lock_timeout = '10s'")
     op.add_column("query_logs", sa.Column("path_prefix", sa.Text(), nullable=True))
 
 
