@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import TextClause
 
 from backend.app.models.code_node import GENERATED_NODE, CodeNode, node_kind
+from backend.app.models.repo_document import NO_PAGE_KINDS
 from backend.app.rag.fusion import rrf_merge_streams
 from backend.app.rag.retriever import EMBEDDING_DIM, RetrievedChunk, _format_vector_literal
 
@@ -278,7 +279,7 @@ class VectorRetriever:
               AND (CAST(:as_of AS timestamp) IS NULL OR rd.updated_at <= CAST(:as_of AS timestamp))
               AND (CAST(:since AS timestamp) IS NULL OR rd.updated_at >= CAST(:since AS timestamp))
               AND (CAST(:until AS timestamp) IS NULL OR rd.updated_at <= CAST(:until AS timestamp))
-              AND (NOT :page_documents_only OR rd.kind IS NULL OR rd.kind <> 'YAML')
+              AND (NOT :page_documents_only OR rd.kind IS NULL OR rd.kind <> ALL(:no_page_kinds))
             ORDER BY rdc.embedding <=> CAST(:qvec AS vector)
             LIMIT :top_k
             """
@@ -294,6 +295,7 @@ class VectorRetriever:
                 "since": since,
                 "until": until,
                 "page_documents_only": page_documents_only,
+                "no_page_kinds": list(NO_PAGE_KINDS),
             },
         )
         return [
@@ -427,7 +429,7 @@ class HybridRetriever:
         hand_written_only: bool = False,
         page_documents_only: bool = False,
     ) -> list[RetrievedChunk]:
-        """`page_documents_only` drops repo docs with no docs page (YAML):
+        """`page_documents_only` drops repo docs with no docs page (YAML, SQL):
         the wiki can cite only those."""
         active = set(stores) if stores is not None else set(_ALL_STORES)
         use_text = bool(query_text and query_text.strip())

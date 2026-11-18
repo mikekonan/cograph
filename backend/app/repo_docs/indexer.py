@@ -20,7 +20,10 @@ from backend.app.repo_docs.chunker import (
 from backend.app.repo_docs.discover import RepoDocumentDiscoverer, RepoDocumentKind, classify_repo_document
 from backend.app.repo_docs.symbol_linker import RepoDocumentSymbolLinker
 
-_YAML_MAX_BYTES = 256 * 1024
+# Kinds cut by lines (a hit shows `path:start-end`), with no links to code
+# symbols, and not indexed when bigger than this.
+_LINE_KINDS = {RepoDocumentKind.YAML, RepoDocumentKind.SQL}
+_LINE_KIND_MAX_BYTES = 256 * 1024
 # A YAML file that holds a secret is not indexed at all: a private key, a
 # Kubernetes Secret, a sops- or Ansible-vault-encrypted file.
 _YAML_SECRET_FILE_RE = re.compile(
@@ -33,6 +36,12 @@ _YAML_SECRET_VALUE_RE = re.compile(
     r"(?:password|passwd|secret|token|api_key|apikey|api-key|private_key)"
     r"[\"']?[ \t]*:[ \t]+)(\S.*)$",
     re.IGNORECASE | re.MULTILINE,
+)
+# A quoted value right after a secret-named word: `'api_token', 'k8Fq...'`.
+# Checked by `_looks_like_key`, because config field names stand there too.
+_SQL_SECRET_VALUE_RE = re.compile(
+    r"(?:password|passwd|secret|token|api_?key|private_?key)['\"]?\s*[:=,]\s*'([^'\s]+)'",
+    re.IGNORECASE,
 )
 
 
@@ -115,8 +124,8 @@ class RepoDocumentIndexer:
             content_hash = _content_hash(content)
             if existing_document is not None and existing_document.content_hash == content_hash:
                 unchanged_documents += 1
-                # YAML names few code symbols, and each lookup is a query per chunk.
-                if relink_unchanged_documents and document_kind is not RepoDocumentKind.YAML:
+                # YAML and SQL name few code symbols, and each lookup is a query per chunk.
+                if relink_unchanged_documents and document_kind not in _LINE_KINDS:
                     await self._relink_document_mentions(
                         session=session,
                         repository_id=repository_id,
@@ -157,7 +166,7 @@ class RepoDocumentIndexer:
 
             chunk_drafts = (
                 self._yaml_chunker.chunk(relative_path, content)
-                if document_kind is RepoDocumentKind.YAML
+                if document_kind in _LINE_KINDS
                 else self._chunker.chunk(content)
             )
             # _build_chunks registers the chunks AND the mention join rows in
@@ -243,7 +252,7 @@ class RepoDocumentIndexer:
         for chunk_draft in chunk_drafts:
             mentions = (
                 []
-                if document_kind is RepoDocumentKind.YAML
+                if document_kind in _LINE_KINDS
                 else await self._symbol_linker.link_chunk_mentions(
                     session=session,
                     repository_id=repository_id,
@@ -296,7 +305,7 @@ class RepoDocumentIndexer:
         document_kind: RepoDocumentKind,
     ) -> str:
         file_name = file_path.rsplit("/", 1)[-1]
-        if document_kind is RepoDocumentKind.YAML:
+        if document_kind in _LINE_KINDS:
             # extract_title would take a `# comment` line for a heading.
             return f"{document_kind.value}: {file_name}"
         title = self._chunker.extract_title(file_path, content)
@@ -311,7 +320,7 @@ def _content_hash(content: str) -> str:
 
 def _read_document(path: Path, kind: RepoDocumentKind) -> str | None:
     """The file's text, or None when it must not be indexed."""
-    if kind is RepoDocumentKind.YAML and path.stat().st_size > _YAML_MAX_BYTES:
+    if kind in _LINE_KINDS and path.stat().st_size > _LINE_KIND_MAX_BYTES:
         return None
     try:
         content = path.read_text(encoding="utf-8")
@@ -320,6 +329,12 @@ def _read_document(path: Path, kind: RepoDocumentKind) -> str | None:
     if "\x00" in content:
         return None
     if kind is RepoDocumentKind.YAML and _YAML_SECRET_FILE_RE.search(content):
+        return None
+    # A migration that holds a key is not indexed at all.
+    if kind is RepoDocumentKind.SQL and (
+        "PRIVATE KEY-----" in content
+        or any(_looks_like_key(m.group(1)) for m in _SQL_SECRET_VALUE_RE.finditer(content))
+    ):
         return None
     return content
 

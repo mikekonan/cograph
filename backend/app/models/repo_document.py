@@ -83,6 +83,9 @@ class RepoDocumentChunk(Base):
     document = relationship("RepoDocument", back_populates="chunks")
 
 
-# A document the docs pages and the wiki show. YAML is searchable but has no
-# page: the docs page renders markdown. "YAML" is RepoDocumentKind.YAML.
-PAGE_DOCUMENT = sa.or_(RepoDocument.kind.is_(None), RepoDocument.kind != "YAML")
+# Kinds that are searchable but have no docs page (the docs page renders
+# markdown), so the docs pages and the wiki leave them out. The values of
+# RepoDocumentKind.YAML and RepoDocumentKind.SQL.
+NO_PAGE_KINDS = ("YAML", "SQL")
+# A document the docs pages and the wiki show.
+PAGE_DOCUMENT = sa.or_(RepoDocument.kind.is_(None), RepoDocument.kind.not_in(NO_PAGE_KINDS))
