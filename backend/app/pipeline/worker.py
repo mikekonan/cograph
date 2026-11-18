@@ -659,6 +659,7 @@ async def record_query_log(
                 embed_model=embed_model,
                 completion_model=completion_model,
                 wiki_pages=payload.get("wiki_pages"),
+                path_prefix=payload.get("path_prefix"),
                 created_at=datetime.now(UTC),
             )
             session.add(row)

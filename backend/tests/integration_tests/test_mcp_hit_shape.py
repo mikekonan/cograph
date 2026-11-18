@@ -479,3 +479,77 @@ async def test_a_name_inside_a_longer_one_is_found_by_its_letters(pg_session) ->
     (record,) = await _search("labelHTML")
     assert record["name"] == "shelf/shelf.test.ts#module"
     assert "shelf.labelHTML" in record["code"]
+
+
+async def test_nothing_under_path_prefix_names_the_places_outside_it(pg_session) -> None:
+    """The name is in the repository, only not under the folder: the answer
+    stays empty and says where it is. A folder with a hit gets no pointer."""
+    repo_id = await _seed(pg_session)
+
+    async def _search(path_prefix: str) -> dict:
+        return await search_code_payload(
+            services=_services(pg_session),
+            repository_id=repo_id,
+            query="PrintLabel",
+            top_k=10,
+            current_user=None,
+            path_prefix=path_prefix,
+        )
+
+    assert await _search("warehouse/") == {
+        "results": [],
+        "outside_path_prefix": ["shipping/label.go:1-3"],
+    }
+    assert "outside_path_prefix" not in await _search("shipping/")
+
+
+async def test_plain_words_with_no_hit_name_the_repositories_that_hold_them(
+    pg_session,
+) -> None:
+    """No hit here and no name to look up: the other readable repositories
+    whose code holds the words, a node with every word first, each with its
+    best node. A repository the caller cannot read is left out."""
+    repo_id = await _seed(pg_session)
+    depot, yard, archive = [
+        Repository(
+            host="example.test",
+            owner="acme",
+            name=name,
+            git_url=f"https://example.test/acme/{name}.git",
+            branch="main",
+            status=RepositoryStatus.READY,
+            visibility=visibility,
+        )
+        for name, visibility in (
+            ("depot", RepositoryVisibility.PUBLIC),
+            ("yard", RepositoryVisibility.PUBLIC),
+            ("archive", RepositoryVisibility.ADMIN_ONLY),
+        )
+    ]
+    pg_session.add_all([depot, yard, archive])
+    await pg_session.flush()
+    refill = "func Refill() {\n\trestock(pallet)\n}"
+    # One word four times ranks above both words once.
+    stack = "func Stack() {\n\tpallet, pallet, pallet, pallet\n}"
+    await _node(pg_session, yard.id, "yard.Stack", "yard/stack.go", stack)
+    await _node(pg_session, depot.id, "a.Stack", "a/stack.go", stack)
+    await _node(pg_session, depot.id, "depot.Refill", "depot/refill.go", refill)
+    await _node(pg_session, archive.id, "old.Refill", "old/refill.go", refill)
+
+    async def _search(query: str) -> dict:
+        return await search_code_payload(
+            services=_services(pg_session),
+            repository_id=repo_id,
+            query=query,
+            top_k=10,
+            current_user=None,
+        )
+
+    payload = await _search("restock pallet")
+    assert payload["results"] == []
+    assert payload["elsewhere"] == [
+        {"repository": "example.test/acme/depot", "in": "code", "at": "depot/refill.go:1-3"},
+        {"repository": "example.test/acme/yard", "in": "code", "at": "yard/stack.go:1-3"},
+    ]
+    # A hit here: the other repositories are not looked at.
+    assert "elsewhere" not in await _search("pallet parcel")

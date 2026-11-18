@@ -129,6 +129,38 @@ async def test_search_code_without_hits_names_the_words_and_the_folder(client, d
     }
 
 
+async def test_search_code_says_the_name_is_outside_the_folder_before_other_repositories(
+    client, db_session
+):
+    """The name in another folder of this repository comes first, with how
+    many places and where: read as "go elsewhere", it sent agents away."""
+    plaintext = await _seed(db_session)
+    elsewhere = [{"repository": "github.com/acme/shipping", "in": "code"}]
+
+    async def _search(outside: list[str]) -> str:
+        with patch(
+            "backend.app.mcp.tools.search_code.search_code_payload",
+            _returns({"results": [], "outside_path_prefix": outside, "elsewhere": elsewhere}),
+        ):
+            answer = _answer(
+                await _call(
+                    client,
+                    plaintext,
+                    "cograph_search_code",
+                    {"repository": _SLUG, "query": "ShipmentRouter", "path_prefix": "labels/"},
+                )
+            )
+        return answer["reason"]
+
+    assert await _search(["shipping/router.go:1-9", "router.go:4-6"]) == (
+        "No code under path_prefix 'labels/' matches any of the words: shipmentrouter. "
+        "This repository has 2 matches outside it, in shipping/, ./: see "
+        "`outside_path_prefix`. Other repositories match: see `elsewhere`."
+    )
+    three = ["shipping/a.go:1-2", "shipping/b.go:1-2", "docs/routes.md"]
+    assert "has 3 or more matches outside it, in shipping/, docs/:" in await _search(three)
+
+
 async def test_search_code_without_hits_points_to_the_name_elsewhere(client, db_session):
     plaintext = await _seed(db_session)
     elsewhere = [{"repository": "github.com/acme/shipping", "in": "code"}]
@@ -152,7 +184,7 @@ async def test_search_code_without_hits_points_to_the_name_elsewhere(client, db_
         "results": [],
         "elsewhere": elsewhere,
         "reason": "No code matches any of the words: ordershipped. "
-        "The name is in other repositories: see `elsewhere`.",
+        "Other repositories match: see `elsewhere`.",
     }
     # The lookup is scoped to what the caller can read.
     assert seen["current_user"].email == "empty@example.com"

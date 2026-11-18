@@ -140,9 +140,9 @@ No code hits: `reason` names the words searched for. The results are then the re
 
 `wiki` (only when a generated-wiki page covers the hits) lists up to 2 pages {page, title, section, excerpt}; read one with cograph_wiki_page(page, section).
 
-`elsewhere` (only for a name like OrderShipped) lists up to 5 other repositories whose code or documents hold that name; when the answer depends on what another service does with it, search or read there.
+`elsewhere` lists up to 5 other repositories whose code or documents hold a name like OrderShipped from the query; with no hit here and no such name, up to 3 whose code holds the words, best first, each with `at`. When the answer depends on what another service does with it, search or read there.
 
-path_prefix (a folder from the repository root, e.g. internal/shipping/) keeps only hits under it.
+path_prefix (a folder from the repository root, e.g. internal/shipping/) keeps only hits under it. Nothing under it: `outside_path_prefix` lists up to 3 places in this repository that match.
 
 Use when: you have a word from the code: a name (class, function, qualified path) or a word that appears in the code. `repository` is host/owner/name.
 

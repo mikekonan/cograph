@@ -1,9 +1,11 @@
+import posixpath
 import re
 
 from mcp.server.mcpserver import Context, MCPServer
 from pydantic import BaseModel, Field, field_validator
 
 from backend.app.mcp.services import (
+    OUTSIDE_PATH_PREFIX_SHOWN,
     read_only,
     search_hint,
     MCPServices,
@@ -72,12 +74,15 @@ def register(server: MCPServer, services: MCPServices) -> None:
             "`wiki` (only when a generated-wiki page covers the hits) lists up "
             "to 2 pages {page, title, section, excerpt}; read one with "
             "cograph_wiki_page(page, section).\n"
-            "`elsewhere` (only for a name like OrderShipped) lists up to 5 "
-            "other repositories whose code or documents hold that name; when "
-            "the answer depends on what another service does with it, search "
-            "or read there.\n"
+            "`elsewhere` lists up to 5 other repositories whose code or "
+            "documents hold a name like OrderShipped from the query; with no "
+            "hit here and no such name, up to 3 whose code holds the words, "
+            "best first, each with `at`. When the answer depends on what "
+            "another service does with it, search or read there.\n"
             "path_prefix (a folder from the repository root, e.g. "
-            "internal/shipping/) keeps only hits under it.\n"
+            "internal/shipping/) keeps only hits under it. Nothing under it: "
+            "`outside_path_prefix` lists up to 3 places in this repository "
+            "that match.\n"
             "Use when: you have a word from the code: a name (class, "
             "function, qualified path) or a word that appears in the code. "
             "`repository` is host/owner/name.\n"
@@ -113,6 +118,7 @@ def register(server: MCPServer, services: MCPServices) -> None:
             query_text=args.query,
             repository_id=repo.id,
             top_k=args.top_k,
+            path_prefix=args.path_prefix or None,
         ) as log_bucket:
             payload = await search_code_payload(
                 services=services,
@@ -129,13 +135,27 @@ def register(server: MCPServer, services: MCPServices) -> None:
                     "none, every word is too short or too common"
                 )
                 where = f" under path_prefix '{args.path_prefix}'" if args.path_prefix else ""
-                payload["reason"] = f"No code{where} matches any of the words: {words}."
+                reason = f"No code{where} matches any of the words: {words}."
                 if payload["results"]:
-                    payload["reason"] += (
-                        " The results are this repository's documents that hold them."
+                    reason += " The results are this repository's documents that hold them."
+                # Before `elsewhere`: the name being here, in another folder,
+                # must not read as "go to another repository".
+                outside = payload.get("outside_path_prefix")
+                if isinstance(outside, list):
+                    count = len(outside)
+                    many = "or more " if count >= OUTSIDE_PATH_PREFIX_SHOWN else ""
+                    folders = dict.fromkeys(
+                        (posixpath.dirname(re.sub(r":\d+-\d+$", "", at)) or ".") + "/"
+                        for at in outside
+                    )
+                    reason += (
+                        f" This repository has {count} {many}"
+                        f"{'match' if count == 1 else 'matches'} outside it, in "
+                        f"{', '.join(folders)}: see `outside_path_prefix`."
                     )
                 if payload.get("elsewhere"):
-                    payload["reason"] += " The name is in other repositories: see `elsewhere`."
+                    reason += " Other repositories match: see `elsewhere`."
+                payload["reason"] = reason
             log_bucket["result_count"] = count_response_results(payload)
             log_bucket["wiki_pages"] = [p["page"] for p in payload.get("wiki") or []]
             return encode_payload(payload)

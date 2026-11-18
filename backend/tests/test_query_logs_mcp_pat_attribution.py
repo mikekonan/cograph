@@ -128,15 +128,16 @@ async def test_mcp_pat_call_attributes_query_log_to_pat_owner(
 
     async with mcp_query_log_scope(
         ctx=ctx,
-        tool_name="cograph_retrieve",
+        tool_name="cograph_search_code",
         query_text="who owns this query",
         top_k=10,
+        path_prefix="internal/shipping/",
     ) as log_bucket:
         log_bucket["result_count"] = 3
 
     rows = (
         await db_session.scalars(
-            select(QueryLog).where(QueryLog.tool_name == "cograph_retrieve")
+            select(QueryLog).where(QueryLog.tool_name == "cograph_search_code")
         )
     ).all()
     assert len(rows) == 1, f"expected exactly one row, got {len(rows)}"
@@ -150,6 +151,7 @@ async def test_mcp_pat_call_attributes_query_log_to_pat_owner(
     assert row.status == QueryLogStatus.OK.value
     assert row.query_text == "who owns this query"
     assert row.top_k == 10
+    assert row.path_prefix == "internal/shipping/"
     assert row.result_count == 3
     # `_mcp_client_label` prefers session.client_info.name over the UA.
     assert row.client_label == "Claude Desktop"

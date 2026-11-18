@@ -106,7 +106,8 @@ from backend.app.models.md_collection import MdCollection, MdDocument
 from backend.app.models.repo_document import RepoDocument, RepoDocumentChunk
 from backend.app.models.repository import Repository
 from backend.app.models.user import User
-from backend.app.rag.snippet import STOPWORDS
+from backend.app.rag.lexical import _tsquery_operand
+from backend.app.rag.snippet import STOPWORDS, extract_query_terms
 from backend.app.repo_docs.queries import load_root_readmes
 
 
@@ -598,6 +599,29 @@ async def _match_identifiers_in_repo_documents(
 
 # Other repositories a search answer names; more are only counted.
 _ELSEWHERE_SHOWN = 5
+# Other repositories named for plain words; a common word is in most of
+# them, so the rest are not counted.
+_WORDS_ELSEWHERE_SHOWN = 3
+
+
+async def _other_readable_repositories(
+    session: AsyncSession,
+    *,
+    repository_id: UUID,
+    current_user: User | None,
+    settings: Settings,
+) -> dict[UUID, str]:
+    """Repository id -> `host/owner/name` of every repository the caller can
+    read, except `repository_id`."""
+    scoped = apply_repository_read_scope(
+        select(Repository.id, Repository.host, Repository.owner, Repository.name),
+        settings=settings,
+        current_user=current_user,
+    ).where(Repository.id != repository_id)
+    return {
+        repo_id: f"{host}/{owner}/{name}"
+        for repo_id, host, owner, name in (await session.execute(scoped)).all()
+    }
 
 
 async def names_elsewhere(
@@ -620,15 +644,9 @@ async def names_elsewhere(
     tokens = sorted(identifiers)[:_MAX_IDENTIFIER_LOOKUPS]
     if not tokens:
         return {}
-    scoped = apply_repository_read_scope(
-        select(Repository.id, Repository.host, Repository.owner, Repository.name),
-        settings=settings,
-        current_user=current_user,
-    ).where(Repository.id != repository_id)
-    slugs = {
-        repo_id: f"{host}/{owner}/{name}"
-        for repo_id, host, owner, name in (await session.execute(scoped)).all()
-    }
+    slugs = await _other_readable_repositories(
+        session, repository_id=repository_id, current_user=current_user, settings=settings
+    )
     if not slugs:
         return {}
     repo_ids = list(slugs)
@@ -661,6 +679,74 @@ async def names_elsewhere(
     if len(entries) > _ELSEWHERE_SHOWN:
         out["elsewhere_more"] = len(entries) - _ELSEWHERE_SHOWN
     return out
+
+
+async def words_elsewhere(
+    session: AsyncSession,
+    *,
+    query: str,
+    repository_id: UUID,
+    current_user: User | None,
+    settings: Settings,
+) -> dict[str, object]:
+    """The other repositories the caller can read where the lexical code
+    search of `LexicalRetriever` finds the query's words:
+    `{"elsewhere": [{"repository", "in": "code", "at"}, ...]}`, or `{}`.
+    Best first: a node with every word before one with some, then by rank;
+    `at` is that repository's best node.
+
+    For an answer with no hit in its own repository, so the agent does not
+    ask every repository in turn. One query over all readable repositories;
+    it ranks every node that holds any word, so a common word costs up to a
+    second. If that shows in `query_logs.duration_ms`, rank only the nodes
+    with every word, and fall back to any word when none has them all.
+    Postgres only, like the search it mirrors."""
+    terms = extract_query_terms(query)
+    if not terms:
+        return {}
+    slugs = await _other_readable_repositories(
+        session, repository_id=repository_id, current_user=current_user, settings=settings
+    )
+    if not slugs:
+        return {}
+    operands = [_tsquery_operand(term) for term in terms]
+    rows = await session.execute(
+        text(
+            """
+            SELECT DISTINCT ON (cn.repository_id)
+                   cn.repository_id, cn.file_path, cn.start_line, cn.end_line,
+                   cn.content_tsv_simple @@ to_tsquery('simple', :all_terms) AS has_all_terms,
+                   ts_rank_cd(cn.content_tsv_simple, to_tsquery('simple', :any_term)) AS score
+            FROM code_nodes cn
+            WHERE cn.repository_id = ANY(:repo_ids)
+              AND cn.content_tsv_simple @@ to_tsquery('simple', :any_term)
+              AND cn.node_type <> 'module'
+            ORDER BY cn.repository_id, has_all_terms DESC, score DESC,
+                     cn.file_path, cn.start_line
+            """
+        ),
+        {
+            "repo_ids": list(slugs),
+            "any_term": " | ".join(operands),
+            "all_terms": " & ".join(operands),
+        },
+    )
+    best = sorted(
+        rows.all(),
+        key=lambda row: (not row.has_all_terms, -row.score, slugs[row.repository_id]),
+    )[:_WORDS_ELSEWHERE_SHOWN]
+    if not best:
+        return {}
+    return {
+        "elsewhere": [
+            {
+                "repository": slugs[row.repository_id],
+                "in": "code",
+                "at": f"{row.file_path}:{row.start_line}-{row.end_line}",
+            }
+            for row in best
+        ]
+    }
 
 
 async def _match_query_in_collection_bodies(
