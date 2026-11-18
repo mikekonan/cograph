@@ -25,8 +25,8 @@ _EXAMPLE_DIRS = {"example", "examples", "sample", "samples"}
 _TEST_DIRS = {"test", "tests"}
 _DEPLOY_DIRS = {".devcontainer", "deploy", "deployment", "helm", "k8s", "ops"}
 _ALLOWED_HIDDEN_DIRS = {".devcontainer", ".github"}
-# A YAML file under one of these folders is generated, vendored or test data.
-_YAML_SKIPPED_DIRS = {
+# A YAML or SQL file under one of these folders is generated, vendored or test data.
+_SKIPPED_DIRS = {
     "__snapshots__",
     "e2e",
     "fixtures",
@@ -39,8 +39,10 @@ _YAML_SKIPPED_DIRS = {
     "third_party",
     "vendor",
 }
-_YAML_SKIPPED_DIR_SUFFIXES = ("_test", "_tests", "-tests")
+_SKIPPED_DIR_SUFFIXES = ("_test", "_tests", "-tests")
 _YAML_SKIPPED_NAME_SUFFIXES = ("-lock.yaml", "-lock.yml", ".lock.yaml", ".lock.yml")
+# Only schema migrations: other .sql files (queries, seeds, test data) are out.
+_SQL_MIGRATION_DIRS = {"migrate", "migration", "migrations"}
 _IGNORED_PARENT_DIRS = {
     ".cache",
     ".cograph",
@@ -81,6 +83,7 @@ class RepoDocumentKind(StrEnum):
     CONFIG = "Config"
     WORKFLOW = "Workflow"
     YAML = "YAML"
+    SQL = "SQL"
 
 
 def classify_repo_document(
@@ -124,17 +127,24 @@ def classify_repo_document(
         return RepoDocumentKind.CONFIG
 
     # Last, so a file that already has a kind above keeps it.
-    if suffix in _YAML_SUFFIXES and not _is_skipped_yaml(lower_parts):
+    if suffix in _YAML_SUFFIXES and not _is_skipped(lower_parts):
         return RepoDocumentKind.YAML
+
+    if (
+        suffix == ".sql"
+        and any(part in _SQL_MIGRATION_DIRS for part in lower_parts[:-1])
+        and not _is_skipped(lower_parts)
+    ):
+        return RepoDocumentKind.SQL
 
     return None
 
 
-def _is_skipped_yaml(lower_parts: tuple[str, ...]) -> bool:
+def _is_skipped(lower_parts: tuple[str, ...]) -> bool:
     *dirs, name = lower_parts
     return (
         any(
-            part in _YAML_SKIPPED_DIRS or part.endswith(_YAML_SKIPPED_DIR_SUFFIXES)
+            part in _SKIPPED_DIRS or part.endswith(_SKIPPED_DIR_SUFFIXES)
             for part in dirs
         )
         or name.startswith("generated")

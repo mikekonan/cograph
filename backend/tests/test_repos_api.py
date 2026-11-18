@@ -1599,8 +1599,8 @@ async def test_get_repository_documents_count_from_db(client, db_session):
     assert response.json()["stats"]["documents_count"] == 2
 
 
-async def test_documents_count_leaves_out_yaml(client, db_session):
-    """A YAML document has no docs page, so it is not in the docs count."""
+async def test_documents_count_leaves_out_yaml_and_sql(client, db_session):
+    """YAML and SQL documents have no docs page, so they are not in the docs count."""
     repository = Repository(
         host="example.com",
         git_url="https://github.com/acme/yaml-count.git",
@@ -1611,7 +1611,11 @@ async def test_documents_count_leaves_out_yaml(client, db_session):
     )
     db_session.add(repository)
     await db_session.commit()
-    for path, kind in (("docs/guide.md", "Repo Doc"), ("config/stock.yaml", "YAML")):
+    for path, kind in (
+        ("docs/guide.md", "Repo Doc"),
+        ("config/stock.yaml", "YAML"),
+        ("db/migrations/0001_shelves.sql", "SQL"),
+    ):
         db_session.add(
             RepoDocument(
                 repository_id=repository.id,

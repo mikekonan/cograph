@@ -1,4 +1,4 @@
-"""The wiki's doc search leaves YAML out; MCP and REST search keep it.
+"""The wiki's doc search leaves YAML and SQL out; MCP and REST search keep it.
 
 The condition is raw SQL in two places (vector and lexical), so it is
 checked on Postgres: SQLite would not catch a bind it cannot type.
@@ -19,7 +19,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="module")]
 
 DIM = 1536
 EMBEDDING = "[" + ",".join(["1"] + ["0"] * (DIM - 1)) + "]"
-ALL = {"docs/old.md", "docs/guide.md", "config/stock.yaml"}
+ALL = {"docs/old.md", "docs/guide.md", "config/stock.yaml", "db/migrations/0001_shelves.sql"}
 PAGES = {"docs/old.md", "docs/guide.md"}
 
 
@@ -34,7 +34,12 @@ async def _seed(session) -> uuid.UUID:
         )
     ).scalar_one()
     # `old.md` was stored before the kind column: NULL is a page.
-    for path, kind in (("docs/old.md", None), ("docs/guide.md", "Repo Doc"), ("config/stock.yaml", "YAML")):
+    for path, kind in (
+        ("docs/old.md", None),
+        ("docs/guide.md", "Repo Doc"),
+        ("config/stock.yaml", "YAML"),
+        ("db/migrations/0001_shelves.sql", "SQL"),
+    ):
         doc_id = (
             await session.execute(
                 sa.text(

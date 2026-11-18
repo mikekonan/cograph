@@ -1,4 +1,4 @@
-"""YAML files as repo documents: which files, how they are cut, what is stored."""
+"""YAML files and SQL migrations as repo documents: which files, how they are cut, what is stored."""
 
 from __future__ import annotations
 
@@ -447,3 +447,78 @@ async def test_file_that_stops_passing_loses_its_document(db_session, tmp_path):
     assert await _documents(db_session, repository) == {}
     assert result.deleted_documents == 1
     assert (await db_session.scalars(select(RepoDocumentChunk))).all() == []
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "db/migrations/0001_shelves.sql",
+        "storage/sql/migrations/2024_01_02_bins.sql",
+        "migrate/001_shelves.up.sql",
+        "Migration/V1__bins.SQL",
+    ],
+)
+def test_sql_file_under_a_migrations_folder_is_an_sql_document(path: str) -> None:
+    assert classify_repo_document(path) is RepoDocumentKind.SQL
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "sql/queries/get_shelf.sql",
+        "seed.sql",
+        "db/schema.sql",
+        "migrations.sql",
+        "tests/migrations/0001_shelves.sql",
+        "vendor/acme/migrations/0001_shelves.sql",
+        "shelf_test/migrations/0001_shelves.sql",
+    ],
+)
+def test_other_sql_files_are_not_documents(path: str) -> None:
+    assert classify_repo_document(path) is None
+
+
+async def test_sql_migration_has_kind_title_line_chunks_and_no_mentions(db_session, tmp_path):
+    repository = await _repository(db_session)
+    migrations = tmp_path / "db" / "migrations"
+    migrations.mkdir(parents=True)
+    (migrations / "0001_shelves.sql").write_text(
+        "-- uses `helper` to count\nCREATE TABLE shelves (\n  id bigint PRIMARY KEY\n);\n",
+        encoding="utf-8",
+    )
+    linker = _RecordingLinker()
+
+    await _index(db_session, repository, tmp_path, RepoDocumentIndexer(symbol_linker=linker))
+
+    shelves = (await _documents(db_session, repository))["db/migrations/0001_shelves.sql"]
+    assert (shelves.kind, shelves.title) == ("SQL", "SQL: 0001_shelves.sql")
+    [chunk] = (
+        await db_session.scalars(
+            select(RepoDocumentChunk).where(RepoDocumentChunk.document_id == shelves.id)
+        )
+    ).all()
+    assert (chunk.start_line, chunk.end_line) == (1, 4)
+    assert chunk.mentions == []
+    assert linker.paths == []
+
+
+async def test_migration_that_holds_a_key_is_skipped(db_session, tmp_path):
+    repository = await _repository(db_session)
+    migrations = tmp_path / "migrations"
+    migrations.mkdir()
+    # Field names after a secret-named word are not keys: the file is kept.
+    (migrations / "0001_settings.sql").write_text(
+        "INSERT INTO settings (name, kind) VALUES ('apiKey', 'sharedSecret'),\n"
+        "  ('password', 'reset_password');\n",
+        encoding="utf-8",
+    )
+    (migrations / "0002_token.sql").write_text(
+        "INSERT INTO settings VALUES ('api_token', 'k8Hq2Lz9Wm4Rt7Xc');\n", encoding="utf-8"
+    )
+    (migrations / "0003_key.sql").write_text(
+        "-- -----BEGIN PRIVATE KEY-----\nSELECT 1;\n", encoding="utf-8"
+    )
+
+    await _index(db_session, repository, tmp_path)
+
+    assert set(await _documents(db_session, repository)) == {"migrations/0001_settings.sql"}
