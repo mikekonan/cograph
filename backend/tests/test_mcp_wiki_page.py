@@ -141,6 +141,8 @@ async def test_wiki_page_returns_full_body(client, db_session):
     assert content.count("\n") >= 8  # not a flattened one-liner
     assert result["content_truncated"] is False
     assert result["tokens_estimate"] > 0
+    # Every heading, so a later `section` is copied, not guessed.
+    assert result["sections"] == ["Overview", "Architecture", "Components", "Configuration"]
 
 
 async def test_wiki_page_returns_single_section(client, db_session):

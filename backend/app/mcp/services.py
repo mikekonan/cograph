@@ -448,11 +448,11 @@ _FULL_CODE_HITS = 3
 _TAIL_CODE_CHARS = 160
 
 
-# Generated-wiki pages attached to one search: each is a title and an
-# excerpt from the section that matches the query. A question in words
-# (retrieve) gets enough prose to answer from; a name lookup (search_code)
-# only enough to decide whether to open the page. The whole page is a
-# cograph_wiki_page call.
+# Generated-wiki pages attached to one search: each is a title, the page's
+# section headings and an excerpt from the section that matches the query.
+# A question in words (retrieve) gets enough prose to answer from; a name
+# lookup (search_code) only enough to decide whether to open the page. The
+# whole page, or one listed section, is a cograph_wiki_page call.
 _WIKI_PAGES_PER_SEARCH = 2
 _WIKI_EXCERPT_CHARS_RETRIEVE = 600
 _WIKI_EXCERPT_CHARS_SEARCH = 200
@@ -465,7 +465,7 @@ async def _wiki_pages(
     hits: dict[str, str],
     query: str,
     chars: int,
-) -> list[dict[str, str]]:
+) -> list[dict[str, object]]:
     """Generated-wiki pages about a search's code hits (`hits`: node id -> file).
 
     A page cites the code it describes. It qualifies when it cites a hit or
@@ -545,18 +545,27 @@ async def _wiki_pages(
     ]
 
 
-def _wiki_excerpt(content: str, words: set[str], chars: int) -> dict[str, str]:
+def _wiki_excerpt(content: str, words: set[str], chars: int) -> dict[str, object]:
     """The section naming the most query words (ties: the shorter, so a
-    subsection beats its parent), else the page's opening prose."""
+    subsection beats its parent), else the page's opening prose.
+
+    `sections` lists every heading of the page: an agent copies its
+    cograph_wiki_page `section` from it instead of guessing one."""
+    sections = extract_sections(content)
+    listed: dict[str, object] = {"sections": sections} if sections else {}
     best: tuple[int, int, str, str] | None = None
-    for title in extract_sections(content):
+    for title in sections:
         block = extract_section(content, title) or ""
         named = len(words.intersection(extract_query_terms(block, max_terms=10_000)))
         if named and (best is None or (named, -len(block)) > best[:2]):
             best = (named, -len(block), title, block)
     if best is None:
-        return {"excerpt": extract_lead(content, max_chars=chars)}
-    return {"section": best[2], "excerpt": extract_lead(best[3], max_chars=chars)}
+        return {"excerpt": extract_lead(content, max_chars=chars), **listed}
+    return {
+        "section": best[2],
+        "excerpt": extract_lead(best[3], max_chars=chars),
+        **listed,
+    }
 
 
 def _code_hits(response: RetrievalResponse) -> dict[str, str]:
@@ -1575,6 +1584,7 @@ async def wiki_page_payload(
             "wiki_slug": wiki_page.slug,
             "title": wiki_page.title,
             "section": section_title,
+            "sections": extract_sections(wiki_page.content),
             "content": content,
             "content_truncated": truncated,
             "tokens_estimate": _approx_tokens(content),
@@ -1583,7 +1593,7 @@ async def wiki_page_payload(
                 "verbatim. The default wiki surface is the summarized compact "
                 "map (the cograph_wiki_tree resource); pull full pages only "
                 "when that summary is too terse. If content_truncated is true, "
-                "request a single section= to get the rest in full."
+                "request one of `sections` as section= to get the rest in full."
             ),
         }
     )
