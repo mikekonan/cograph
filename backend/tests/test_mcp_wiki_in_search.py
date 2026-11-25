@@ -109,14 +109,20 @@ def test_excerpt_comes_from_the_section_naming_the_query() -> None:
         "## Scheduling\n\nSlots are booked a day ahead.\n\n"
         "### Late trucks\n\nA late truck loses its slot and waits.\n"
     )
+    headings = ["Overview", "Scheduling", "Late trucks"]
     # The subsection names the word, and so does its parent; the shorter wins.
+    # Every heading rides along, so the agent never guesses a section name.
     assert _wiki_excerpt(page, {"late", "truck"}, 600) == {
         "section": "Late trucks",
         "excerpt": "A late truck loses its slot and waits.",
+        "sections": headings,
     }
     assert _wiki_excerpt(page, {"slots"}, 600)["section"] == "Scheduling"
     # No section names a query word: the page's opening prose.
-    assert _wiki_excerpt(page, {"forklift"}, 30) == {"excerpt": "Docks take trucks. A dock…"}
+    assert _wiki_excerpt(page, {"forklift"}, 30) == {
+        "excerpt": "Docks take trucks. A dock…",
+        "sections": headings,
+    }
 
 
 async def test_every_tool_call_writes_one_query_log_row(

@@ -28,9 +28,10 @@ _WIKI_PAGE_DESCRIPTION = (
     "the fix is to re-read one `section` rather than to retry the page.\n"
     "Use when: you need a generated-wiki page's prose, diagrams, or code "
     "samples. `page` is a slug from a search result's `wiki` or from "
-    "cograph_outline's `wiki_pages`; pass "
-    "`section` (a heading from that page's `sections` list) to pull just that "
-    "section and save tokens.\n"
+    "cograph_outline's `wiki_pages`. To pull just one section and save "
+    "tokens, copy `section` exactly from the page's `sections`: a search "
+    "result's `wiki` lists them, and so does this tool's answer. Without "
+    "that list, leave `section` out.\n"
     "Do NOT use to search code (use cograph_retrieve / cograph_search_code)."
 )
 
