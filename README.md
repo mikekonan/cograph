@@ -3,6 +3,7 @@
 [![CI](https://github.com/mikekonan/cograph/actions/workflows/ci.yml/badge.svg)](https://github.com/mikekonan/cograph/actions/workflows/ci.yml)
 [![Docs](https://img.shields.io/badge/docs-cograph.cc-7c3aed)](https://cograph.cc)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Cograph on StartupScores](https://startupscores.com/badge/cograph.svg?style=shield&v=combo&theme=dark)](https://startupscores.com/open-source/cograph)
 
 Cograph turns a Git repository into a searchable, source-grounded knowledge base
 for humans and coding agents.
